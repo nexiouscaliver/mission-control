@@ -13,13 +13,15 @@ INTAKE → TRIAGE (deep vs one-shot) → RECON → PLAN (waves/lanes)
 
 ## The five modes
 
-| Mode | What it does |
+| Command | What it does |
 |---|---|
-| `/mission-control plan <objective>` | Triages, runs mandatory recon (true bases, active goals, open MRs, live knobs, RAM headroom), designs waves/lanes with file ownership, asks only genuine forks, writes the program note to the vault |
-| `/mission-control prompts [wave]` | Forges the wave's prompts (full anatomy, fresh-verified SHAs/flags/paths, RAM-derived caps), **red-teams each before emitting**, prints paste-ready blocks + launch steps |
-| `/mission-control verify <session/MR>` | Re-checks reality — merge ancestry, API state, suite re-runs, box knobs/journal, artifact re-reads, stray-branch debris — then forges a remediation prompt on the spot if gaps exist |
-| `/mission-control next` | Human actions owed, lanes free, waves unblocked; enforces build-parallel/enable-serial |
-| `/mission-control close <program>` | Distills decisions/config-facts/debug-wins/follow-ups into the vault **by project**, writes a completion record, deletes the working docs (approval-first sweep) |
+| `/mission-control-plan <objective>` | Triages, runs mandatory recon (true bases, active goals, open MRs, live knobs, RAM headroom), designs waves/lanes with file ownership, asks only genuine forks, writes the program note to the vault |
+| `/mission-control-prompts [wave]` | Forges the wave's prompts (full anatomy, fresh-verified SHAs/flags/paths, RAM-derived caps), **red-teams each before emitting**, prints paste-ready blocks + launch steps |
+| `/mission-control-verify <session/MR>` | Re-checks reality — merge ancestry, API state, suite re-runs, box knobs/journal, artifact re-reads, stray-branch debris — then forges a remediation prompt on the spot if gaps exist. Accepts a bare MR/PR number (`!1560`, `#42`) |
+| `/mission-control-next` | Human actions owed, lanes free, waves unblocked; enforces build-parallel/enable-serial |
+| `/mission-control-close <program>` | Distills decisions/config-facts/debug-wins/follow-ups into the vault **by project**, writes a completion record, deletes the working docs (approval-first sweep) |
+
+All five also work through the base skill: `/mission-control <mode> …`.
 
 ## Design principles (the short version)
 

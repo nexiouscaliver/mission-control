@@ -5,6 +5,11 @@ All notable changes to Mission Control will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-09-15
+
+### Changed
+- **Commands renamed to self-identifying names** — `/mission-control-plan`, `/mission-control-prompts`, `/mission-control-verify`, `/mission-control-next`, `/mission-control-close` (previously the bare mode names, e.g. `/mission-control:plan`). The embedded prefix keeps every command unambiguous and autocomplete-grouped under `/mission-control…` in any harness, namespaced or flat (the regenloop-plugin naming pattern). The 1.1.0 command names are replaced; the base skill form `/mission-control <mode>` still works.
+
 ## [1.1.0] - 2026-09-15
 
 ### Added

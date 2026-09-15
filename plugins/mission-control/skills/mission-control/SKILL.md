@@ -1,6 +1,6 @@
 ---
 name: mission-control
-description: Master-session orchestrator for multi-session regenloop programs — invoke explicitly as /mission-control <plan|prompts|verify|next|close>. Plans waves and lanes, forges red-teamed regenloop-run session prompts from fresh recon, verifies finished sessions against reality (never their self-reports), and distills the program's knowledge into the Basic Memory vault before deleting its working docs. Never implements anything itself; merges, releases, and deploys stay human. Do NOT auto-invoke for ordinary implement/fix requests — those belong to regenloop-run directly.
+description: Master-session orchestrator for multi-session regenloop programs — invoke explicitly via the commands /mission-control-plan, /mission-control-prompts, /mission-control-verify, /mission-control-next, /mission-control-close, or as /mission-control <plan|prompts|verify|next|close>. Plans waves and lanes, forges red-teamed regenloop-run session prompts from fresh recon, verifies finished sessions against reality (never their self-reports), and distills the program's knowledge into the Basic Memory vault before deleting its working docs. Never implements anything itself; merges, releases, and deploys stay human. Do NOT auto-invoke for ordinary implement/fix requests — those belong to regenloop-run directly.
 argument-hint: <plan|prompts|verify|next|close> [objective | program-slug | session/MR reference]
 allowed-tools: [Read, Glob, Grep, Bash, Agent, Write, Edit, WebFetch]
 ---
