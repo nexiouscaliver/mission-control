@@ -1,0 +1,18 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "mission-control",
+  "description": "Mission Control — the master session that plans regenloop programs, forges red-teamed session prompts, verifies results against reality, and distills knowledge into the memory vault",
+  "owner": {
+    "name": "Shahil Kadia",
+    "email": "shahilkadia@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "mission-control",
+      "description": "Master-session orchestrator for multi-session regenloop programs: plan waves and lanes, forge red-teamed session prompts from fresh recon, verify returning sessions against reality (never their self-reports), and distill the program into the Basic Memory vault before deleting its working docs. Never implements; never merges, releases, or deploys — those stay human.",
+      "source": "./plugins/mission-control",
+      "category": "development",
+      "homepage": "https://github.com/nexiouscaliver/mission-control"
+    }
+  ]
+}
