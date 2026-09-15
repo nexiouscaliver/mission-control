@@ -5,6 +5,12 @@ All notable changes to Mission Control will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-09-15
+
+### Added
+- **Slash entry points for all five modes** — `/mission-control:plan`, `:prompts`, `:verify`, `:next`, `:close`. Thin wrappers only: each passes its operator arguments straight through to its mode section, with the right references preloaded — `SKILL.md` remains the single source of truth and nothing about mode behavior changed.
+- `verify` accepts a bare MR/PR number (`!1560`, `#42`), resolved to the prompt-log row via the program note — the most-used mode is now the most frictionless.
+
 ## [1.0.0] - 2026-09-15
 
 First release.
