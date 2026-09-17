@@ -1,6 +1,6 @@
 # Verify runbook — the ordered commands of SKILL §4
 
-Procedure is SKILL §4; these are its commands. 15 ordered lines; `<fill-in>` items are per-lane values — `R` (the lane repo root) and `S` (the slug) are set per program, session ids and the disputed line per verify. Every static path below was verified live on 2026-09-17 against the regenloop 1.3.1 plugin and a real lane repo's `regenloop/local/` layout. Line 15 is deliberately last and conditional.
+Procedure is SKILL §4; these are its commands. 15 ordered commands after the two setup lines; `<fill-in>` items are per-lane values — `R` (the lane repo root) and `S` (the slug) are set per program, session ids and the disputed line per verify. Every static path below was verified live on 2026-09-17 against the regenloop 1.3.1 plugin and a real lane repo's `regenloop/local/` layout. Command 15 is deliberately last and conditional.
 
 ```bash
 R=/Users/shahil/work/regenai-repo/omniforge; ORCH=$R/regenloop/local/orchestrator; S=det-scan-linux-pins
@@ -11,8 +11,8 @@ python3 $RL/regenloop_state.py get $S base_sha --root $ORCH; echo "exit=$? (0=ex
 python3 -c "import json;r=json.load(open('$R/regenloop/local/regression/goals/$S/last-full-report.json'));print('full:',r['head_sha'],r['base'],r['verdict'])"
 python3 -c "import json;r=json.load(open('$R/regenloop/local/green-gate/goals/$S/last-report.json'));print('fast:',r['head_sha'],r['base'],r['verdict'])" 2>/dev/null || echo "no fast report"
 tail -4 $ORCH/_archive/$S/queue.md 2>/dev/null || tail -4 $ORCH/goals/$S/queue.md
-cat $ORCH/goals/$S/budget.json 2>/dev/null || cat $ORCH/_archive/$S/budget.json
 B=$(python3 -c "import json;print(json.load(open('$ORCH/_archive/$S/record.json'))['base_sha'])"); grep -c "$B" $R/regenloop/local/ledger.jsonl
+cat $ORCH/goals/$S/budget.json 2>/dev/null || cat $ORCH/_archive/$S/budget.json
 python3 $RL/regenloop_state.py status --root $ORCH
 git -C $R fetch -q && git -C $R merge-base --is-ancestor $B origin/main && echo ANCESTOR-OK || echo NON-ANCESTOR-ALARM
 git -C $R log --oneline $B..origin/main | head -8; git -C $R diff --name-only $B..origin/main | head -8
