@@ -129,7 +129,7 @@ DO_NOT_MERGE` (→ back to Draft) [ship L1200, L1235, L1243-1244].
   `knowledge/cards/regenloop-run.md` [run L285].
 - Budgets: per-gate cap 3, run cap 12 (`CAP_RUN = max(12, 6 + Σ per-task caps)` when architect
   scored it), 1 reset per gate, reset only on green, `whole_run` never reset [run L364-397;
-  budget.py L52-56]. Exit 0 = continue; 2 = stop → operator escalation; 1 = script error → cleanup
+  budget.py L50-52]. Exit 0 = continue; 2 = stop → operator escalation; 1 = script error → cleanup
   + `finish --outcome "partial: budget-script error"` [run L372-379]. Stop reasons:
   `gate_cap_exceeded`, `run_cap_exceeded`, `reset_abuse_suspected` (never re-reset, never raise
   the cap) [run L383, L397].

@@ -3,7 +3,7 @@
 Procedure is SKILL §4; these are its commands. 15 ordered commands after the two setup lines; `<fill-in>` items are per-lane values — `R` (the lane repo root) and `S` (the slug) are set per program, session ids and the disputed line per verify. Every static path below was verified live on 2026-09-17 against the regenloop 1.3.1 plugin and a real lane repo's `regenloop/local/` layout. Command 15 is deliberately last and conditional.
 
 ```bash
-R=/Users/shahil/work/regenai-repo/omniforge; ORCH=$R/regenloop/local/orchestrator; S=det-scan-linux-pins
+R=<lane-repo-root>; ORCH=$R/regenloop/local/orchestrator; S=det-scan-linux-pins
 RL=~/.zcode/cli/plugins/cache/regenloop/regenloop/1.3.1/scripts            # re-resolve version at plan (interface doc §10)
 grep "| $S |" $ORCH/_archive/INDEX.md; ls $ORCH/goals/ | grep -x $S || echo "goal terminal"
 cat $ORCH/_archive/$S/record.json 2>/dev/null || cat $ORCH/goals/$S/record.json

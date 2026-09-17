@@ -25,17 +25,17 @@ Revised from the det-filter program (2026-09-15 → 09-17) — the skill's first
 - **Verify (SKILL §4) — verify-from-records** — machine-written records (archive INDEX row, `record.json`, slug-scoped gate reports, queue terminal statuses, `ledger.jsonl`, `budget.json` tallies vs caps) are read BEFORE any hand re-run; a hand suite re-run is reserved for merged trees and report mismatches. Session-family rules: verification judges the branch/worktree/report family the session actually produced, never the handoff capsule's prose. Fork rules: merge ancestry from the recorded base — equality with the forge-time SHA is never the criterion; a "done" claim with a goal still in `goals/` fails cleanup. §5 `next` gains a liveness sweep (pushed? goal still ACTIVE? MR/PR state?) that prints stalled rows above the owed-actions list.
 - **Caps canon + ship policy + pin expiry** — caps have one home: `--safe` is the throttle (ceiling read from `regenloop_guard.py plan --json`, stamped with the run date) or the launch block exports the current env names — the legacy `REGENLOOP_SAFE_PYTEST_JOBS` mandate is gone; lane arithmetic may only lower load. Ship policy is decided per host from `git remote -v` at forge (`--ship` only where ship can run; GitHub-hosted lanes get `--no-ship` + an explicit human/`gh` PR path). Pins expire: the base pin is re-checked at launch (red-team check 9 freshness; paste-back recorded in the prompt-log row), and a Derived-from version older than the installed plugin is a hard stop for forging.
 - **Lessons (`references/lessons.md`)** — two-tier provenance header (what is proven, where) + coherence edits: falsified folklore removed; L1/L3/L6 rewritten to match the shipped mechanics.
-- **Commands** — consistent reference-load lines across all five; `/mission-control-next` takes `[program-slug]` with an Operator-input line; frontmatter `allowed-tools` now declares the vault MCP tools (including `mcp__shared-memory__delete_note`), AskUserQuestion, and ReadSessionContext.
+- **Commands** — consistent reference-load lines across all five; `/mission-control-next` takes `[program-slug]` with an Operator-input line; frontmatter `allowed-tools` now declares the vault MCP tools (including `mcp__shared-memory__delete_note`), AskUserQuestion, and ReadSessionContext — and drops Write/Edit (controller writes go through the vault MCP).
 
-### Weight + loading policy (honest recount — ranges, not point estimates)
+### Weight + loading policy (honest recount — measured line counts; tokens by the byte/4 heuristic)
 | Surface | v1.2.0 | v1.3.0 | Δ |
 |---|---|---|---|
-| SKILL.md — ALWAYS-LOADED | 94 ln / ~2.8k tok | ~230–250 ln / ~6–7k tok | **~2.2–2.5×** |
-| anatomy (forge/plan/verify) | 44 ln / ~1.3k | ~190 ln / ~3–3.5k | ~2.5× |
-| interface doc (plan/prompts/verify/next; load-on-act) | — | 222 ln / ~4.2k | new |
-| lessons (all 5 modes) | 36 ln / ~1.2k | ~40 ln / ~1.3k | ~flat |
-| verify-runbook (verify only) | — | ~20 ln / ~0.4k | new |
-| **Full forging load** | **~5.4k tok** | **~14–16k tok** | **~2.6–2.9×** |
+| SKILL.md — ALWAYS-LOADED | 94 ln / ~2.8k tok | 125 ln / ~6.8k tok | **~2.2–2.5×** |
+| anatomy (forge/plan/verify) | 44 ln / ~1.3k | 82 ln / ~4.4k | ~3.4× |
+| interface doc (plan/prompts/verify/next; load-on-act) | — | 233 ln / ~4.4k | new |
+| lessons (all 5 modes) | 36 ln / ~1.2k | 35 ln / ~1.4k | ~+15% |
+| verify-runbook (verify only) | — | 25 ln / ~0.7k | new |
+| **Full forging load** | **~5.4k tok** | **~17k tok** | **~3.1–3.2×** |
 
 Loading policy: references load per-mode; the interface doc is load-on-act (at plan and before forging/verifying), never always-loaded — SKILL.md is the only always-loaded surface. Field trial: the first program run under v1.3.0 records forge turns + wall-clock per prompt against the det-filter baseline; the v1.3.x council trims advisory checks if forge cost measurably degrades. E18's per-check records are the trial's instrument.
 
