@@ -4,3 +4,10 @@ __pycache__/
 *.log
 .idea/
 .vscode/
+# Session-transcript evidence — deliberately local-only (C2-7; T5 decision 2026-09-17).
+# Repo is public; transcripts carry session ids, host paths, internal hostnames. Do not git add; do not move.
+evaluation/
+evaluation-iter2/
+# regenloop local state + run worktrees
+regenloop/local/
+.claude/worktrees/

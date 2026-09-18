@@ -1,0 +1,34 @@
+# regenloop/gates.toml — minimal onboarding for the v1.3.0 build, 2026-09-17.
+#
+# Command-gate-only repo (markdown skill files + a shell harness; no pytest surface —
+# same pattern as the regenloop plugin's own repo). The two gates ARE the v1.3.0
+# self-test harness (evaluation-iter2/03-fleet-design/T5, council repairs applied):
+#   packaging  = scripts/verify_packaging.sh  (manifests, frontmatter, references, version identity)
+#   skill-smoke = tests/run_smoke.sh          (anatomy invariants, interface-doc citations,
+#                                              allowed-tools cover, command surface, version identity)
+#
+# RED AT THIS COMMIT BY DESIGN: both gates assert v1.3.0 invariants (SKILL frontmatter
+# version, the 14-item anatomy skeleton, the six MCP tool grants) that the v1.3.0
+# branch lands. This file ships BEFORE the run so the run's own diff never touches
+# gates.toml (the meta-config tamper fence stays intact, no --allow-meta-changes).
+#
+# Full regenloop-init (knowledge cards, modules.txt, CLAUDE.md import) is a tracked
+# follow-up work item — deliberately minimal here, not silently skipped.
+#
+# Gate-runner schema: [[gate]] array-of-tables; a gate fires when any changed file
+# matches a `when` glob. Empty gate list is fail-safe (zero gates never vacuously
+# pass). See scripts/gate_runner.py in the regenloop plugin.
+
+never_touch = []
+
+[[gate]]
+name = "packaging"
+when = ["**/*"]
+check = "bash scripts/verify_packaging.sh"
+autofix = ""
+
+[[gate]]
+name = "skill-smoke"
+when = ["**/*"]
+check = "bash tests/run_smoke.sh"
+autofix = ""

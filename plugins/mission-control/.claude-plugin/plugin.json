@@ -1,7 +1,7 @@
 {
   "name": "mission-control",
   "description": "Master-session orchestrator for multi-session regenloop programs — plans waves and lanes, forges red-teamed regenloop-run session prompts from fresh recon, verifies finished sessions against reality, and distills the program's knowledge into the Basic Memory vault before deleting its working docs. Never implements anything itself; merges, releases, and deploys stay human.",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "author": {
     "name": "Shahil Kadia",
     "url": "https://github.com/nexiouscaliver"

@@ -1,0 +1,6 @@
+mcp__shared-memory__read_note
+mcp__shared-memory__write_note
+mcp__shared-memory__edit_note
+mcp__shared-memory__delete_note
+mcp__shared-memory__search_notes
+mcp__shared-memory__list_memory_projects
