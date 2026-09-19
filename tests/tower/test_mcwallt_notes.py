@@ -7,11 +7,10 @@ live vault). FX1 is the real 7-cells-under-8-columns skip case.
 """
 
 import os
-import sqlite3
 
 from mc_wall.tower import ProgramConfig, RepoConfig, TowerConfig, collect_state
 from mc_wall.tower import contract, notes
-from tests.tower.conftest import mcwallt_make_note
+from tests.tower.conftest import mcwallt_make_note, mcwallt_make_session_db
 
 HEADER_A_LINE = "| id | wave | lane | repo/branch | slug | base | session/MR artifacts | status |"
 SEP_LINE = "|---|---|---|---|---|---|---|---|"
@@ -27,19 +26,6 @@ CORPUS_NOTE = """\
 | W1-L4 | W1 | L4 skill-edits + persona-gate | plugin cache 1.3.0 (plain lane) | n/a | plugin cache sha256s recorded by lane | forged 23:00 controller sess_9a690ab2 | forged |
 | W0-L0 | W0 | L0 bootstrap | ~/.zcode/mc-wall main @ d55cbde | n/a (plain lane) | behavioral: dir absent, verified 22:31; created fresh (initial commit bb06a68) | session sess_2243e9a1 (title custom: "W0 - Bootstrap mc-wall repo…", 12 min run); operator base-recheck done at launch | done |
 """
-
-
-def mcwallt_min_session_db(tmp_path, name="mcwallt_sessions.db"):
-    """Minimal db satisfying the T-1 session-store probe (session table present)."""
-    p = tmp_path / name
-    con = sqlite3.connect(p)
-    con.execute(
-        "CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, directory TEXT,"
-        " time_updated INTEGER, time_created INTEGER, time_archived INTEGER)"
-    )
-    con.commit()
-    con.close()
-    return str(p)
 
 
 def test_mcwallt_notes_status_vocab_all():
@@ -101,7 +87,7 @@ def test_mcwallt_notes_corpus_rows(tmp_path):
     # Collect-level: one entry-10 line, repo token mapped to the configured name.
     note = mcwallt_make_note(tmp_path, "mcwallt_corpus.md", CORPUS_NOTE.splitlines())
     cfg = TowerConfig(
-        db_path=mcwallt_min_session_db(tmp_path),
+        db_path=mcwallt_make_session_db(tmp_path),
         programs=(ProgramConfig(program="mcwallt-prog", tag="t", note_glob=note),),
         repos=(RepoConfig(name="mc-wall", path=os.path.expanduser("~/.zcode/mc-wall"),
                           host="gitlab"),),
@@ -155,7 +141,7 @@ def test_mcwallt_notes_header_variants(tmp_path):
     # Through collect: headerless note -> lanes=[] + entry 3, row otherwise populated.
     note = mcwallt_make_note(tmp_path, "mcwallt_detfilter.md", det_lines)
     cfg = TowerConfig(
-        db_path=mcwallt_min_session_db(tmp_path),
+        db_path=mcwallt_make_session_db(tmp_path),
         programs=(ProgramConfig(program="detfilter", tag="t", note_glob=note),),
     )
     state = collect_state(cfg)
@@ -182,7 +168,7 @@ def test_mcwallt_notes_malformed_rows_skipped(tmp_path):
 
     note = mcwallt_make_note(tmp_path, "mcwallt_malformed.md", text.splitlines())
     cfg = TowerConfig(
-        db_path=mcwallt_min_session_db(tmp_path),
+        db_path=mcwallt_make_session_db(tmp_path),
         programs=(ProgramConfig(program="mcwallt-prog", tag="t", note_glob=note),),
     )
     state = collect_state(cfg)
@@ -215,7 +201,7 @@ def test_mcwallt_notes_unconfigured_repo(tmp_path):
         "| W1-L4 | W1 | L4 skill-edits + persona-gate | plugin cache 1.3.0 (plain lane) | n/a | plugin cache sha256s recorded by lane | forged 23:00 controller sess_9a690ab2 | forged |",
     ])
     cfg = TowerConfig(
-        db_path=mcwallt_min_session_db(tmp_path),
+        db_path=mcwallt_make_session_db(tmp_path),
         programs=(ProgramConfig(program="mcwallt-prog", tag="t", note_glob=note),),
         repos=(),
     )
@@ -228,4 +214,61 @@ def test_mcwallt_notes_unconfigured_repo(tmp_path):
     assert lane["manifest"] is None
     assert lane["signals"] == {"pushed": None, "mr": None}
     assert state["server"]["degraded"] == []  # config gap is absence, not failure
+    contract.assert_shape(state)
+
+
+def test_mcwallt_notes_find_note_vanish_race(tmp_path, monkeypatch):
+    # R1 regression: a note vanishing between glob and stat must degrade that
+    # ONE program (entry 3 + zeroed row), never zero the whole document.
+    good_note = mcwallt_make_note(tmp_path, "mcwallt_good.md", [
+        HEADER_A_LINE, SEP_LINE,
+        "| W1-L1 | W1 | L1 | n/a | mcwallt-slug | n/a | sess_00000000 | done |",
+    ])
+    doomed = tmp_path / "mcwallt_doomed.md"
+    doomed.write_text("objective: here a moment ago\n", encoding="utf-8")
+    real_stat = os.stat
+
+    def vanishing_stat(p, *args, **kwargs):
+        if os.fspath(p) == str(doomed):
+            raise FileNotFoundError(p)  # the glob -> stat race
+        return real_stat(p, *args, **kwargs)
+
+    monkeypatch.setattr(notes.os, "stat", vanishing_stat)
+    cfg = TowerConfig(
+        db_path=mcwallt_make_session_db(tmp_path),
+        programs=(ProgramConfig(program="good", tag="t", note_glob=good_note),
+                  ProgramConfig(program="doomed", tag="t", note_glob=str(doomed))),
+    )
+    state = collect_state(cfg)
+    # The healthy program is untouched...
+    assert [l["row_id"] for l in state["programs"][0]["lanes"]] == ["W1-L1"]
+    # ...the doomed program takes the §4.2 zeroed row + entry 3...
+    assert state["programs"][1] == {"program": "doomed", "note_path": "", "note_mtime": 0,
+                                    "objective": "",
+                                    "master": {"session_id": None, "title": None,
+                                               "last_active_ago_s": None},
+                                    "lanes": []}
+    assert state["server"]["degraded"] == ["notes degraded: doomed"]
+    # ...and the document was NOT zeroed by the internal-error backstop.
+    assert "internal error: collect_state failed" not in state["server"]["degraded"]
+    assert state["launch_pending"] is None
+    contract.assert_shape(state)
+
+
+def test_mcwallt_notes_undecodable_note(tmp_path):
+    # Present but not decodable UTF-8: per-shape zeroed program row (§4.2) +
+    # entry 3 — the same fail-open as any unreadable note, never an exception.
+    bad = tmp_path / "mcwallt_bad_note.md"
+    bad.write_bytes(b"notes: \xff\xfe not utf-8 \xfd\x00")
+    cfg = TowerConfig(
+        db_path=mcwallt_make_session_db(tmp_path),
+        programs=(ProgramConfig(program="mcwallt-prog", tag="t", note_glob=str(bad)),),
+    )
+    state = collect_state(cfg)
+    assert state["programs"][0] == {"program": "mcwallt-prog", "note_path": "",
+                                    "note_mtime": 0, "objective": "",
+                                    "master": {"session_id": None, "title": None,
+                                               "last_active_ago_s": None},
+                                    "lanes": []}
+    assert state["server"]["degraded"] == ["notes degraded: mcwallt-prog"]
     contract.assert_shape(state)

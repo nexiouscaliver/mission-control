@@ -7,6 +7,10 @@ the closed status vocabulary, variant-A slug null rules, the repo/branch
 whitespace-token grammar, artifacts-cell session-token / MR-ref extraction,
 and the objective line. stdlib-only; ~ expansion belongs to collect (it owns
 config), never here.
+
+Cells containing escaped pipes (``\\|``) get no special handling — the spec
+defines no escape grammar and the corpus has none; a row with MORE cells than
+the header parses positionally and may silently mis-assign columns.
 """
 
 import glob
@@ -67,13 +71,23 @@ class NoteParse:
 
 def find_note(note_glob: str) -> str | None:
     """0 matches -> None; >1 matches -> newest mtime, tie lexicographically
-    smallest path (§4.2); never degrades — the caller owns entry 3."""
+    smallest path (§4.2); never degrades — the caller owns entry 3. A match
+    that vanishes between glob and stat (OSError) is dropped from candidacy;
+    if EVERY match vanishes, None is returned — the caller's glob-miss path —
+    so find_note never raises past a per-program fail-open guard."""
     matches = sorted(glob.glob(note_glob))
     if not matches:
         return None
-    mtimes = {p: os.stat(p).st_mtime for p in matches}
+    mtimes = {}
+    for p in matches:
+        try:
+            mtimes[p] = os.stat(p).st_mtime
+        except OSError:
+            continue  # vanished between glob and stat: no longer a candidate
+    if not mtimes:
+        return None  # every match vanished -> same as a glob miss
     newest = max(mtimes.values())
-    return min(p for p in matches if mtimes[p] == newest)
+    return min(p for p in mtimes if mtimes[p] == newest)
 
 
 def parse_status(cell: str) -> tuple[str, str]:

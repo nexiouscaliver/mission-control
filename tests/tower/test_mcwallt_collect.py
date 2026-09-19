@@ -1,25 +1,11 @@
 """T-1/T-2 collect tests: AC-API-1, AC-LAUNCH-1/2, AC-FAIL-4, AC-FAIL-8, DegradedLog ordering."""
 
 import os
-import sqlite3
 
 from mc_wall.tower import NetCache, ProgramConfig, RepoConfig, TowerConfig, collect_state
 from mc_wall.tower import contract
 from mc_wall.tower.collect import DegradedLog
-from tests.tower.conftest import mcwallt_make_note
-
-
-def mcwallt_make_session_db(tmp_path, name="mcwallt_sessions.db"):
-    """Minimal db satisfying the T-1 session-store probe (session table present)."""
-    p = tmp_path / name
-    con = sqlite3.connect(p)
-    con.execute(
-        "CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, directory TEXT,"
-        " time_updated INTEGER, time_created INTEGER, time_archived INTEGER)"
-    )
-    con.commit()
-    con.close()
-    return str(p)
+from tests.tower.conftest import mcwallt_make_note, mcwallt_make_session_db
 
 
 def test_mcwallt_api_signature_and_defaults(tmp_path):
