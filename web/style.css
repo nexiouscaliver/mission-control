@@ -322,6 +322,19 @@ button:disabled {
   background: var(--panel);
 }
 
+/* T7 (D): per-host hues on top of the !/# glyph prefix (the primary
+ * encoding) — gitlab reads note-green, github keeps derived-amber; the two
+ * hosts are impossible to confuse at a distance. Existing tokens only. */
+.mr-badge--gitlab {
+  border-color: var(--note);
+  color: var(--note);
+}
+
+.mr-badge--github {
+  border-color: var(--derived);
+  color: var(--derived);
+}
+
 .verify-tag {
   border: 1px dashed var(--derived);
   color: var(--derived);
@@ -513,6 +526,12 @@ button:disabled {
   background-image: repeating-linear-gradient(45deg, color-mix(in srgb, var(--stale) 30%, transparent) 0 2px, transparent 2px 5px);
 }
 
+/* T7 (C): QA mounts run no poll cycle — the dot renders neutral-dim there,
+ * never the LIVE green (live/stale/frozen stay the LIVE semantics above). */
+#live-dot.qa {
+  background: var(--ink-dim);
+}
+
 .case-note {
   margin-left: 8px;
   color: var(--derived);
@@ -648,7 +667,10 @@ body.frozen::after {
   left: 0;
   z-index: 40;
   pointer-events: none;
-  background-image: repeating-linear-gradient(45deg, color-mix(in srgb, var(--stale) 30%, transparent) 0 2px, transparent 2px 8px);
+  /* T7 (B): hatch alpha roughly halved (30% -> 15%) — still unmistakable with
+   * the lock + banner + hatched derived chips, but it no longer drowns the
+   * frozen page content underneath. */
+  background-image: repeating-linear-gradient(45deg, color-mix(in srgb, var(--stale) 15%, transparent) 0 2px, transparent 2px 8px);
 }
 
 body.frozen .chip--derived {

@@ -2296,7 +2296,9 @@ test("AC-1[S]: full QA render populates four panel roots + the whole top bar", (
   assert.ok(collectText(dom.getElementById("mode-badge")).indexOf("QA · case: full") !== -1, "mode badge names the QA case");
   assert.equal(collectText(dom.getElementById("nmn-counter")), "4v·2m");
   assert.equal(collectText(dom.getElementById("state-age-caption")), "state 5m", "state age from generated_ts via the injected clock");
-  assert.ok(dom.getElementById("live-dot").classList.contains("live"), "QA dot live once a doc rendered");
+  // T7 (C) overturned the old pin: a QA mount runs no poll cycle, so the dot
+  // renders neutral — never the LIVE green.
+  assert.ok(dom.getElementById("live-dot").classList.contains("qa"), "QA dot neutral once a doc rendered");
   const badges = byClass(dom.getElementById("degraded-badges"), "badge");
   assert.equal(badges.length, 2, "one badge per degraded entry");
   assert.equal(collectText(badges[0]), "network degraded: git cleo", "badge text verbatim");
@@ -2921,7 +2923,16 @@ test("AC-30: 503 degraded body — exact detail wording, dismissable, NOT freeze
     { status: 503, json: { ok: false, degraded: true } },
   ]);
   await flushMicrotasks();
-  w2.clock.advance(15000);
+  // stepwise advance+flush (the pattern every other poll test uses): the T7-G
+  // review clamp bounds catch-up polls to one per settle, so a single
+  // advance(15000) — three ticks with zero microtask drainage between them —
+  // would only land 2 of the 3 strikes. Stepwise models real time (each poll
+  // settles before the next tick) and reaches the identical assertion outcome.
+  w2.clock.advance(5000);
+  await flushMicrotasks();
+  w2.clock.advance(5000);
+  await flushMicrotasks();
+  w2.clock.advance(5000);
   await flushMicrotasks();
   const l2 = byClass(w2.dom.getElementById("banner-strip"), "banner--degraded");
   assert.equal(collectText(l2[0].children[0]), "wall server unreachable (last good 15s)", "no-detail fallback wording");
@@ -3106,6 +3117,181 @@ test("T6-carry(c)+(d): unmapped rows carry a dim id span; session/unmapped rows 
   assert.strictEqual(ev2.defaultPrevented, true, "Space keydown prevented");
   await flushMicrotasks();
   assert.deepEqual(copied, ["s-101", "s-unmapped-1"], "Enter/Space copy the same id a click would");
+});
+
+// =====================================================================
+// Tier: T7 — visual/interactive polish (orchestrator QA findings A-H)
+// B is style.css-only; H is a pure shrink covered by the existing
+// lane/session/unmapped wiring assertions staying green.
+// =====================================================================
+
+test("T7-A: freeze banner renders the verbatim entry exactly once (no duplicated headline)", () => {
+  const fz = makeQaApp("freeze");
+  const strip = fz.dom.getElementById("banner-strip");
+  const line = byClass(strip, "banner--freeze")[0];
+  assert.ok(line, "freeze banner line renders");
+  assert.equal(
+    collectText(line),
+    "tracking degraded: session store unreadable",
+    "the freeze banner IS the verbatim entry styled as freeze — no extra headline"
+  );
+  const occurrences = collectText(strip).split("tracking degraded").length - 1;
+  assert.equal(occurrences, 1, "exactly one occurrence of the tracking-degraded wording in the strip");
+});
+
+test("T7-B: freeze full-page hatch toned to roughly half intensity, still --stale-derived", () => {
+  const rule = parseCssRules(readWebFile("style.css")).find(
+    (r) => r.selector === "body.frozen::after" && r.media === ""
+  );
+  assert.ok(rule && rule.decls["background-image"], "the freeze full-page hatch overlay rule exists");
+  const m = /var\(--stale\)\s+(\d+)%/.exec(rule.decls["background-image"]);
+  assert.ok(m, "hatch stripes still derive from the --stale token");
+  const pct = parseInt(m[1], 10);
+  assert.ok(pct > 0 && pct <= 15, "hatch alpha roughly halved (was 30%, now <= 15%): got " + pct + "%");
+});
+
+test("T7-C: QA dot renders neutral — never the live green; LIVE keeps its semantics", async () => {
+  const full = makeQaApp("full");
+  const dot = full.dom.getElementById("live-dot");
+  assert.ok(!dot.classList.contains("live"), "QA mount: the dot must not carry the live class (no polling in QA)");
+  assert.ok(dot.classList.contains("qa"), "QA mount: the dot carries the neutral qa class");
+  const dotRule = parseCssRules(readWebFile("style.css")).find(
+    (r) => r.selector === "#live-dot.qa" && r.media === ""
+  );
+  assert.ok(dotRule && /var\(--ink-dim\)/.test(dotRule.decls["background"]), "qa dot styled dim via the ink-dim token");
+  // LIVE semantics unchanged: live after success, stale after failure
+  const w = makeLiveWall([okState(liveDoc()), { reject: "network" }]);
+  await flushMicrotasks();
+  assert.ok(w.dom.getElementById("live-dot").classList.contains("live"), "LIVE dot still live after success");
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  assert.ok(w.dom.getElementById("live-dot").classList.contains("stale"), "LIVE dot still stale after failure");
+});
+
+test("T7-D: gitlab/github badges carry host modifier classes + distinct token hues", () => {
+  const { dom } = makeQaApp("full");
+  const col1 = dom.getElementById("col1-programs");
+  const gl = byClass(findByData(col1, "data-row-id", "W2-L1"), "mr-badge")[0];
+  assert.ok(gl.classList.contains("mr-badge--gitlab"), "gitlab chip badge carries the gitlab modifier");
+  const gh = byClass(findByData(col1, "data-row-id", "W2-L4"), "mr-badge")[0];
+  assert.ok(gh.classList.contains("mr-badge--github"), "github chip badge carries the github modifier");
+  const ph = dom.getElementById("panel-human");
+  assert.ok(
+    byClass(findByData(ph, "data-row-id", "!34"), "mr-badge")[0].classList.contains("mr-badge--gitlab"),
+    "gitlab merge-card badge carries the modifier"
+  );
+  assert.ok(
+    byClass(findByData(ph, "data-row-id", "#56"), "mr-badge")[0].classList.contains("mr-badge--github"),
+    "github merge-card badge carries the modifier"
+  );
+  const css = readWebFile("style.css");
+  const tokens = parseRootTokens(css);
+  const rules = parseCssRules(css);
+  const glRule = rules.find((r) => r.selector === ".mr-badge--gitlab" && r.media === "");
+  const ghRule = rules.find((r) => r.selector === ".mr-badge--github" && r.media === "");
+  assert.ok(glRule && glRule.decls["color"], "gitlab hue rule exists");
+  assert.ok(ghRule && ghRule.decls["color"], "github hue rule exists");
+  const glTok = /var\((--[\w-]+)\)/.exec(glRule.decls["color"])[1];
+  const ghTok = /var\((--[\w-]+)\)/.exec(ghRule.decls["color"])[1];
+  assert.equal(tokens[glTok], tokens["--note"], "gitlab badge maps to the note hue");
+  assert.equal(tokens[ghTok], tokens["--derived"], "github badge maps to the derived hue");
+  assert.notEqual(tokens[glTok], tokens[ghTok], "the two hosts must be distinguishable at 2 m");
+});
+
+test("T7-E: master rows read the dim 'no signals' — never the 'signals unknown' alarm", () => {
+  const { dom } = makeQaApp("full");
+  const col3 = dom.getElementById("col3-sessions");
+  const masterRow = findByData(col3, "data-session-id", "s-master-1");
+  assert.ok(masterRow, "master row renders");
+  const text = collectText(masterRow);
+  assert.ok(text.indexOf("signals unknown") === -1, "master row never reads 'signals unknown'");
+  assert.ok(text.indexOf("no signals") !== -1, "master row carries the dim 'no signals' wording");
+  const idleSpan = byClass(masterRow, "session-idle")[0];
+  assert.ok(idleSpan, "master idle span renders");
+  assert.ok(!idleSpan.classList.contains("stale"), "master idle is not alarm-styled");
+  assert.equal(collectText(idleSpan), "idle 6m · no signals", "dim composed idle line (412s -> 6m)");
+  // session rows keep the honest composition (s-105: nothing composable)
+  const s105 = findByData(col3, "data-session-id", "s-105");
+  assert.ok(collectText(s105).indexOf("signals unknown") !== -1, "session rows keep 'signals unknown'");
+});
+
+test("T7-F: a poll with unchanged data keeps the live DOM; changed data still updates", async () => {
+  const mocks = parseIndexMocks(readWebFile("index.html"));
+  const changed = JSON.parse(JSON.stringify(mocks.full));
+  changed.verify_queue = [];
+  const w = makeLiveWall([okState(mocks.full), okState(mocks.full), okState(changed)]);
+  await flushMicrotasks();
+  const pv = w.dom.getElementById("panel-verify");
+  const row = findByData(pv, "data-row-id", "W2-L3");
+  assert.ok(row, "verify row rendered from the boot poll");
+  row.focus(); // focus marker: the node identity below is what must survive
+  w.clock.advance(5000); // poll 2 serves the SAME doc
+  await flushMicrotasks();
+  const rowAfter = findByData(pv, "data-row-id", "W2-L3");
+  assert.strictEqual(rowAfter, row, "unchanged poll: the same node stays in the DOM (no churn, focus survives)");
+  assert.strictEqual(row.parentNode, pv, "the focused row is still attached to its panel");
+  w.clock.advance(5000); // poll 3 serves the CHANGED doc
+  await flushMicrotasks();
+  assert.ok(!findByData(pv, "data-row-id", "W2-L3"), "changed data applied: the stale row is replaced");
+  assert.ok(collectText(pv).indexOf("nothing to verify") !== -1, "the fresh empty-state renders");
+});
+
+test("T7-G: a fetch slower than the cadence never stacks — one in-flight poll at a time", async () => {
+  const calls = [];
+  const settleFns = [];
+  const slowFetch = function (url, init) {
+    calls.push({ url: url, init: init });
+    return new Promise(function (resolve) {
+      settleFns.push(function () {
+        resolve({ ok: true, status: 200, json: function () { return Promise.resolve(liveDoc()); } });
+      });
+    });
+  };
+  const w = makeLiveWall(null, { fetch: slowFetch });
+  await flushMicrotasks();
+  assert.equal(calls.length, 1, "the boot poll is the only in-flight fetch");
+  w.clock.advance(5000); // a tick lands while the boot poll is still outstanding
+  await flushMicrotasks();
+  assert.equal(calls.length, 1, "a tick while a poll is outstanding must not stack a second fetch");
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  assert.equal(calls.length, 1, "still exactly one in-flight fetch");
+  settleFns.shift()(); // the slow response finally arrives
+  await flushMicrotasks();
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  assert.equal(calls.length, 2, "the cadence resumes once the poll settles (totals stay correct)");
+  settleFns.shift()();
+  await flushMicrotasks();
+});
+
+test("T7-G clamp: a hung-then-settling poll drains at most ONE catch-up (no T/5 burst)", async () => {
+  const calls = [];
+  let bootResolve = null;
+  const ok = function () {
+    return { ok: true, status: 200, json: function () { return Promise.resolve(liveDoc()); } };
+  };
+  const fetchFn = function (url, init) {
+    calls.push({ url: url, init: init });
+    if (calls.length === 1) {
+      // the boot poll hangs until manually resolved; every later call settles instantly
+      return new Promise(function (resolve) {
+        bootResolve = function () {
+          resolve(ok());
+        };
+      });
+    }
+    return Promise.resolve(ok());
+  };
+  const w = makeLiveWall(null, { fetch: fetchFn });
+  await flushMicrotasks();
+  assert.equal(calls.length, 1, "boot poll pending");
+  w.clock.advance(10000); // two ticks skip while the boot poll hangs
+  await flushMicrotasks();
+  assert.equal(calls.length, 1, "ticks skipped, no stacking");
+  bootResolve(); // the hang settles — missed ticks must drain BOUNDED
+  await flushMicrotasks();
+  assert.equal(calls.length, 2, "clamped drain: exactly ONE catch-up poll, not one per missed tick");
 });
 
 // ---------------- runner ----------------

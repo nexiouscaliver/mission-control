@@ -100,6 +100,76 @@
       while (node.children.length > 0) node.removeChild(node.children[0]);
     }
 
+    // T7 (F): churn guard — a poll whose freshly built content serializes
+    // identically to the last applied build leaves the live DOM untouched, so
+    // keyboard focus, collapse toggles, and transient labels survive the 5s
+    // cadence. Signatures are computed from freshly built scratch trees only
+    // (never the live DOM), so real and fake nodes take the same builder path.
+    var SIG_ATTRS = ["disabled", "hidden", "aria-expanded", "aria-label", "role", "tabindex", "title", "type"];
+    var containerSigs = {}; // container id -> last APPLIED children signature
+
+    // Own text only (never textContent — that would double-count descendants):
+    // the fake DOM stores it in .text; a real element reads its direct text
+    // node children (setText assigns textContent, which yields exactly one).
+    function sigTextOf(node) {
+      if (typeof node.text === "string") return node.text;
+      if (node.childNodes) {
+        var out = "";
+        for (var i = 0; i < node.childNodes.length; i += 1) {
+          if (node.childNodes[i].nodeType === 3) out += node.childNodes[i].nodeValue;
+        }
+        return out;
+      }
+      return "";
+    }
+
+    function sigOf(node) {
+      var out = String(node.tagName || node.tag || "").toLowerCase();
+      if (node.id) out += "#" + node.id;
+      if (node.className) out += "." + node.className;
+      for (var i = 0; i < SIG_ATTRS.length; i += 1) {
+        var name = SIG_ATTRS[i];
+        var v = null;
+        if (node.attrs && node.attrs[name] !== undefined) v = node.attrs[name];
+        else if (typeof node.getAttribute === "function") {
+          var g = node.getAttribute(name);
+          if (g !== null) v = g;
+        }
+        if (v !== null) out += "[" + name + "=" + v + "]";
+      }
+      if (node.dataset) {
+        var keys = [];
+        for (var k in node.dataset) {
+          if (Object.prototype.hasOwnProperty.call(node.dataset, k)) keys.push(k);
+        }
+        keys.sort();
+        for (var d = 0; d < keys.length; d += 1) out += "[data-" + keys[d] + "=" + node.dataset[keys[d]] + "]";
+      }
+      var txt = sigTextOf(node);
+      if (txt) out += "{" + txt + "}";
+      var kids = node.children || [];
+      for (var c = 0; c < kids.length; c += 1) out += "<" + sigOf(kids[c]);
+      return out + ">";
+    }
+
+    // Build into a detached scratch, then swap only when the content actually
+    // changed. pollDriven renders (the 5s cycle) skip identical rebuilds;
+    // manual renders (mountQA, keyboard r in QA) always swap.
+    function renderContainer(container, id, pollDriven, build) {
+      var scratch = el("div");
+      build(scratch);
+      var sig = "";
+      for (var i = 0; i < scratch.children.length; i += 1) sig += sigOf(scratch.children[i]);
+      if (pollDriven && containerSigs[id] === sig) return; // identical poll: keep the live children
+      clearNode(container);
+      while (scratch.children.length > 0) {
+        var child = scratch.children[0];
+        scratch.removeChild(child); // the fake DOM's appendChild does not move nodes
+        container.appendChild(child);
+      }
+      containerSigs[id] = sig;
+    }
+
     // T1 stub render path: guarantee the index.html shell exists (top bar + the three
     // column shells), then blank the four panel roots with one dim note each.
     // T2 (mock mount) and T3+ (real column rendering) take over from here.
@@ -167,8 +237,12 @@
       for (var i = 0; i < PANEL_ROOT_IDS.length; i += 1) {
         var rootEl = byId(PANEL_ROOT_IDS[i]);
         if (!rootEl) continue;
-        clearNode(rootEl);
-        appendNote(rootEl, note);
+        // Review nit: route through renderContainer so the applied signature
+        // stays in sync — a blank note can never leave a stale signature for
+        // the next poll render to skip against.
+        renderContainer(rootEl, PANEL_ROOT_IDS[i], false, function (scratch) {
+          appendNote(scratch, note);
+        });
       }
     }
 
@@ -184,8 +258,14 @@
     // T5 render: Cols 1-3 + top bar + banner strip + armed bar from the mounted
     // state document. An L0-invalid doc renders BLANK panels with notes — never
     // partial data (SPEC 3.3) — plus the page-generated bad-doc banner.
+    // T7 (F): manual renders swap unconditionally; poll-driven renders go
+    // through renderContainer's identical-content skip.
     function render(nextDoc) {
       if (arguments.length > 0) setDocument(nextDoc);
+      renderBody(false);
+    }
+
+    function renderBody(pollDriven) {
       ensureShell();
       var valid = stateDoc !== null && MCW.state.validateDoc(stateDoc).ok;
       // T6: LIVE panels blank differently — waiting for the first state (or a
@@ -197,18 +277,19 @@
         var id = PANEL_ROOT_IDS[i];
         var rootEl = byId(id);
         if (!rootEl) continue;
-        if (valid && id === "col1-programs") renderCol1(rootEl);
-        else if (valid && id === "panel-verify") renderCol2Verify(rootEl);
-        else if (valid && id === "panel-human") renderCol2Human(rootEl);
-        else if (valid && id === "col3-sessions") renderCol3(rootEl);
-        else {
-          clearNode(rootEl);
-          appendNote(rootEl, blankNote);
-        }
+        renderContainer(rootEl, id, pollDriven, function (scratch) {
+          if (valid && id === "col1-programs") renderCol1(scratch);
+          else if (valid && id === "panel-verify") renderCol2Verify(scratch);
+          else if (valid && id === "panel-human") renderCol2Human(scratch);
+          else if (valid && id === "col3-sessions") renderCol3(scratch);
+          else {
+            appendNote(scratch, blankNote);
+          }
+        });
       }
-      renderBanners(stateDoc); // sets freezeActive before the dot reads it
-      renderTopBar(valid);
-      renderArmedBar();
+      renderBanners(stateDoc, pollDriven); // sets freezeActive before the dot reads it
+      renderTopBar(valid, pollDriven);
+      renderArmedBar(pollDriven);
       updateNeedsMeNow();
       wireNeedsMeNow();
     }
@@ -280,6 +361,17 @@
       if (laneRes.skipped > 0) appendNote(card, "skipped " + laneRes.skipped + " malformed rows");
 
       rootEl.appendChild(card);
+    }
+
+    // T7 (D): one builder for MR badges — the !/# glyph prefix stays the
+    // primary encoding (AC-21: host from repo_host, never parsed out of ref);
+    // the per-host hue modifier makes gitlab/github unmistakable at a glance.
+    function mrBadgeInto(parentEl, host, ref) {
+      var badge = el("span");
+      badge.classList.add("mr-badge");
+      if (host === "gitlab" || host === "github") badge.classList.add("mr-badge--" + host);
+      badge.setText(host === "gitlab" || host === "github" ? ref : "MR " + ref);
+      parentEl.appendChild(badge);
     }
 
     function renderLane(listEl, mtime, lane) {
@@ -413,34 +505,18 @@
         mchip.classList.add("chip--derived");
         mchip.setText("mr: " + ref + " " + mrState + " " + mrAge + "s");
         var host = typeof mr.repo_host === "string" ? mr.repo_host : "";
-        var badge = el("span");
-        badge.classList.add("mr-badge");
-        // Badge derives from repo_host, NEVER parsed out of ref (AC-21).
-        badge.setText(host === "gitlab" || host === "github" ? ref : "MR " + ref);
-        mchip.appendChild(badge);
+        mrBadgeInto(mchip, host, ref);
         laneEl.appendChild(mchip);
       }
 
-      // Journey B: forged lanes open the launch side panel. Event wiring needs
-      // addEventListener (real DOM + the selftest's extended fake DOM); the
-      // role=button div is keyboard-operable: Enter/Space open + preventDefault.
+      // Journey B: forged lanes open the launch side panel (T7 H: the shared
+      // wireClickable helper gives click + Enter/Space the same action).
       if (status === "forged") {
         laneEl.classList.add("lane--launchable");
-        laneEl.setAttribute("role", "button");
-        laneEl.setAttribute("tabindex", "0");
-        if (typeof laneEl.addEventListener === "function") {
-          var rowId = lane.row_id; // renderLane parameter scope — no capture IIFE needed
-          laneEl.addEventListener("click", function () {
-            openLaunchPanel(rowId);
-          });
-          laneEl.addEventListener("keydown", function (ev) {
-            var key = ev && typeof ev.key === "string" ? ev.key : "";
-            if (key === "Enter" || key === " " || key === "Spacebar") {
-              if (typeof ev.preventDefault === "function") ev.preventDefault();
-              openLaunchPanel(rowId);
-            }
-          });
-        }
+        var rowId = lane.row_id; // renderLane parameter scope — no capture IIFE needed
+        wireClickable(laneEl, function () {
+          openLaunchPanel(rowId);
+        });
       }
 
       listEl.appendChild(laneEl);
@@ -693,6 +769,25 @@
         node.disabled = false;
         node.removeAttribute("disabled");
       }
+    }
+
+    // T7 (H): the clickable-div wiring lane rows, session rows, and unmapped
+    // rows share — role/tabindex plus click and Enter/Space keydown
+    // (prevented) running the same action. One implementation.
+    function wireClickable(node, fn) {
+      node.setAttribute("role", "button");
+      node.setAttribute("tabindex", "0");
+      if (typeof node.addEventListener !== "function") return;
+      node.addEventListener("click", function () {
+        fn();
+      });
+      node.addEventListener("keydown", function (ev) {
+        var key = ev && typeof ev.key === "string" ? ev.key : "";
+        if (key === "Enter" || key === " " || key === "Spacebar") {
+          if (typeof ev.preventDefault === "function") ev.preventDefault();
+          fn();
+        }
+      });
     }
 
     function textOf(node) {
@@ -965,7 +1060,7 @@
       spanText(null, " ");
       var host = typeof m.repo_host === "string" ? m.repo_host : "";
       var ref = typeof m.ref === "string" ? m.ref : "";
-      spanText("mr-badge", host === "gitlab" || host === "github" ? ref : "MR " + ref);
+      mrBadgeInto(line, host, ref);
       spanText(null, " " + (typeof m.title === "string" ? m.title : "") + " — ");
       var pipeline = typeof m.pipeline === "string" ? m.pipeline : "";
       if (pipeline === "") {
@@ -1209,35 +1304,15 @@
     // ---- banner strip (SPEC 8): degraded lines verbatim, freeze headline,
     //      dismissable operator line, page-generated bad-doc line ----
 
-    function renderBanners(docEl) {
+    function renderBanners(docEl, pollDriven) {
       var strip = byId("banner-strip");
       if (!strip) return;
-      clearNode(strip);
       freezeActive = false;
       var valid = docEl !== null && isPlainObject(docEl) && MCW.state.validateDoc(docEl).ok;
+      var banner = null;
       if (valid) {
-        var entries = degradedEntriesOf(docEl);
-        for (var i = 0; i < entries.length; i += 1) {
-          var line = el("div");
-          line.classList.add("banner-line");
-          var kind = degradedKind(entries[i]);
-          if (kind === "freeze") {
-            freezeActive = true; // L1: freeze while ANY tracking-degraded entry exists
-            line.classList.add("banner--freeze");
-            var headline = el("strong");
-            headline.setText("tracking degraded");
-            line.appendChild(headline);
-            var entrySpan = el("span");
-            entrySpan.setText(" " + entries[i]);
-            line.appendChild(entrySpan);
-          } else {
-            line.setText(entries[i]);
-            if (kind === "advisory") line.classList.add("banner--advisory");
-          }
-          strip.appendChild(line);
-        }
         var serverObj = nullable(docEl.server);
-        var banner =
+        banner =
           serverObj !== null && typeof serverObj.banner === "string" && serverObj.banner !== ""
             ? serverObj.banner
             : null;
@@ -1246,71 +1321,92 @@
         if (dismissedOperatorBanner !== null && dismissedOperatorBanner !== banner) {
           dismissedOperatorBanner = null;
         }
-        if (banner !== null && banner !== dismissedOperatorBanner) {
-          var op = el("div");
-          op.classList.add("banner-line");
-          op.classList.add("banner--operator");
-          var opText = el("span");
-          opText.setText(banner);
-          op.appendChild(opText);
-          var dismiss = el("button");
-          dismiss.setAttribute("type", "button");
-          dismiss.classList.add("banner-dismiss");
-          dismiss.setAttribute("aria-label", "dismiss banner");
-          dismiss.setText("×");
-          if (typeof dismiss.addEventListener === "function") {
-            dismiss.addEventListener("click", function () {
-              dismissedOperatorBanner = banner;
-              if (op.parentNode) op.parentNode.removeChild(op);
+      }
+      renderContainer(strip, "banner-strip", pollDriven, function (scratch) {
+        if (valid) {
+          var entries = degradedEntriesOf(docEl);
+          for (var i = 0; i < entries.length; i += 1) {
+            var line = el("div");
+            line.classList.add("banner-line");
+            var kind = degradedKind(entries[i]);
+            if (kind === "freeze") {
+              freezeActive = true; // L1: freeze while ANY tracking-degraded entry exists
+              // T7 (A): the verbatim entry ONCE, styled as freeze — the banner
+              // must not repeat the entry's own prefix as an extra headline.
+              line.classList.add("banner--freeze");
+              line.setText(entries[i]);
+            } else {
+              line.setText(entries[i]);
+              if (kind === "advisory") line.classList.add("banner--advisory");
+            }
+            scratch.appendChild(line);
+          }
+          if (banner !== null && banner !== dismissedOperatorBanner) {
+            var op = el("div");
+            op.classList.add("banner-line");
+            op.classList.add("banner--operator");
+            var opText = el("span");
+            opText.setText(banner);
+            op.appendChild(opText);
+            var dismiss = el("button");
+            dismiss.setAttribute("type", "button");
+            dismiss.classList.add("banner-dismiss");
+            dismiss.setAttribute("aria-label", "dismiss banner");
+            dismiss.setText("×");
+            if (typeof dismiss.addEventListener === "function") {
+              dismiss.addEventListener("click", function () {
+                dismissedOperatorBanner = banner;
+                if (op.parentNode) op.parentNode.removeChild(op);
+                if (strip.children.length === 0) strip.setAttribute("hidden", "");
+              });
+            }
+            op.appendChild(dismiss);
+            scratch.appendChild(op);
+          }
+        } else if (docEl !== null && isPlainObject(docEl)) {
+          // L0 in QA: page-generated wording; never the reserved tracking prefix.
+          var v = MCW.state.validateDoc(docEl);
+          var bad = el("div");
+          bad.classList.add("banner-line");
+          bad.classList.add("banner--bad-doc");
+          bad.setText("wall: bad state document (" + v.reason + ")");
+          scratch.appendChild(bad);
+        }
+        // T6 LIVE page-generated lines (SPEC 4.3/8): the missing-token line and
+        // the debounced poll-failure DEGRADED banner. Never the reserved
+        // "tracking degraded:" prefix; the DEGRADED banner is NOT a freeze.
+        if (live !== null && live.token === null) {
+          var mt = el("div");
+          mt.classList.add("banner-line");
+          mt.classList.add("banner--bad-doc");
+          mt.setText("wall: missing token in URL");
+          scratch.appendChild(mt);
+        }
+        var degradedTxt = degradedBannerText();
+        if (degradedTxt !== null && !live.degradedDismissed) {
+          var dl = el("div");
+          dl.classList.add("banner-line");
+          dl.classList.add("banner--operator");
+          dl.classList.add("banner--degraded");
+          var dlText = el("span");
+          dlText.setText(degradedTxt);
+          dl.appendChild(dlText);
+          var dDismiss = el("button");
+          dDismiss.setAttribute("type", "button");
+          dDismiss.classList.add("banner-dismiss");
+          dDismiss.setAttribute("aria-label", "dismiss degraded banner");
+          dDismiss.setText("×");
+          if (typeof dDismiss.addEventListener === "function") {
+            dDismiss.addEventListener("click", function () {
+              live.degradedDismissed = true; // hidden until the episode resets (first success)
+              if (dl.parentNode) dl.parentNode.removeChild(dl);
               if (strip.children.length === 0) strip.setAttribute("hidden", "");
             });
           }
-          op.appendChild(dismiss);
-          strip.appendChild(op);
+          dl.appendChild(dDismiss);
+          scratch.appendChild(dl);
         }
-      } else if (docEl !== null && isPlainObject(docEl)) {
-        // L0 in QA: page-generated wording; never the reserved tracking prefix.
-        var v = MCW.state.validateDoc(docEl);
-        var bad = el("div");
-        bad.classList.add("banner-line");
-        bad.classList.add("banner--bad-doc");
-        bad.setText("wall: bad state document (" + v.reason + ")");
-        strip.appendChild(bad);
-      }
-      // T6 LIVE page-generated lines (SPEC 4.3/8): the missing-token line and
-      // the debounced poll-failure DEGRADED banner. Never the reserved
-      // "tracking degraded:" prefix; the DEGRADED banner is NOT a freeze.
-      if (live !== null && live.token === null) {
-        var mt = el("div");
-        mt.classList.add("banner-line");
-        mt.classList.add("banner--bad-doc");
-        mt.setText("wall: missing token in URL");
-        strip.appendChild(mt);
-      }
-      var degradedTxt = degradedBannerText();
-      if (degradedTxt !== null && !live.degradedDismissed) {
-        var dl = el("div");
-        dl.classList.add("banner-line");
-        dl.classList.add("banner--operator");
-        dl.classList.add("banner--degraded");
-        var dlText = el("span");
-        dlText.setText(degradedTxt);
-        dl.appendChild(dlText);
-        var dDismiss = el("button");
-        dDismiss.setAttribute("type", "button");
-        dDismiss.classList.add("banner-dismiss");
-        dDismiss.setAttribute("aria-label", "dismiss degraded banner");
-        dDismiss.setText("×");
-        if (typeof dDismiss.addEventListener === "function") {
-          dDismiss.addEventListener("click", function () {
-            live.degradedDismissed = true; // hidden until the episode resets (first success)
-            if (dl.parentNode) dl.parentNode.removeChild(dl);
-            if (strip.children.length === 0) strip.setAttribute("hidden", "");
-          });
-        }
-        dl.appendChild(dDismiss);
-        strip.appendChild(dl);
-      }
+      });
       if (strip.children.length > 0) strip.removeAttribute("hidden");
       else strip.setAttribute("hidden", "");
       if (doc && doc.body) {
@@ -1323,27 +1419,32 @@
 
     // Dot derivation shared by renderTopBar and diagnostics (plan T6 step 5):
     // frozen wins; then LIVE keys off the poll cycle (live only after a
-    // success with no failure since), QA off the rendered doc.
+    // success with no failure since). T7 (C): without a poll cycle (QA) the
+    // dot never borrows the LIVE green — neutral dim instead; stale still
+    // flags a bad/no doc, frozen wins above.
     function currentDot(valid) {
       if (freezeActive) return "frozen";
       if (live !== null) {
         return live.failures === 0 && live.lastGoodAtMs !== null ? "live" : "stale";
       }
-      return valid ? "live" : "stale";
+      return valid ? "qa" : "stale";
     }
 
-    function renderTopBar(valid) {
+    function renderTopBar(valid, pollDriven) {
       var badge = byId("mode-badge");
       if (badge) {
-        clearNode(badge);
-        if (deps.location.protocol !== "file:") badge.setText("LIVE"); // never the token
-        else badge.setText("QA · case: " + (qaCase !== null ? qaCase : "full"));
-        for (var i = 0; i < qaNotes.length; i += 1) {
-          var noteBadge = el("span");
-          noteBadge.classList.add("case-note");
-          noteBadge.setText(qaNotes[i]);
-          badge.appendChild(noteBadge);
-        }
+        renderContainer(badge, "mode-badge", pollDriven, function (scratch) {
+          var base = el("span");
+          if (deps.location.protocol !== "file:") base.setText("LIVE"); // never the token
+          else base.setText("QA · case: " + (qaCase !== null ? qaCase : "full"));
+          scratch.appendChild(base);
+          for (var i = 0; i < qaNotes.length; i += 1) {
+            var noteBadge = el("span");
+            noteBadge.classList.add("case-note");
+            noteBadge.setText(qaNotes[i]);
+            scratch.appendChild(noteBadge);
+          }
+        });
       }
       var cap = byId("state-age-caption");
       if (cap) {
@@ -1365,17 +1466,18 @@
       }
       var badges = byId("degraded-badges");
       if (badges) {
-        clearNode(badges);
-        var entries = valid ? degradedEntries() : [];
-        for (var j = 0; j < entries.length; j += 1) {
-          var b = el("span");
-          b.classList.add("badge");
-          var kind = degradedKind(entries[j]);
-          if (kind === "advisory") b.classList.add("badge--advisory");
-          else if (kind === "freeze") b.classList.add("badge--freeze");
-          b.setText(entries[j]);
-          badges.appendChild(b);
-        }
+        renderContainer(badges, "degraded-badges", pollDriven, function (scratch) {
+          var entries = valid ? degradedEntries() : [];
+          for (var j = 0; j < entries.length; j += 1) {
+            var b = el("span");
+            b.classList.add("badge");
+            var kind = degradedKind(entries[j]);
+            if (kind === "advisory") b.classList.add("badge--advisory");
+            else if (kind === "freeze") b.classList.add("badge--freeze");
+            b.setText(entries[j]);
+            scratch.appendChild(b);
+          }
+        });
       }
       var dot = byId("live-dot");
       if (dot) {
@@ -1453,34 +1555,34 @@
       });
     }
 
-    function renderArmedBar() {
+    function renderArmedBar(pollDriven) {
       var slot = byId("armed-indicator-slot");
       if (!slot) return;
-      clearNode(slot);
-      var rec = effectivePending();
-      if (rec === null) return; // indicator absent
-      var status = typeof rec.status === "string" && rec.status !== "" ? rec.status : "";
-      var reason = typeof rec.reason === "string" && rec.reason !== "" ? rec.reason : null;
-      var wrap = el("span");
-      wrap.classList.add("armed-indicator");
-      if (status === "prompt-armed" || status === "await-birth") {
-        wrap.classList.add("armed--armed");
-        var tag = typeof rec.lane_tag === "string" ? rec.lane_tag : "";
-        wrap.setText("📋 prompt armed: " + tag + " — paste in ZCode");
-      } else if (status === "goal-armed") {
-        wrap.classList.add("armed--armed");
-        wrap.setText("📋 goal copied — paste in the SAME session");
-      } else if (status === "flagged") {
-        wrap.classList.add("armed--flagged");
-        wrap.setText("🚩 launch flagged — " + (reason !== null ? reason : "check pending"));
-      } else if (status === "cleared") {
-        wrap.classList.add("armed--cleared"); // dim tombstone, not armed styling
-        wrap.setText(reason !== null ? "✔ cleared — " + reason : "✔ cleared");
-      } else {
-        wrap.classList.add("armed--unknown");
-        wrap.setText("pending: " + (status !== "" ? status : "unknown"));
-      }
-      slot.appendChild(wrap);
+      renderContainer(slot, "armed-indicator-slot", pollDriven, function (scratch) {
+        var rec = effectivePending();
+        if (rec === null) return; // indicator absent
+        var status = typeof rec.status === "string" && rec.status !== "" ? rec.status : "";
+        var reason = typeof rec.reason === "string" && rec.reason !== "" ? rec.reason : null;
+        var wrap = el("span");
+        wrap.classList.add("armed-indicator");
+        if (status === "prompt-armed" || status === "await-birth") {
+          wrap.classList.add("armed--armed");
+          var tag = typeof rec.lane_tag === "string" ? rec.lane_tag : "";
+          wrap.setText("📋 prompt armed: " + tag + " — paste in ZCode");
+        } else if (status === "goal-armed") {
+          wrap.classList.add("armed--armed");
+          wrap.setText("📋 goal copied — paste in the SAME session");
+        } else if (status === "flagged") {
+          wrap.classList.add("armed--flagged");
+          wrap.setText("🚩 launch flagged — " + (reason !== null ? reason : "check pending"));
+        } else if (status === "cleared") {
+          wrap.classList.add("armed--cleared"); // dim tombstone, not armed styling
+          wrap.setText(reason !== null ? "✔ cleared — " + reason : "✔ cleared");
+        } else {
+          wrap.classList.add("armed--unknown");
+          wrap.setText("pending: " + (status !== "" ? status : "unknown"));
+        }
+        scratch.appendChild(wrap);
 
       var qaMode = deps.location.protocol === "file:";
       var armed = status === "prompt-armed" || status === "await-birth";
@@ -1522,6 +1624,7 @@
         }
         wrap.appendChild(x);
       }
+      });
     }
 
     // ---- Col 3: SESSIONS (SPEC 6.3) ----
@@ -1591,29 +1694,25 @@
       var bits = m.kind === "session" ? idleBits(m.lane) : [];
       var idle = el("span");
       idle.classList.add("session-idle");
-      if (bits.length === 0) idle.classList.add("stale");
-      idle.setText(
-        "idle " +
-          MCW.util.humanizeAge(memberAge(m)) +
-          (bits.length > 0 ? " · " + bits.join(" · ") : " · signals unknown")
-      );
-      row.appendChild(idle);
-      // T6 carry-over (d): clickable divs are keyboard-operable buttons too
-      // (the T4 lane pattern): role + tabindex + Enter/Space -> same action.
-      row.setAttribute("role", "button");
-      row.setAttribute("tabindex", "0");
-      if (typeof row.addEventListener === "function") {
-        row.addEventListener("click", function () {
-          copyText(m.id, null); // copy-without-label-swap (SPEC 7.2)
-        });
-        row.addEventListener("keydown", function (ev) {
-          var key = ev && typeof ev.key === "string" ? ev.key : "";
-          if (key === "Enter" || key === " " || key === "Spacebar") {
-            if (typeof ev.preventDefault === "function") ev.preventDefault();
-            copyText(m.id, null);
-          }
-        });
+      if (m.kind === "master") {
+        // T7 (E): masters carry no signals by contract (master = session_id /
+        // title / last_active_ago_s) — a dim "no signals", never the red
+        // "signals unknown" alarm. Still composed, never a bare "idle <age>".
+        idle.setText("idle " + MCW.util.humanizeAge(memberAge(m)) + " · no signals");
+      } else {
+        if (bits.length === 0) idle.classList.add("stale");
+        idle.setText(
+          "idle " +
+            MCW.util.humanizeAge(memberAge(m)) +
+            (bits.length > 0 ? " · " + bits.join(" · ") : " · signals unknown")
+        );
       }
+      row.appendChild(idle);
+      // T6 carry-over (d) + T7 (H): clickable rows are keyboard-operable too —
+      // one shared wiring helper (click + Enter/Space -> the same action).
+      wireClickable(row, function () {
+        copyText(m.id, null); // copy-without-label-swap (SPEC 7.2)
+      });
       parentEl.appendChild(row);
     }
 
@@ -1699,21 +1798,10 @@
       idSpan.classList.add("dim");
       idSpan.setText(" · " + u.id);
       row.appendChild(idSpan);
-      // T6 carry-over (d): keyboard parity with the session rows (T4 lane pattern).
-      row.setAttribute("role", "button");
-      row.setAttribute("tabindex", "0");
-      if (typeof row.addEventListener === "function") {
-        row.addEventListener("click", function () {
-          copyText(u.id, null);
-        });
-        row.addEventListener("keydown", function (ev) {
-          var key = ev && typeof ev.key === "string" ? ev.key : "";
-          if (key === "Enter" || key === " " || key === "Spacebar") {
-            if (typeof ev.preventDefault === "function") ev.preventDefault();
-            copyText(u.id, null);
-          }
-        });
-      }
+      // T6 carry-over (d) + T7 (H): keyboard parity via the shared wiring helper.
+      wireClickable(row, function () {
+        copyText(u.id, null);
+      });
       rowsEl.appendChild(row);
     }
 
@@ -1802,9 +1890,38 @@
     // The self-rescheduling 5s cadence (SPEC 4.3). pollTick — not pollOnce —
     // carries the chain, so a manual r-poll never double-schedules it and no
     // failure state (or freeze) ever stops polling (AC-24 poll-continues).
+    // T7 (G): in-flight guard — a fetch slower than the cadence must never
+    // stack concurrent polls (an older response could overwrite a fresher
+    // render). A tick landing while a poll is outstanding is skipped and
+    // counted; the count drains as back-to-back catch-up polls once the
+    // outstanding one settles, so totals stay correct.
+    var pollInFlight = false;
+    var pollMissedTicks = 0;
+
+    function pollGuarded() {
+      if (pollInFlight) {
+        pollMissedTicks += 1;
+        return Promise.resolve(null);
+      }
+      pollInFlight = true;
+      return Promise.resolve(pollOnce()).then(pollSettled, pollSettled);
+    }
+
+    function pollSettled() {
+      pollInFlight = false;
+      // Review clamp: a fetch hung across many ticks settles into ONE
+      // catch-up poll — never T/5 back-to-back GETs. The regular cadence
+      // resumes on the next tick.
+      pollMissedTicks = Math.min(pollMissedTicks, 1);
+      if (pollMissedTicks > 0) {
+        pollMissedTicks -= 1;
+        pollGuarded();
+      }
+    }
+
     function pollTick() {
       deps.schedule(pollTick, 5000);
-      pollOnce();
+      pollGuarded();
     }
 
     function pollFailure(detail) {
@@ -1813,7 +1930,7 @@
         live.polls += 1;
         live.failures += 1;
         live.lastDetail = typeof detail === "string" && detail !== "" ? detail : null;
-        render(); // panels keep the last-good render; dot stale; 3-strike banner
+        renderBody(true); // panels keep the last-good render; dot stale; 3-strike banner
       } catch (e) {
         // never throw out of the poll cycle
       }
@@ -1832,7 +1949,7 @@
         if (live.appliedVersion === null || v === live.appliedVersion) {
           live.appliedVersion = v; // the FIRST success applies (no reload — else boot loop)
           setDocument(docEl);
-          render();
+          renderBody(true);
         } else {
           // Flap-safe gate (SPEC 4.3): version changed vs the last APPLIED —
           // checked BEFORE rendering that doc; failed polls never reach here.
@@ -1858,10 +1975,16 @@
         degradedDismissed: false,
         token: liveToken(),
       };
-      app.pollOnce = pollOnce;
+      pollInFlight = false;
+      pollMissedTicks = 0;
+      // Review fix: the manual r-refresh routes through the SAME in-flight
+      // guard as the cadence (same call signature), so a manual poll can
+      // never overlap a poll-driven fetch.
+      app.pollOnce = pollGuarded;
       render(); // blank panels + waiting notes + stale dot (+ missing-token banner)
       if (live.token !== null) {
-        pollOnce();
+        pollGuarded(); // T7 (G): the boot poll owns the guard too — a slow first
+        // response must keep tick 1 from stacking on top of it.
         deps.schedule(pollTick, 5000);
       }
       return live.token;
