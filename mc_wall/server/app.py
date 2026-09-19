@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import http.client
 import http.server
 import json
@@ -14,10 +15,20 @@ import signal
 import threading
 import time
 import typing
+import urllib.parse
 
-from mc_wall.server import auth, templates
+from mc_wall.server import auth, state_contract, templates
 from mc_wall.server.logging_setup import setup_logging
-from mc_wall.server.pending import PendingStore
+from mc_wall.server.pending import (
+    STATUS_AWAIT_BIRTH,
+    STATUS_CLEARED,
+    STATUS_PROMPT_ARMED,
+    TERMINAL_STATUSES,
+    PendingRecord,
+    PendingStore,
+)
+
+MAX_BODY_BYTES = 65536
 
 DEFAULT_PORT = 8765
 DEFAULT_HOST = "127.0.0.1"
@@ -52,6 +63,11 @@ def _default_collect_state() -> dict:
     return collect_state()
 
 
+def deep_link(repo_root: str) -> str:
+    # safe="" percent-encodes the path separators too: /abs/repo -> %2Fabs%2Frepo.
+    return "zcode://workspace/open?path=" + urllib.parse.quote(repo_root, safe="")
+
+
 @dataclasses.dataclass
 class ServerConfig:
     token: str
@@ -69,7 +85,7 @@ class AppContext:
     web_dir: pathlib.Path
     log_dir: pathlib.Path
     collect_state: typing.Optional[typing.Callable[[], dict]] = None  # None -> lazy tower wrapper (T5)
-    runner: typing.Any = None  # None -> SubprocessRunner (T4 wires; until then unused)
+    runner: typing.Any = None  # None -> POST routes reply 500 (T6); T9 wires the SubprocessRunner() default
     pending: typing.Any = None  # PendingStore or None (T5 wires)
     allow_hosts: typing.FrozenSet[str] = auth.ALLOWED_HOSTS
     logger: logging.Logger = None
@@ -78,9 +94,9 @@ class AppContext:
 
 class WallRequestHandler(http.server.BaseHTTPRequestHandler):
     """Request pipeline, pinned order: Host gate -> token -> 302 -> GET/HEAD
-    routes -> POST placeholder (T6 wires) -> 405 for other methods. HEAD runs
-    the GET path with the body suppressed. No Access-Control-* header is ever
-    emitted (structural: _reply never adds one)."""
+    routes -> POST guard pipeline (411/413/415/400) + POST routes -> 405 for
+    other methods. HEAD runs the GET path with the body suppressed. No
+    Access-Control-* header is ever emitted (structural: _reply never adds one)."""
 
     def log_message(self, format, *args):  # noqa: A002
         # No-op: the default would log self.path — a token leak (AC-11).
@@ -148,9 +164,9 @@ class WallRequestHandler(http.server.BaseHTTPRequestHandler):
             else:
                 self._not_found(head_only=head_only)
             return
-        # 5. POST routes arrive in T6; until then 404 JSON not-found.
+        # 5. POST routes (T6): guard pipeline, then launch / cancel / re-copy.
         if method == "POST":
-            self._not_found(head_only=head_only)
+            self._dispatch_post(rest)
             return
         # 6. PUT/DELETE/PATCH/OPTIONS (and anything else routed here).
         self._reply(
@@ -162,8 +178,277 @@ class WallRequestHandler(http.server.BaseHTTPRequestHandler):
                     "message": "method not allowed",
                 }
             ).encode("utf-8"),
-            "application/json",
+            "application/json; charset=utf-8",
             head_only=head_only,
+        )
+
+    # ------------------------------------------------------------------ POST
+
+    def _dispatch_post(self, rest: str) -> None:
+        """POST guard pipeline, pinned order — before any route handler runs."""
+        ctx = self.server.ctx
+        # a) Transfer-Encoding present (any value) -> 411 (never chunked input).
+        if self.headers.get("Transfer-Encoding") is not None:
+            self._post_error(411, "length-required", "content-length required")
+            return
+        # b) Content-Length missing / unusable / > 65536 -> 413 BEFORE reading.
+        length_header = self.headers.get("Content-Length")
+        if length_header is None:
+            self._post_error(413, "payload-too-large", "content-length required")
+            return
+        try:
+            length = int(length_header)
+        except ValueError:
+            self._post_error(413, "payload-too-large", "unusable content-length")
+            return
+        if length < 0 or length > MAX_BODY_BYTES:  # negative would block the read
+            self._post_error(413, "payload-too-large", "body exceeds 65536 bytes")
+            return
+        # c) Content-Type must be application/json (parameters tolerated).
+        content_type = self.headers.get("Content-Type")
+        if content_type is None or not content_type.strip().lower().startswith(
+            "application/json"
+        ):
+            self._post_error(415, "unsupported-media-type", "application/json required")
+            return
+        # d) Capped read + JSON-dict check.
+        raw = self.rfile.read(min(length, MAX_BODY_BYTES))
+        try:
+            body = json.loads(raw.decode("utf-8"))
+        except ValueError:  # JSONDecodeError / UnicodeDecodeError
+            self._post_error(400, "bad-request", "body must be a JSON object")
+            return
+        if not isinstance(body, dict):
+            self._post_error(400, "bad-request", "body must be a JSON object")
+            return
+        # Route. These routes require the pending store and the runner to be
+        # configured (state_dir + runner wiring); otherwise 500, never a guess.
+        if rest in ("launch", "launch/cancel", "launch/re-copy"):
+            if ctx.pending is None or ctx.runner is None:
+                self._post_error(500, "internal-error", "server state not configured")
+                return
+            if rest == "launch":
+                self._launch(body)
+            elif rest == "launch/cancel":
+                self._cancel(body)
+            else:
+                self._recopy(body)
+            return
+        self._not_found()
+
+    def _post_error(self, status: int, error: str, message: str) -> None:
+        self._reply(
+            status,
+            json.dumps({"ok": False, "error": error, "message": message}).encode(
+                "utf-8"
+            ),
+            "application/json; charset=utf-8",
+        )
+
+    def _pending_dict(self) -> typing.Optional[dict]:
+        ctx = self.server.ctx
+        if ctx.pending is None:
+            return None
+        record = ctx.pending.snapshot()
+        return record.to_dict() if record is not None else None
+
+    def _resolve_row(self, row_id: str):
+        """Row lookup with NO lock held: returns (row, None) or (None, reply-sent)."""
+        ctx = self.server.ctx
+        try:
+            return state_contract.find_row(ctx.collect_state(), row_id), None
+        except state_contract.UnknownRowError:
+            self._post_error(404, "unknown-row", "no such row")
+            return None, True
+        except Exception as exc:  # degraded, same shape as /state
+            self._state_degraded(type(exc).__name__, self._pending_dict(), False)
+            return None, True
+
+    def _launch(self, body: dict) -> None:
+        ctx = self.server.ctx
+        store = ctx.pending
+        # 1. Validation (400) — no filesystem existence check on repo_root.
+        row_id = body.get("row_id")
+        repo_root = body.get("repo_root")
+        if not isinstance(row_id, str) or not row_id:
+            self._post_error(400, "bad-request", "row_id must be a non-empty string")
+            return
+        if not isinstance(repo_root, str) or not os.path.isabs(repo_root):
+            self._post_error(400, "bad-request", "repo_root must be an absolute path")
+            return
+        # 2. Resolve the row (runner untouched, nothing persisted on failure).
+        row, replied = self._resolve_row(row_id)
+        if replied:
+            return
+        prompt = row.get(state_contract.PROMPT_TEXT_KEY, "")
+        lane_tag = row.get(state_contract.LANE_TAG_KEY, "")
+        rec = PendingRecord(
+            status=STATUS_PROMPT_ARMED,
+            row_id=row_id,
+            lane_tag=lane_tag,
+            repo_root=repo_root,
+            prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+            launch_click_ms=(ctx.clock or _epoch_ms)(),
+        )
+        # 3. ONE locked step: slot check + create (TOCTOU-free). update() runs
+        #    the mutate under the store RLock and performs the durable write
+        #    there — the record is persisted BEFORE any side effect.
+        conflict: typing.Dict[str, PendingRecord] = {}
+
+        def _occupy(current: typing.Optional[PendingRecord]):
+            if (
+                current is not None
+                and current.status not in TERMINAL_STATUSES
+            ):  # slot_occupied(), evaluated inside the lock
+                conflict["current"] = current
+                return None  # occupied — no write
+            return rec
+
+        created = store.update(_occupy)
+        if "current" in conflict:
+            self._reply(
+                409,
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": "launch-pending",
+                        "message": "a launch is already pending",
+                        "pending": conflict["current"].to_dict(),
+                    }
+                ).encode("utf-8"),
+                "application/json; charset=utf-8",
+            )
+            return
+        # 4. Side effects, strictly after the durable persist; each wrapped.
+        runner = ctx.runner
+        warnings = []
+        try:
+            runner.copy(
+                templates.render_file(
+                    "prompt_block.txt", {"prompt_text": prompt}
+                )  # identity wrapper -> prompt verbatim
+            )
+        except Exception as exc:
+            warnings.append(f"side-effect-failed:{type(exc).__name__}")
+        try:
+            runner.open_url(deep_link(repo_root))
+        except Exception as exc:
+            warnings.append(f"side-effect-failed:{type(exc).__name__}")
+        # 5. Promote to await-birth. Identity-guarded: a cancel racing the
+        #    side effects replaces the record and is never resurrected.
+        def _promote(current: typing.Optional[PendingRecord]):
+            if current is rec:
+                rec.status = STATUS_AWAIT_BIRTH
+                return rec
+            return None
+
+        after = store.update(_promote) or store.snapshot() or rec
+        # 6. Audit — summary() triple only; never token/prompt/repo/lane tag.
+        if ctx.logger is not None:
+            ctx.logger.info(
+                "audit action=launch row_id=%s pending=%s",
+                row_id,
+                json.dumps(rec.summary()),
+            )
+        # 7.
+        self._reply(
+            200,
+            json.dumps(
+                {"ok": True, "pending": after.to_dict(), "warnings": warnings}
+            ).encode("utf-8"),
+            "application/json",
+        )
+
+    def _cancel(self, body: dict) -> None:
+        # body is any dict ({} accepted) — nothing read from it.
+        ctx = self.server.ctx
+        store = ctx.pending
+        seen: typing.Dict[str, typing.Optional[PendingRecord]] = {}
+
+        def _clear(current: typing.Optional[PendingRecord]):
+            seen["current"] = current
+            if current is None or current.status in TERMINAL_STATUSES:
+                return None  # nothing live — idempotent no-op, no write
+            return dataclasses.replace(
+                current, status=STATUS_CLEARED, reason="cancel"
+            )
+
+        cleared = store.update(_clear)
+        current = seen.get("current")
+        if ctx.logger is not None:
+            # Post-action state when one was written; the seen record (already
+            # terminal) for the idempotent no-op; shape fallback otherwise.
+            record = cleared if cleared is not None else current
+            summary = (
+                record.summary()
+                if record is not None
+                else {"status": None, "row_id": "", "flag": None}
+            )
+            ctx.logger.info(
+                "audit action=cancel row_id=%s pending=%s",
+                summary["row_id"],
+                json.dumps(summary),
+            )
+        self._reply(
+            200,
+            json.dumps(
+                {
+                    "ok": True,
+                    "pending": cleared.to_dict() if cleared is not None else None,
+                }
+            ).encode("utf-8"),
+            "application/json; charset=utf-8",
+        )
+
+    def _recopy(self, body: dict) -> None:
+        ctx = self.server.ctx
+        store = ctx.pending
+        rec = store.snapshot()
+        if rec is None or rec.status not in (STATUS_PROMPT_ARMED, STATUS_AWAIT_BIRTH):
+            self._post_error(
+                409, "not-await-birth", "re-copy only while awaiting birth"
+            )
+            return
+        # Cannot re-copy without the prompt: same resolution as launch.
+        row, replied = self._resolve_row(rec.row_id)
+        if replied:
+            return
+        prompt = row.get(state_contract.PROMPT_TEXT_KEY, "")
+        runner = ctx.runner
+        warnings = []
+        try:
+            runner.copy(
+                templates.render_file("prompt_block.txt", {"prompt_text": prompt})
+            )
+        except Exception as exc:
+            warnings.append(f"side-effect-failed:{type(exc).__name__}")
+        try:
+            runner.open_url(deep_link(rec.repo_root))
+        except Exception as exc:
+            warnings.append(f"side-effect-failed:{type(exc).__name__}")
+        # Clear the flag; launch_click_ms and status stay untouched.
+        def _unflag(current: typing.Optional[PendingRecord]):
+            if current is None:
+                return None
+            return dataclasses.replace(current, flag=None)
+
+        after = store.update(_unflag) or store.snapshot()
+        if ctx.logger is not None:
+            ctx.logger.info(
+                "audit action=re-copy row_id=%s pending=%s",
+                rec.row_id,
+                json.dumps((after or rec).summary()),
+            )
+        self._reply(
+            200,
+            json.dumps(
+                {
+                    "ok": True,
+                    "pending": after.to_dict() if after is not None else None,
+                    "warnings": warnings,
+                }
+            ).encode("utf-8"),
+            "application/json; charset=utf-8",
         )
 
     def _serve_static(self, name: str, head_only: bool = False) -> None:
@@ -257,7 +542,7 @@ class WallRequestHandler(http.server.BaseHTTPRequestHandler):
             json.dumps(
                 {"ok": False, "error": "not-found", "message": "not found"}
             ).encode("utf-8"),
-            "application/json",
+            "application/json; charset=utf-8",
             head_only=head_only,
         )
 
@@ -318,6 +603,11 @@ def _self_test(server: "WallServer") -> bool:
             resp = conn.getresponse()
             resp.read()
             status = resp.status
+        except Exception:
+            # HTTPException (e.g. BadStatusLine) is not an OSError subclass;
+            # without this guard it would escape start() before its
+            # shutdown/server_close cleanup, leaking the socket + serve thread.
+            return False
         finally:
             conn.close()
         if (status == 403) == must_pass:  # 403 on the ALLOWED probe, or non-403 on the EVIL probe -> fail
@@ -335,12 +625,15 @@ def create_server(
     allow_hosts: typing.Optional[typing.Iterable[str]] = None,
     collect_state: typing.Optional[typing.Callable[[], dict]] = None,
     state_dir: os.PathLike = None,
+    runner: typing.Any = None,
 ) -> WallServer:
     web_path = pathlib.Path(web_dir) if web_dir is not None else _repo_root() / "web"
     log_path = pathlib.Path(log_dir) if log_dir is not None else _default_wall_home() / "logs"
     allowed = (
         frozenset(allow_hosts) if allow_hosts is not None else auth.ALLOWED_HOSTS
     )
+    # runner=None stays None (tests inject FakeRunner; the POST routes reply
+    # 500 internal-error when the runner is missing). T9 wires the prod default.
     ctx = AppContext(
         token=token,
         web_dir=web_path,
@@ -349,15 +642,21 @@ def create_server(
         collect_state=(
             collect_state if collect_state is not None else _default_collect_state
         ),
+        runner=runner,
     )
     # Construct first: OSError on a busy port propagates BEFORE any logging.
     server = WallServer((host, port), ctx)
     logger = setup_logging(log_path, token)
     ctx.logger = logger
-    (log_path.parent / "state").mkdir(parents=True, exist_ok=True)
+    # Boot creates both dirs (log dir via setup_logging). mkdir the RESOLVED
+    # state dir — never a guessed sibling of log_dir when one is injected.
+    state_path = (
+        pathlib.Path(state_dir) if state_dir is not None else log_path.parent / "state"
+    )
+    state_path.mkdir(parents=True, exist_ok=True)
     if state_dir is not None:
         # Recovery load at construction, before start()/any request (T11 relies on this).
-        ctx.pending = PendingStore(pathlib.Path(state_dir))
+        ctx.pending = PendingStore(state_path)
         ctx.pending.load()
     server.start()
     return server
