@@ -498,6 +498,291 @@ button:disabled {
   font-size: 14px;
 }
 
+/* ---- T5: top-bar chrome — dot states, case note, degraded badges ---- */
+
+#live-dot.live {
+  background: var(--note);
+}
+
+#live-dot.stale {
+  background: var(--stale);
+}
+
+#live-dot.frozen {
+  background: var(--stale);
+  background-image: repeating-linear-gradient(45deg, color-mix(in srgb, var(--stale) 30%, transparent) 0 2px, transparent 2px 5px);
+}
+
+.case-note {
+  margin-left: 8px;
+  color: var(--derived);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+#degraded-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-dim);
+}
+
+.badge--advisory {
+  border-color: var(--derived);
+  color: var(--derived);
+}
+
+.badge--freeze {
+  border-color: var(--stale);
+  color: var(--stale);
+}
+
+/* ---- T5: banner strip (SPEC 8) ---- */
+
+#banner-strip {
+  padding: 8px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.banner-line {
+  margin: 2px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.banner--freeze {
+  color: var(--stale);
+}
+
+.banner--advisory {
+  color: var(--derived);
+}
+
+.banner--bad-doc {
+  color: var(--stale);
+}
+
+.banner--operator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.banner-dismiss {
+  min-width: 28px;
+}
+
+/* ---- T5: armed indicator (SPEC 7.3) ---- */
+
+.armed-indicator {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.armed--armed {
+  border: 2px solid var(--attention);
+  color: var(--attention);
+}
+
+.armed--flagged,
+.armed--unknown {
+  border: 2px solid var(--stale);
+  color: var(--stale);
+}
+
+.armed--cleared {
+  color: var(--ink-dim);
+}
+
+.armed-note--server-only {
+  color: var(--ink-dim);
+  font-size: 14px;
+}
+
+.armed-dismiss {
+  min-width: 28px;
+}
+
+/* ---- T5: freeze reactions (SPEC 8) — derived chips hatched, page locked ---- */
+
+body.frozen {
+  pointer-events: none;
+}
+
+body.frozen #grid {
+  filter: saturate(0.5) brightness(0.85);
+}
+
+body.frozen::after {
+  content: "";
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 40;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(45deg, color-mix(in srgb, var(--stale) 30%, transparent) 0 2px, transparent 2px 8px);
+}
+
+body.frozen .chip--derived {
+  background-image: repeating-linear-gradient(45deg, color-mix(in srgb, var(--stale) 30%, transparent) 0 2px, transparent 2px 6px);
+}
+
+/* notes degraded: {program} — the named card hatches + carries the caption */
+
+.program-card.degraded-notes {
+  background-image: repeating-linear-gradient(45deg, color-mix(in srgb, var(--stale) 30%, transparent) 0 2px, transparent 2px 6px);
+}
+
+.notes-degraded-caption {
+  margin-top: 4px;
+  color: var(--stale);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* goals degraded: {repo} — that repo's goal lines go stale */
+
+.goal-line.stale {
+  color: var(--stale);
+}
+
+/* ---- T5: Col 3 SESSIONS (SPEC 6.3) ---- */
+
+.session-group {
+  margin-top: 10px;
+}
+
+.session-group-head {
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--border);
+  color: var(--ink-dim);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.session-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  margin-top: 6px;
+  padding: 4px 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.session-row:hover {
+  border-color: var(--note);
+}
+
+.session-title {
+  font-weight: 600;
+}
+
+.session-master-tag {
+  color: var(--ink-dim);
+}
+
+.session-idle {
+  color: var(--ink-dim);
+}
+
+.session-idle.stale {
+  color: var(--stale);
+  font-weight: 600;
+}
+
+.idle-sub {
+  margin-top: 6px;
+}
+
+.idle-sub.collapsed .session-row {
+  display: none;
+}
+
+.idle-sub-head {
+  min-height: 26px;
+  padding: 2px 8px;
+  color: var(--ink-dim);
+}
+
+.idle-sub-head:hover {
+  border-color: var(--note);
+  color: var(--ink);
+}
+
+.idle-sub-head[aria-expanded="true"]::before {
+  content: "▾ ";
+}
+
+.idle-sub-head[aria-expanded="false"]::before {
+  content: "▸ ";
+}
+
+/* bottom strip: unmapped sessions; scrolls internally past 8 rows */
+
+.unmapped-strip {
+  margin-top: 14px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.unmapped-head {
+  color: var(--ink-dim);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.unmapped-rows {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.unmapped-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  margin-top: 6px;
+  padding: 4px 6px;
+  background: var(--panel-2);
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  font-size: 14px;
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+
+.unmapped-row:hover {
+  border-color: var(--note);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

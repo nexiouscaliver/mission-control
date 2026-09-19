@@ -90,6 +90,9 @@ function makeNode(tag) {
       node.dataset[camel] = String(value);
     }
   };
+  node.removeAttribute = function (key) {
+    delete node.attrs[key];
+  };
   node.setText = function (text) {
     // mirrors real-DOM textContent assignment: replacing text wipes children
     node.children.forEach((child) => {
@@ -1178,6 +1181,8 @@ test("AC-9[S]: every lane in every fixture maps to its trust chip class + stampe
   const items = loadApp().state.items;
   for (const caseName of NINE_CASES) {
     const doc = parseIndexMocks(readWebFile("index.html"))[caseName];
+    // T5: an L0-invalid doc (no-schema-version) renders BLANK panels (SPEC 3.3) — no chips to assert
+    if (!loadApp().state.validateDoc(doc).ok) continue;
     const { dom } = makeQaApp(caseName);
     const col1 = dom.getElementById("col1-programs");
     assert.ok(col1, caseName + ": col1 root must exist");
@@ -1569,6 +1574,17 @@ function docWith(verify, human) {
   };
 }
 
+// full-fixture clone with wall.pending.status swapped (T5 armed-bar matrix).
+function pendingDocWith(mocks, status, patch) {
+  const d = JSON.parse(JSON.stringify(mocks.full));
+  if (status === null) d.wall.pending = null;
+  else {
+    d.wall.pending.status = status;
+    if (patch) Object.assign(d.wall.pending, patch);
+  }
+  return d;
+}
+
 test("T4-carry: lane Enter/Space open the launch panel; dialog semantics; LAUNCH label", () => {
   const { app, dom } = makeQaApp("full");
   const lane = findByData(dom.getElementById("col1-programs"), "data-row-id", "W2-L1");
@@ -1761,7 +1777,7 @@ test("AC-15: merge cards — one inline row, badges, ready/pipeline states, unkn
   const ph2 = skip.dom.getElementById("panel-human");
   assert.ok(!findByData(ph2, "data-row-id", "!50"), "unknown kind row skipped");
   assert.ok(findByData(ph2, "data-row-id", "!51"), "kind merge renders");
-  assert.ok(collectText(ph2).indexOf("skipped 1 malformed rows") !== -1, "skip count note");
+  assert.ok(collectText(ph2).indexOf("skipped 1 unsupported rows") !== -1, "unknown-kind skip note (T5 wording)");
   // empty -> nothing owed
   const mini = makeQaApp("minimal");
   assert.ok(collectText(mini.dom.getElementById("panel-human")).indexOf("nothing owed") !== -1);
@@ -1958,10 +1974,14 @@ test("AC-19: keyboard map pure + dispatch (n/Esc/r; modifiers ignored; r QA re-r
   assert.strictEqual(app.dispatchKey({ key: "n", ctrlKey: true }), null, "modifiers never dispatch");
 });
 
-test("AC-8: rejected POSTs (activate-app, needs-me-now) → inline note only, banner strip empty", async () => {
+test("AC-8: rejected POSTs (activate-app, needs-me-now) → inline note only, banner strip unchanged", async () => {
   const s = makeLiveApp([{ reject: "network" }, { reject: "network" }]);
   const strip = s.dom.getElementById("banner-strip");
   assert.ok(strip, "banner strip exists in the shell");
+  // T5: the full fixture legitimately renders degraded + operator lines — a
+  // failed POST must not ADD any line to the strip.
+  const before = strip.children.length;
+  const textBefore = collectText(strip);
   // activate-app: click Bring ZCode forward on a verify row
   const row = findByData(s.dom.getElementById("panel-verify"), "data-row-id", "W2-L3");
   const az = byClass(row, "activate-btn")[0];
@@ -1974,13 +1994,14 @@ test("AC-8: rejected POSTs (activate-app, needs-me-now) → inline note only, ba
     byClass(s.dom.getElementById("panel-verify"), "inline-note--error").length >= 1,
     "inline failure note"
   );
-  assert.equal(strip.children.length, 0, "a failed POST never writes a banner line");
-  assert.ok("hidden" in strip.attrs, "banner strip stays hidden");
-  // needs-me-now rejection: inline note, still no banner
+  assert.equal(strip.children.length, before, "a failed POST never writes a banner line");
+  assert.equal(collectText(strip), textBefore, "banner text unchanged by the POST failure");
+  assert.ok(collectText(strip).indexOf("activate-app") === -1, "no failure wording reaches the strip");
+  // needs-me-now rejection: inline note, still no new banner line
   const r = await s.app.needsMeNow();
   assert.equal(s.fetchFn.calls[1].url, "/tok1/needs-me-now");
   assert.ok(r.note !== null, "rejection leaves a note");
-  assert.equal(strip.children.length, 0, "still no banner");
+  assert.equal(strip.children.length, before, "still no new banner line");
   // QA: the button is a visible no-op, zero fetch
   const fetchQa = fakeFetchScript([]);
   const qa = makeQaApp("full", Object.assign({ fetch: fetchQa }, clockDeps(fakeClock(FIXED_NOW_MS))));
@@ -2036,6 +2057,589 @@ test("T4-copy: copyText two-arg contract — label swap + restore, null owner, f
   assert.equal(collectText(btn2), "COPY VERIFY", "no swap on failure");
   const notes = byClass(fail.dom.body, "inline-note--error");
   assert.ok(notes.length >= 1 && collectText(notes[0]).indexOf("copy failed") !== -1, "copy failed note");
+});
+
+// =====================================================================
+// Tier: T5 — Col 3 SESSIONS + top bar + banners/freeze/degraded + armed
+//       bar (AC-1 / AC-3 badge / AC-10 / AC-16 / AC-20 / AC-22 / AC-24
+//       render / AC-29 / AC-33) + T4 review carry-overs (a)(b)(c)
+// =====================================================================
+
+test("T5-carry(b): fake DOM removeAttribute deletes attributes; setDisabled delegates to it", () => {
+  const node = makeFakeDocument().createElement("button");
+  node.setAttribute("disabled", "");
+  node.setAttribute("title", "x");
+  assert.ok("disabled" in node.attrs);
+  node.removeAttribute("disabled");
+  assert.ok(!("disabled" in node.attrs), "removeAttribute must delete the attr");
+  assert.equal(node.attrs.title, "x", "sibling attrs untouched");
+  // setDisabled now delegates to removeAttribute — no manual attrs surgery left
+  const src = readWebFile("app.js");
+  assert.ok(src.indexOf('node.removeAttribute("disabled")') !== -1, "setDisabled enable path calls removeAttribute");
+  assert.ok(src.indexOf("delete node.attrs") === -1, "no manual attrs deletion left in app.js");
+  // behavior round-trip on rendered controls still holds
+  const mini = makeQaApp("minimal");
+  assert.ok("disabled" in mini.dom.getElementById("needs-me-now").attrs, "0 owed disables the button");
+  const wired = makeQaApp("full");
+  const copyBtn = byClass(findByData(wired.dom.getElementById("panel-verify"), "data-row-id", "W3-L1"), "copy-verify-btn")[0];
+  assert.ok("disabled" in copyBtn.attrs, "empty verify_cmd disables COPY VERIFY");
+});
+
+test("T5-carry(a): QA keyboard r re-renders but preserves the arm override and dismissal", () => {
+  const { app, dom } = makeQaApp("full");
+  const slot = () => dom.getElementById("armed-indicator-slot");
+  // the override survives a keyboard refresh (r must not route through mountQA)
+  app.qaArmCycle(); // -> prompt-armed override
+  assert.equal(app.dispatchKey({ key: "r" }), "refresh");
+  assert.strictEqual(app.qaArmOverride, "prompt-armed", "r must not clear the QA arm override");
+  assert.ok(slot().children.length >= 1, "indicator still rendered after r");
+  assert.ok(collectText(slot()).indexOf("prompt armed") !== -1, "armed wording persists across the re-render");
+  // dismissal persists across re-render too (mock never resurfaces until reload)
+  assert.equal(typeof app.dismissQaArm, "function", "app.dismissQaArm exists (plan-pinned)");
+  app.dismissQaArm();
+  assert.equal(slot().children.length, 0, "x dismisses to null — not back to the mock value");
+  app.dispatchKey({ key: "r" });
+  assert.equal(slot().children.length, 0, "dismissal survives the keyboard re-render");
+  assert.strictEqual(app.qaArmOverride, null);
+  // mountQA still resets the demo state (per-mount fresh start, T3 pin)
+  app.mountQA("full");
+  assert.equal(slot().children.length, 1, "fresh mount re-shows the mock pending");
+});
+
+test("T5-carry(c): unknown human-row kind notes 'skipped N unsupported rows'; malformed keeps its wording", () => {
+  const s = makeQaApp("minimal");
+  s.app.setDocument(
+    docWith(
+      [],
+      [
+        { kind: "rebase", ref: "!50", repo: "r", repo_host: "gitlab", title: "t", pipeline: "p", ready: true },
+        null,
+        { kind: "merge", ref: "!51", repo: "r", repo_host: "gitlab", title: "t2", pipeline: "p", ready: true },
+      ]
+    )
+  );
+  s.app.render();
+  const ph = s.dom.getElementById("panel-human");
+  const text = collectText(ph);
+  assert.ok(text.indexOf("skipped 1 unsupported rows") !== -1, "unknown kind -> 'skipped N unsupported rows'");
+  assert.ok(text.indexOf("skipped 1 malformed rows") !== -1, "null row keeps the malformed wording");
+  assert.ok(!findByData(ph, "data-row-id", "!50"), "unsupported kind not rendered");
+  assert.ok(findByData(ph, "data-row-id", "!51"), "merge still renders");
+});
+
+test("AC-16: Col 3 — repo groups, master row, idle>24h collapse, unmapped strip, never-bare idle", async () => {
+  const copied = [];
+  const clock = fakeClock(FIXED_NOW_MS);
+  const { dom } = makeQaApp("full", Object.assign({ clipboard: stubClipboard(copied) }, clockDeps(clock)));
+  const col3 = dom.getElementById("col3-sessions");
+  assert.ok(col3.children.length >= 1, "col3 populated");
+
+  // groups: one per repo, headers alphabetical
+  const heads = byClass(col3, "session-group-head").map((h) => collectText(h));
+  assert.deepEqual(heads, ["cleo"], "every non-null lane.session grouped under lane.repo");
+
+  // direct rows age-ascending; master row placed in the first lane's repo group
+  const group = byClass(col3, "session-group")[0];
+  const sub = byClass(col3, "idle-sub")[0];
+  const directRows = group.children.filter((c) => c !== sub && c.classList.contains("session-row"));
+  assert.deepEqual(
+    directRows.map((r) => r.dataset.sessionId),
+    ["s-105", "s-master-1", "s-101", "s-107"],
+    "direct rows age ascending, master row inline"
+  );
+  const masterRow = findByData(col3, "data-session-id", "s-master-1");
+  assert.ok(collectText(masterRow).indexOf("mission-control tower") !== -1, "master title from master.title");
+  assert.ok(collectText(masterRow).indexOf("idle 6m") !== -1, "master idle from master.last_active_ago_s (412s -> 6m)");
+
+  // collapsed subsection for >24h members
+  assert.ok(sub, "idle >24h subsection exists");
+  const subHead = byClass(col3, "idle-sub-head")[0];
+  assert.equal(collectText(subHead), "idle >24h (1)");
+  assert.equal(subHead.attrs["aria-expanded"], "false", "collapsed by default");
+  assert.ok(sub.classList.contains("collapsed"), "collapsed class");
+  assert.ok(findByData(sub, "data-session-id", "s-103"), ">24h member sits inside the subsection");
+  assert.ok(collectText(findByData(col3, "data-session-id", "s-103")).indexOf("title pending") !== -1, "title_pending session row");
+  subHead.click();
+  assert.equal(subHead.attrs["aria-expanded"], "true", "click expands");
+  assert.ok(!sub.classList.contains("collapsed"));
+  subHead.click();
+  assert.equal(subHead.attrs["aria-expanded"], "false", "click collapses again");
+
+  // bottom strip: unmapped rows live ONLY there
+  const strip = byClass(col3, "unmapped-strip")[0];
+  assert.ok(strip, "unmapped strip present, visually separated");
+  assert.ok(collectText(byClass(strip, "unmapped-head")[0]).indexOf("unmapped (2)") !== -1, "strip header 'unmapped (N)'");
+  const umRows = byClass(strip, "unmapped-row");
+  assert.equal(umRows.length, 2);
+  assert.ok(collectText(umRows[0]).indexOf("scratch: rebase experiment") !== -1, "unmapped title");
+  assert.ok(collectText(umRows[0]).indexOf("2d") !== -1, "age humanized (172800s -> 2d)");
+  assert.ok(collectText(umRows[1]).indexOf("title pending") !== -1, "empty unmapped title -> title pending");
+  assert.equal(byClass(col3, "session-row").length, 5, "5 mapped rows (incl. master) outside the strip");
+  const css = readWebFile("style.css");
+  const rules = parseCssRules(css);
+  const umScroll = rules.find((r) => r.selector === ".unmapped-rows" && r.media === "");
+  assert.ok(umScroll && umScroll.decls["max-height"] && umScroll.decls["overflow-y"] === "auto", "unmapped strip scrolls internally past 8 rows");
+
+  // idle text NEVER bare: always composed (or signals unknown)
+  const idleLines = byClass(col3, "session-idle");
+  assert.ok(idleLines.length >= 5);
+  for (const line of idleLines) {
+    assert.match(collectText(line), /^idle \d+[smhd] · /, "idle text is never bare: '" + collectText(line) + "'");
+  }
+  const s101 = findByData(col3, "data-session-id", "s-101");
+  assert.ok(
+    collectText(s101).indexOf("idle 15m · goal active · tail next: patch join tiebreak · budget 5") !== -1,
+    "composed from goal state + queue tail + budget"
+  );
+  const s105idle = byClass(findByData(col3, "data-session-id", "s-105"), "session-idle")[0];
+  assert.ok(collectText(s105idle).indexOf("idle 1m · signals unknown") !== -1, "nothing composable -> signals unknown (95s humanizes to 1m)");
+  assert.ok(s105idle.classList.contains("stale"), "signals unknown is stale-styled");
+
+  // click copies the id via copyText(id, null) — session, master, unmapped
+  s101.click();
+  masterRow.click();
+  umRows[0].click();
+  await flushMicrotasks();
+  assert.deepEqual(copied, ["s-101", "s-master-1", "s-unmapped-1"], "row clicks copy the id");
+  assert.ok(collectText(dom.body).indexOf("copied ✓") === -1, "no label swap on session-row copies");
+});
+
+test("AC-16 in-test: (unconfigured repo) group, (no lanes) master group, tolerant master L4", () => {
+  function mkLane(rowId, repo, sid, age) {
+    return {
+      row_id: rowId,
+      repo: repo,
+      branch: null,
+      slug: null,
+      status_note: "",
+      status_parsed: "in-flight",
+      manifest: null,
+      session: { id: sid, title: "t " + sid, title_pending: false, dir: "", last_active_ago_s: age },
+      goal: null,
+      signals: { pushed: null, mr: null },
+      suggest_verify: null,
+      stalled: null,
+    };
+  }
+  const t = makeQaApp("minimal");
+  t.app.setDocument({
+    schema_version: 1,
+    server: { uptime_s: 0, generated_ts: 0, degraded: [], banner: null },
+    programs: [
+      {
+        program: "p1",
+        note_path: "",
+        note_mtime: 0,
+        objective: "",
+        master: { session_id: "s-m9", title: "orphan master", last_active_ago_s: 60 },
+        lanes: [],
+      },
+      {
+        program: "p2",
+        note_path: "",
+        note_mtime: 0,
+        objective: "",
+        master: { session_id: null, title: null, last_active_ago_s: null },
+        lanes: [mkLane("A-1", null, "s-x", 30), mkLane("A-2", "zeta", "s-z", 45)],
+      },
+    ],
+    verify_queue: [],
+    human_actions: [],
+    sessions_unmapped: [],
+    launch_pending: null,
+    wall: { pending: null },
+  });
+  t.app.render();
+  const col3 = t.dom.getElementById("col3-sessions");
+  const heads = byClass(col3, "session-group-head").map((h) => collectText(h));
+  assert.deepEqual(heads, ["(no lanes)", "(unconfigured repo)", "zeta"], "synthetic groups sort with the repos");
+  assert.ok(findByData(col3, "data-session-id", "s-m9"), "lanes:[] + non-null master -> (no lanes) group row");
+  assert.ok(
+    findByData(byClass(col3, "session-group")[0], "data-session-id", "s-m9"),
+    "the (no lanes) group holds the master row"
+  );
+  assert.ok(findByData(col3, "data-session-id", "s-x"), "null repo session -> (unconfigured repo) group");
+  assert.ok(findByData(col3, "data-session-id", "s-z"), "named repo group");
+
+  // L4: wrong-typed master fields read as null -> no master row at all
+  const t2 = makeQaApp("minimal");
+  t2.app.setDocument({
+    schema_version: 1,
+    server: { uptime_s: 0, generated_ts: 0, degraded: [], banner: null },
+    programs: [
+      {
+        program: "p9",
+        note_path: "",
+        note_mtime: 0,
+        objective: "",
+        master: { session_id: 42, title: "x", last_active_ago_s: "soon" },
+        lanes: [],
+      },
+    ],
+    verify_queue: [],
+    human_actions: [],
+    sessions_unmapped: [],
+    launch_pending: null,
+    wall: { pending: null },
+  });
+  t2.app.render();
+  assert.equal(byClass(t2.dom.getElementById("col3-sessions"), "session-row").length, 0, "wrong-typed master session_id -> no row");
+  assert.ok(collectText(t2.dom.getElementById("col3-sessions")).indexOf("no sessions") !== -1, "empty col3 -> 'no sessions'");
+});
+
+test("AC-1[S]: full QA render populates four panel roots + the whole top bar", () => {
+  const { dom } = makeQaApp("full");
+  for (const id of ["col1-programs", "panel-verify", "panel-human", "col3-sessions"]) {
+    const root = dom.getElementById(id);
+    assert.ok(root && root.children.length >= 1, "#" + id + " populated");
+    assert.ok(collectText(root).length > 0);
+  }
+  assert.equal(collectText(dom.getElementById("wordmark")), "MC WALL");
+  assert.ok(collectText(dom.getElementById("mode-badge")).indexOf("QA · case: full") !== -1, "mode badge names the QA case");
+  assert.equal(collectText(dom.getElementById("nmn-counter")), "4v·2m");
+  assert.equal(collectText(dom.getElementById("state-age-caption")), "state 5m", "state age from generated_ts via the injected clock");
+  assert.ok(dom.getElementById("live-dot").classList.contains("live"), "QA dot live once a doc rendered");
+  const badges = byClass(dom.getElementById("degraded-badges"), "badge");
+  assert.equal(badges.length, 2, "one badge per degraded entry");
+  assert.equal(collectText(badges[0]), "network degraded: git cleo", "badge text verbatim");
+  // banner strip: every entry verbatim + dismissable operator line
+  const strip = dom.getElementById("banner-strip");
+  assert.ok(!("hidden" in strip.attrs), "strip visible while lines exist");
+  const stripText = collectText(strip);
+  for (const e of ["network degraded: git cleo", "note rows skipped: 2"]) {
+    assert.ok(stripText.indexOf(e) !== -1, "degraded entry verbatim: " + e);
+  }
+  assert.ok(stripText.indexOf("QA fixture: embeds the literal") !== -1, "server.banner verbatim");
+  const dis = byClass(strip, "banner-dismiss")[0];
+  assert.ok(dis, "operator line dismissable");
+  dis.click();
+  assert.ok(collectText(strip).indexOf("QA fixture") === -1, "dismiss removes the operator line");
+  assert.ok(!("hidden" in strip.attrs), "degraded lines keep the strip visible");
+});
+
+test("AC-3: unknown case falls back to full with the note badge in the top bar", () => {
+  const { sel, dom } = makeQaApp("nope");
+  assert.deepEqual(sel, { appliedCase: "full", unknownCase: true });
+  const badgeText = collectText(dom.getElementById("mode-badge"));
+  assert.ok(badgeText.indexOf("QA · case: full") !== -1);
+  assert.ok(badgeText.indexOf("unknown mock case 'nope'") !== -1, "note badge wording (SPEC 4.2)");
+  const known = makeQaApp("unparsed");
+  assert.ok(collectText(known.dom.getElementById("mode-badge")).indexOf("unknown mock case") === -1, "known case -> no badge");
+});
+
+test("AC-20: armed wordings verbatim for every status; attention border; null absent", () => {
+  const mocks = parseIndexMocks(readWebFile("index.html"));
+  const slotOf = (dom) => dom.getElementById("armed-indicator-slot");
+  // prompt-armed (mock): exact wording, lane_tag verbatim with brackets
+  const full = makeQaApp("full");
+  const ind1 = byClass(slotOf(full.dom), "armed-indicator")[0];
+  assert.ok(ind1, "indicator renders for prompt-armed");
+  assert.equal(ind1.text, "📋 prompt armed: [secfix W2-L7] — paste in ZCode");
+  assert.ok(ind1.classList.contains("armed--armed"));
+  // await-birth: same armed wording
+  const ab = makeQaApp("minimal");
+  ab.app.setDocument(pendingDocWith(mocks, "await-birth"));
+  ab.app.render();
+  assert.equal(byClass(slotOf(ab.dom), "armed-indicator")[0].text, "📋 prompt armed: [secfix W2-L7] — paste in ZCode");
+  // goal-armed
+  const ga = makeQaApp("minimal");
+  ga.app.setDocument(pendingDocWith(mocks, "goal-armed"));
+  ga.app.render();
+  const ind3 = byClass(slotOf(ga.dom), "armed-indicator")[0];
+  assert.equal(ind3.text, "📋 goal copied — paste in the SAME session");
+  assert.ok(ind3.classList.contains("armed--armed"), "both armed wordings carry the attention styling");
+  // flagged: stale style + reason; null reason -> check pending
+  const pf = makeQaApp("pending-flagged");
+  const ind4 = byClass(slotOf(pf.dom), "armed-indicator")[0];
+  assert.equal(ind4.text, "🚩 launch flagged — ambiguous tags");
+  assert.ok(ind4.classList.contains("armed--flagged"));
+  const fnr = makeQaApp("minimal");
+  fnr.app.setDocument(pendingDocWith(mocks, "flagged", { reason: null }));
+  fnr.app.render();
+  assert.equal(byClass(slotOf(fnr.dom), "armed-indicator")[0].text, "🚩 launch flagged — check pending");
+  // cleared tombstone: dim, not armed styling; with + without reason
+  const cr = makeQaApp("minimal");
+  cr.app.setDocument(pendingDocWith(mocks, "cleared", { reason: "merged" }));
+  cr.app.render();
+  const ind5 = byClass(slotOf(cr.dom), "armed-indicator")[0];
+  assert.equal(ind5.text, "✔ cleared — merged");
+  assert.ok(ind5.classList.contains("armed--cleared"), "tombstone class");
+  assert.ok(!ind5.classList.contains("armed--armed"), "tombstone is NOT armed styling");
+  // unknown status: stale 'pending: <status>'
+  const uk = makeQaApp("minimal");
+  uk.app.setDocument(pendingDocWith(mocks, "mystery"));
+  uk.app.render();
+  const ind6 = byClass(slotOf(uk.dom), "armed-indicator")[0];
+  assert.equal(ind6.text, "pending: mystery");
+  assert.ok(ind6.classList.contains("armed--unknown"), "unknown status stale-styled");
+  // pending null -> indicator absent
+  assert.equal(slotOf(makeQaApp("pending-null").dom).children.length, 0, "pending-null case");
+  assert.equal(slotOf(makeQaApp("minimal").dom).children.length, 0, "wall.pending null");
+  // attention border CSS maps to the attention token
+  const armedRule = parseCssRules(readWebFile("style.css")).find((r) => r.selector === ".armed--armed" && r.media === "");
+  assert.ok(armedRule && /var\(--attention\)/.test(armedRule.decls["border"]), "armed border uses the attention token");
+});
+
+test("AC-20 QA demo: cycle exercises prompt-armed -> goal-armed -> cleared tombstone; x sets null-not-mock", () => {
+  const { app, dom } = makeQaApp("full");
+  const slot = dom.getElementById("armed-indicator-slot");
+  const ind = () => byClass(slot, "armed-indicator")[0] || null;
+  assert.ok(ind() !== null, "mock drives the initial state (prompt-armed)");
+  assert.equal(app.qaArmCycle(), "prompt-armed");
+  assert.ok(ind().classList.contains("armed--armed"));
+  assert.equal(app.qaArmCycle(), "goal-armed");
+  assert.equal(ind().text, "📋 goal copied — paste in the SAME session");
+  assert.equal(app.qaArmCycle(), "cleared");
+  const cleared = ind();
+  assert.equal(cleared.text, "✔ cleared", "cleared tombstone (mock reason null)");
+  assert.ok(cleared.classList.contains("armed--cleared"));
+  assert.ok(!cleared.classList.contains("armed--armed"));
+  assert.strictEqual(app.qaArmCycle(), null);
+  assert.ok(ind() !== null && ind().text.indexOf("prompt armed") !== -1, "cycle wraps back to the mock value");
+  // x dismiss: null — NOT the mock value; dismissed flag; demo still usable after
+  assert.equal(typeof app.dismissQaArm, "function");
+  app.dismissQaArm();
+  assert.equal(slot.children.length, 0, "indicator absent after x");
+  assert.strictEqual(app.effectivePending(), null, "effectivePending(): dismissed -> null");
+  assert.equal(typeof app.effectivePending, "function", "app.effectivePending exists (plan-pinned)");
+  app.qaArmCycle(); // prompt-armed override — the demo still works after a dismissal
+  const eff = app.effectivePending();
+  assert.equal(eff && eff.status, "prompt-armed", "override wins over doc.wall.pending");
+  assert.ok(ind() !== null, "override re-shows the indicator");
+});
+
+test("AC-33: armed LIVE operator escape — visibility matrix + POST shapes + fail-soft + QA server-only", async () => {
+  const mocks = parseIndexMocks(readWebFile("index.html"));
+  const MATRIX = [
+    ["prompt-armed", true, true],
+    ["await-birth", true, true],
+    ["goal-armed", false, true],
+    ["cleared", false, false],
+    ["flagged", false, false],
+    ["mystery", false, false],
+  ];
+  for (const [status, wantRecopy, wantCancel] of MATRIX) {
+    const s = makeLiveApp([{ status: 200, json: { ok: true } }, { status: 200, json: { ok: true } }]);
+    s.app.setDocument(pendingDocWith(mocks, status));
+    s.app.render();
+    const slot = s.dom.getElementById("armed-indicator-slot");
+    assert.equal(byClass(slot, "armed-recopy").length, wantRecopy ? 1 : 0, status + " re-copy visibility");
+    assert.equal(byClass(slot, "armed-cancel").length, wantCancel ? 1 : 0, status + " cancel visibility");
+    assert.equal(byClass(slot, "armed-dismiss").length, 0, "x is QA-only — never in LIVE");
+  }
+  // pending null -> no controls at all
+  {
+    const s = makeLiveApp([]);
+    s.app.setDocument(pendingDocWith(mocks, null));
+    s.app.render();
+    assert.equal(s.dom.getElementById("armed-indicator-slot").children.length, 0);
+  }
+  // pinned POST shapes
+  {
+    const s = makeLiveApp([{ status: 200, json: { ok: true } }, { status: 200, json: { ok: true } }]);
+    const slot = s.dom.getElementById("armed-indicator-slot");
+    byClass(slot, "armed-recopy")[0].click();
+    await flushMicrotasks();
+    byClass(slot, "armed-cancel")[0].click();
+    await flushMicrotasks();
+    assert.deepEqual(
+      s.fetchFn.calls,
+      [
+        { url: "/tok1/launch/re-copy", init: { method: "POST", body: "{}" } },
+        { url: "/tok1/launch/cancel", init: { method: "POST", body: "{}" } },
+      ],
+      "pinned armed POST shapes (SPEC 4.3)"
+    );
+  }
+  // 409 not-await-birth -> inline note on the indicator, never a banner
+  {
+    const s = makeLiveApp([{ status: 409, json: { error: "not-await-birth" } }]);
+    const slot = s.dom.getElementById("armed-indicator-slot");
+    byClass(slot, "armed-recopy")[0].click();
+    await flushMicrotasks();
+    const notes = byClass(slot, "inline-note--error");
+    assert.ok(notes.length >= 1 && collectText(notes[0]).indexOf("not-await-birth") !== -1, "409 renders the not-await-birth inline note");
+    assert.equal(collectText(s.dom.getElementById("banner-strip")).indexOf("not-await-birth"), -1, "never a banner");
+  }
+  // network failure -> inline note + page otherwise intact
+  {
+    const s = makeLiveApp([{ reject: "network" }]);
+    const slot = s.dom.getElementById("armed-indicator-slot");
+    byClass(slot, "armed-cancel")[0].click();
+    await flushMicrotasks();
+    const notes = byClass(slot, "inline-note--error");
+    assert.ok(notes.length >= 1 && collectText(notes[0]).indexOf("cancel failed") !== -1, "network failure inline note");
+    assert.equal(byClass(s.dom.getElementById("col1-programs"), "program-card").length, 2, "page otherwise intact");
+  }
+  // QA: controls render but no-op with a server-only note; x present
+  {
+    const fetchQa = fakeFetchScript([]);
+    const qa = makeQaApp("full", Object.assign({ fetch: fetchQa }, clockDeps(fakeClock(FIXED_NOW_MS))));
+    const slot = qa.dom.getElementById("armed-indicator-slot");
+    assert.equal(byClass(slot, "armed-recopy").length, 1, "re-copy renders in QA");
+    assert.equal(byClass(slot, "armed-cancel").length, 1, "cancel renders in QA");
+    assert.ok(collectText(slot).indexOf("server only") !== -1, "server-only note");
+    assert.equal(byClass(slot, "armed-dismiss").length, 1, "x renders in QA");
+    byClass(slot, "armed-recopy")[0].click();
+    byClass(slot, "armed-cancel")[0].click();
+    await flushMicrotasks();
+    assert.equal(fetchQa.calls.length, 0, "QA armed controls never fetch");
+  }
+  // the token never leaks into the top bar in LIVE
+  {
+    const s = makeLiveApp([]);
+    assert.equal(collectText(s.dom.getElementById("mode-badge")), "LIVE", "LIVE mode badge");
+    assert.ok(collectText(s.dom.getElementById("topbar")).indexOf("tok1") === -1, "token never displayed");
+  }
+});
+
+test("AC-24 render: freeze — frozen body class, verbatim non-dismissable banner, dot frozen, later doc clears", () => {
+  const fz = makeQaApp("freeze");
+  assert.ok(fz.dom.body.classList.contains("frozen"), "tracking degraded: -> body frozen");
+  const strip = fz.dom.getElementById("banner-strip");
+  assert.ok(!("hidden" in strip.attrs), "banner visible");
+  const text = collectText(strip);
+  assert.ok(text.indexOf("tracking degraded") !== -1, "freeze headline");
+  assert.ok(text.indexOf("tracking degraded: session store unreadable") !== -1, "entry verbatim");
+  assert.ok(byClass(strip, "banner--freeze").length >= 1, "freeze line class");
+  assert.equal(byClass(strip, "banner-dismiss").length, 0, "freeze banner is NOT dismissable");
+  assert.ok(fz.dom.getElementById("live-dot").classList.contains("frozen"), "dot frozen while frozen");
+  // freeze CSS machinery exists (page lock + hatched derived chips)
+  const rules = parseCssRules(readWebFile("style.css"));
+  const frozenBody = rules.find((r) => r.selector === "body.frozen" && r.media === "");
+  assert.ok(frozenBody && frozenBody.decls["pointer-events"] === "none", "body.frozen pointer-events none");
+  const frozenDerived = rules.find((r) => r.selector === "body.frozen .chip--derived" && r.media === "");
+  assert.ok(
+    frozenDerived && /repeating-linear-gradient/.test(frozenDerived.decls["background-image"] || ""),
+    "derived chips hatch under freeze (render stops trusting derived)"
+  );
+  // a later valid doc without such entries clears the frozen class + hides the strip
+  fz.app.mountQA("minimal");
+  assert.ok(!fz.dom.body.classList.contains("frozen"), "later doc clears freeze");
+  assert.ok("hidden" in fz.dom.getElementById("banner-strip").attrs, "strip re-hidden");
+});
+
+test("AC-29: degraded prefix reactions — notes/goals hatch, advisory badges, unknown verbatim-only", () => {
+  const mocks = parseIndexMocks(readWebFile("index.html"));
+  const ADVISORIES = [
+    "network degraded: git cleo",
+    "network degraded: mr cleo",
+    "join degraded: ambiguous tags s-1",
+    "join ambiguous session: tok9",
+    "launch state degraded: pending-launch unreadable",
+    "note rows skipped: 2",
+    "precondition state unknown: !12",
+  ];
+  const REACTIONS = ["notes degraded: secfix", "goals degraded: cleo"];
+  const UNKNOWNS = ["totally unknown entry: stuff", "notes degraded for stuff"];
+  const doc = JSON.parse(JSON.stringify(mocks.full));
+  doc.server.degraded = ADVISORIES.concat(REACTIONS, UNKNOWNS);
+  doc.server.banner = null;
+  const t = makeQaApp("full");
+  t.app.setDocument(doc);
+  t.app.render();
+  const dom = t.dom;
+  assert.ok(!dom.body.classList.contains("frozen"), "no freeze prefix present");
+  // every entry renders verbatim in the strip, one line each
+  const strip = dom.getElementById("banner-strip");
+  const lines = byClass(strip, "banner-line");
+  assert.equal(lines.length, ADVISORIES.length + REACTIONS.length + UNKNOWNS.length, "one line per entry");
+  const stripText = collectText(strip);
+  for (const e of ADVISORIES.concat(REACTIONS, UNKNOWNS)) {
+    assert.ok(stripText.indexOf(e) !== -1, "verbatim line: " + e);
+  }
+  // top-bar badges: advisory class exactly for the advisory prefixes
+  const badges = byClass(dom.getElementById("degraded-badges"), "badge");
+  assert.equal(badges.length, 11, "one badge per entry");
+  assert.equal(byClass(dom.getElementById("degraded-badges"), "badge--advisory").length, ADVISORIES.length, "advisory badges only for the closed prefixes");
+  const badgeTexts = badges.map((b) => collectText(b));
+  for (const e of ADVISORIES) assert.ok(badgeTexts.indexOf(e) !== -1, "advisory badge verbatim: " + e);
+  for (const e of UNKNOWNS) assert.ok(badgeTexts.indexOf(e) !== -1, "unknown entry still gets its verbatim badge");
+  // notes degraded: secfix -> that card hatched + caption; other cards untouched
+  const col1 = dom.getElementById("col1-programs");
+  const cards = byClass(col1, "program-card");
+  const hatched = byClass(col1, "degraded-notes");
+  assert.equal(hatched.length, 1, "exactly the named program hatches");
+  assert.ok(collectText(cards[0]).indexOf("secfix") !== -1 && hatched[0] === cards[0], "the secfix card is the hatched one");
+  assert.ok(collectText(hatched[0]).indexOf("notes degraded") !== -1, "notes degraded caption");
+  // 'notes degraded for stuff' (malformed, no exact prefix) hatches nothing extra
+  // goals degraded: cleo -> that repo's lanes' goal lines stale
+  const goalLines = byClass(col1, "goal-line");
+  assert.equal(goalLines.length, 4, "full has four goal lines (W2-L1, W2-L2, W2-L3, W2-L7)");
+  for (const g of goalLines) assert.ok(g.classList.contains("stale"), "cleo goal line stale-styled");
+  // CSS pins for the two chip reactions
+  const rules = parseCssRules(readWebFile("style.css"));
+  const hatchRule = rules.find((r) => r.selector === ".program-card.degraded-notes" && r.media === "");
+  assert.ok(hatchRule && /repeating-linear-gradient/.test(hatchRule.decls["background-image"] || ""), "hatched card rule");
+  const goalStale = rules.find((r) => r.selector === ".goal-line.stale" && r.media === "");
+  assert.ok(goalStale && /var\(--stale\)/.test(goalStale.decls["color"]), "stale goal-line rule");
+});
+
+test("AC-22: all nine cases parse+render with their pinned outcomes", () => {
+  for (const name of NINE_CASES) {
+    let ctx = null;
+    assert.doesNotThrow(() => {
+      ctx = makeQaApp(name);
+    }, name + " must mount+render without throwing");
+    assert.ok(ctx, name);
+  }
+  // no-schema-version: L0 -> bad-doc banner + blank panels (never partial data)
+  const bad = makeQaApp("no-schema-version");
+  assert.ok(
+    collectText(bad.dom.getElementById("banner-strip")).indexOf("wall: bad state document (schema)") !== -1,
+    "bad-doc banner wording"
+  );
+  for (const id of ["col1-programs", "panel-verify", "panel-human", "col3-sessions"]) {
+    const root = bad.dom.getElementById(id);
+    assert.equal(root.children.length, 1, id + " holds only the blank note");
+    assert.ok(collectText(root).indexOf("no data") !== -1);
+    for (const cls of ["program-card", "verify-row", "merge-card", "session-row", "unmapped-row"]) {
+      assert.equal(byClass(root, cls).length, 0, id + " renders no " + cls);
+    }
+  }
+  assert.ok(bad.dom.getElementById("live-dot").classList.contains("stale"), "no doc rendered -> stale dot");
+  // freeze: banner + frozen body (detail in AC-24)
+  assert.ok(makeQaApp("freeze").dom.body.classList.contains("frozen"));
+  // unparsed: UNPARSED lane renders stale-styled
+  const up = makeQaApp("unparsed");
+  assert.ok(byClass(up.dom.getElementById("col1-programs"), "chip--stale").length >= 1, "UNPARSED chip stale class");
+  assert.ok(collectText(up.dom.getElementById("col1-programs")).indexOf("Waiting on CI!!") !== -1, "status_note verbatim");
+  // minimal: every empty-state note + zero counters ('no programs' is the T4 reading of zero programs)
+  const mini = makeQaApp("minimal");
+  assert.ok(collectText(mini.dom.getElementById("col1-programs")).indexOf("no programs") !== -1, "zero programs -> 'no programs'");
+  assert.ok(collectText(mini.dom.getElementById("panel-verify")).indexOf("nothing to verify") !== -1);
+  assert.ok(collectText(mini.dom.getElementById("panel-human")).indexOf("nothing owed") !== -1);
+  assert.ok(collectText(mini.dom.getElementById("col3-sessions")).indexOf("no sessions") !== -1);
+  assert.equal(collectText(mini.dom.getElementById("nmn-counter")), "0v·0m");
+  // pending-null: indicator absent
+  assert.equal(makeQaApp("pending-null").dom.getElementById("armed-indicator-slot").children.length, 0);
+  // pending-flagged: flag state + reason
+  const pf = makeQaApp("pending-flagged");
+  const ind = byClass(pf.dom.getElementById("armed-indicator-slot"), "armed-indicator")[0];
+  assert.ok(ind && ind.classList.contains("armed--flagged"));
+  assert.equal(ind.text, "🚩 launch flagged — ambiguous tags");
+  // empty-lanes: col1 note + col3 empty (its master is all-null)
+  const el = makeQaApp("empty-lanes");
+  assert.ok(collectText(el.dom.getElementById("col1-programs")).indexOf("no lanes") !== -1);
+  assert.ok(collectText(el.dom.getElementById("col3-sessions")).indexOf("no sessions") !== -1);
+});
+
+test("AC-10: banned word — no /\\bfinished\\b/i in any case's rendered text", () => {
+  assert.ok(/\bfinished\b/i.test("all lanes finished"), "regex self-check");
+  for (const name of NINE_CASES) {
+    const { dom } = makeQaApp(name);
+    let text = "";
+    for (const id of ["topbar", "banner-strip", "grid", "launch-panel"]) {
+      const n = dom.getElementById(id);
+      if (n) text += collectText(n);
+    }
+    assert.ok(!/\bfinished\b/i.test(text), name + " rendered text contains the banned word");
+    if (name === "full") {
+      // coverage guard: the scan must SEE col3 + the armed bar (where a leak would hide)
+      assert.ok(text.indexOf("unmapped (2)") !== -1, "scan covers col3 text");
+      assert.ok(text.indexOf("prompt armed") !== -1, "scan covers the armed bar text");
+    }
+  }
 });
 
 // ---------------- runner ----------------

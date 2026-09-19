@@ -36,6 +36,9 @@
       };
     });
     lazy("location", function () {
+      // Degrade under node (no global location): file:-style QA defaults so
+      // render paths never crash — the injectable override stays authoritative.
+      if (typeof location === "undefined") return { protocol: "file:", pathname: "/", search: "" };
       return { protocol: location.protocol, pathname: location.pathname, search: location.search };
     });
     lazy("clipboard", function () {
@@ -178,24 +181,30 @@
       return MCW.util.humanizeAge(Math.floor(deps.now() / 1000) - mtime);
     }
 
-    // T3/T4 render: Col 1 + Col 2 render from the mounted state document;
-    // col3 keeps a dim note until T5 fills it.
+    // T5 render: Cols 1-3 + top bar + banner strip + armed bar from the mounted
+    // state document. An L0-invalid doc renders BLANK panels with notes — never
+    // partial data (SPEC 3.3) — plus the page-generated bad-doc banner.
     function render(nextDoc) {
       if (arguments.length > 0) setDocument(nextDoc);
       ensureShell();
+      var valid = stateDoc !== null && MCW.state.validateDoc(stateDoc).ok;
       var blankNote = stateDoc === null ? "waiting for mock" : "no data";
       for (var i = 0; i < PANEL_ROOT_IDS.length; i += 1) {
         var id = PANEL_ROOT_IDS[i];
         var rootEl = byId(id);
         if (!rootEl) continue;
-        if (stateDoc !== null && id === "col1-programs") renderCol1(rootEl);
-        else if (stateDoc !== null && id === "panel-verify") renderCol2Verify(rootEl);
-        else if (stateDoc !== null && id === "panel-human") renderCol2Human(rootEl);
+        if (valid && id === "col1-programs") renderCol1(rootEl);
+        else if (valid && id === "panel-verify") renderCol2Verify(rootEl);
+        else if (valid && id === "panel-human") renderCol2Human(rootEl);
+        else if (valid && id === "col3-sessions") renderCol3(rootEl);
         else {
           clearNode(rootEl);
           appendNote(rootEl, blankNote);
         }
       }
+      renderBanners(stateDoc); // sets freezeActive before the dot reads it
+      renderTopBar(valid);
+      renderArmedBar();
       updateNeedsMeNow();
       wireNeedsMeNow();
     }
@@ -247,6 +256,16 @@
       }
       head.appendChild(stamp);
       card.appendChild(head);
+
+      // T5 degraded reaction (SPEC 8): "notes degraded: {program}" hatches the
+      // named card + carries the caption. Exact prefix match only.
+      if (name !== "" && degradedTargets("notes degraded: ")[name]) {
+        card.classList.add("degraded-notes");
+        var ndCap = el("div");
+        ndCap.classList.add("notes-degraded-caption");
+        ndCap.setText("notes degraded");
+        card.appendChild(ndCap);
+      }
 
       var laneRes = MCW.state.items(prog.lanes, "row_id");
       var listEl = el("div");
@@ -358,6 +377,11 @@
         gl.classList.add("goal-line");
         var gstate = typeof goal.state === "string" && goal.state !== "" ? goal.state : "unknown";
         gl.setText("goal " + gstate + goalSuffix(goal));
+        // T5 degraded reaction (SPEC 8): "goals degraded: {repo}" stales that
+        // repo's goal lines. Exact prefix match only.
+        if (typeof lane.repo === "string" && lane.repo !== "" && degradedTargets("goals degraded: ")[lane.repo]) {
+          gl.classList.add("stale");
+        }
         laneEl.appendChild(gl);
       }
 
@@ -419,18 +443,34 @@
     }
 
     // "goal <state> · tail <queue_tail> · budget <budget>", non-zero bits only.
-    function goalSuffix(goal) {
-      var out = "";
+    // goalBits is shared by the Col-1 goal line and the Col-3 idle composition.
+    function goalBits(goal) {
+      var out = [];
       if (typeof goal.queue_tail === "string" && goal.queue_tail !== "") {
-        out += " · tail " + goal.queue_tail;
+        out.push("tail " + goal.queue_tail);
       }
       var b = goal.budget;
       if (typeof b === "number" && b > 0) {
-        out += " · budget " + b;
+        out.push("budget " + b);
       } else if (isPlainObject(b) && isInt(b.whole_run) && b.whole_run > 0) {
-        out += " · budget " + b.whole_run;
+        out.push("budget " + b.whole_run);
       }
       return out;
+    }
+    function goalSuffix(goal) {
+      var bits = goalBits(goal);
+      return bits.length > 0 ? " · " + bits.join(" · ") : "";
+    }
+    // Col-3 idle composition (SPEC 6.3): "idle <age>" is NEVER bare — the
+    // lane's goal state / tail / budget compose it; [] means "signals unknown".
+    function idleBits(lane) {
+      var bits = [];
+      var goal = nullable(lane.goal);
+      if (goal !== null) {
+        if (typeof goal.state === "string" && goal.state !== "") bits.push("goal " + goal.state);
+        bits = bits.concat(goalBits(goal));
+      }
+      return bits;
     }
 
     // T2: the mounted state document (stash for T3+ renderers). Non-documents
@@ -453,10 +493,12 @@
     // one implementation.
     function mountQA(caseName) {
       app.qaArmOverride = null; // QA arm-demo override is per-mount, in-memory only
+      app.qaArmDismissed = false; // fresh mount re-offers the mock pending
       var requested = typeof caseName === "string" && caseName !== "" ? caseName : null;
       var search = requested !== null ? "?case=" + encodeURIComponent(requested) : "";
       var n = MCW.state.normalize(doc, { search: search });
-      qaCase = n.case; // remembered so keyboard r can re-mount in QA
+      qaCase = n.case; // remembered for the top-bar mode badge
+      qaNotes = n.notes; // e.g. "unknown mock case '<name>'" -> note badge
       setDocument(n.doc);
       render();
       return { appliedCase: n.case, unknownCase: !!(requested !== null && n.case !== requested) };
@@ -468,12 +510,13 @@
 
     // QA-only armed-demo override (SPEC 7.3): LAUNCH cycles the override
     // null -> prompt-armed -> goal-armed -> cleared -> null. In-memory only;
-    // mountQA and a page reload reset it. The armed bar itself renders in T5.
+    // mountQA and a page reload reset it. T5: each cycle refreshes the bar.
     var QA_ARM_ORDER = [null, "prompt-armed", "goal-armed", "cleared"];
     function qaArmCycle() {
       var idx = QA_ARM_ORDER.indexOf(app.qaArmOverride);
       if (idx === -1) idx = 0;
       app.qaArmOverride = QA_ARM_ORDER[(idx + 1) % QA_ARM_ORDER.length];
+      renderArmedBar();
       return app.qaArmOverride;
     }
 
@@ -554,8 +597,10 @@
       ph.setText("prompt preview: not in v1 state contract");
       panelEl.appendChild(ph);
 
-      if (app._pendingStatus !== null) {
-        launchLine(panelEl, "pending", app._pendingStatus, true);
+      // T5: the effective pending record (QA override aware) feeds the panel.
+      var effPending = effectivePending();
+      if (effPending !== null) {
+        launchLine(panelEl, "pending", typeof effPending.status === "string" ? effPending.status : "", true);
       }
 
       var live = deps.location.protocol !== "file:";
@@ -623,18 +668,16 @@
     var nmnWired = false; // #needs-me-now click wiring is one-shot
     var qaCase = null; // applied case, so keyboard r can re-mount in QA
 
-    // Disabled toggling without removeAttribute (not in the fake-DOM surface):
-    // setAttribute on disable; property + guarded attr clear on enable.
+    // Disabled toggling through the shared DOM surface: setAttribute on
+    // disable; property + removeAttribute on enable (real DOM and the
+    // selftest's fake DOM both implement removeAttribute).
     function setDisabled(node, isDisabled) {
       if (isDisabled) {
         node.setAttribute("disabled", "");
         node.disabled = true;
       } else {
         node.disabled = false;
-        if (node.attrs && Object.prototype.hasOwnProperty.call(node.attrs, "disabled")) {
-          delete node.attrs.disabled;
-        }
-        if (typeof node.removeAttribute === "function") node.removeAttribute("disabled");
+        node.removeAttribute("disabled");
       }
     }
 
@@ -709,8 +752,10 @@
     }
 
     function owedCounts() {
-      var v = stateDoc !== null && Array.isArray(stateDoc.verify_queue) ? stateDoc.verify_queue.length : 0;
-      var m = stateDoc !== null && Array.isArray(stateDoc.human_actions) ? stateDoc.human_actions.length : 0;
+      // An L0-invalid doc serves no partial data anywhere — not even the counter.
+      if (stateDoc === null || !MCW.state.validateDoc(stateDoc).ok) return { v: 0, m: 0 };
+      var v = Array.isArray(stateDoc.verify_queue) ? stateDoc.verify_queue.length : 0;
+      var m = Array.isArray(stateDoc.human_actions) ? stateDoc.human_actions.length : 0;
       return { v: v, m: m };
     }
 
@@ -874,15 +919,17 @@
         return;
       }
       var res = MCW.state.items(stateDoc.human_actions, "ref");
-      var skipped = res.skipped;
+      var skipped = res.skipped; // L3: null / non-object / identity-less rows
+      var unsupported = 0; // unknown kind (v1 emits only kind "merge")
       var merges = [];
       for (var i = 0; i < res.valid.length; i += 1) {
         if (res.valid[i].kind === "merge") merges.push(res.valid[i]);
-        else skipped += 1; // v1 emits only kind "merge"
+        else unsupported += 1;
       }
       if (merges.length === 0) appendNote(rootEl, "nothing owed");
       for (var j = 0; j < merges.length; j += 1) renderMergeCard(rootEl, merges[j]);
       if (skipped > 0) appendNote(rootEl, "skipped " + skipped + " malformed rows");
+      if (unsupported > 0) appendNote(rootEl, "skipped " + unsupported + " unsupported rows");
     }
 
     function renderMergeCard(rootEl, m) {
@@ -1080,11 +1127,505 @@
       }
       if (action === "refresh") {
         if (typeof app.pollOnce === "function") return app.pollOnce();
-        if (qaCase !== null) mountQA(qaCase);
-        else render();
+        // QA re-render WITHOUT mountQA: the armed override/dismissal persist
+        // across re-renders (SPEC 7.3; carry-over fix from the T4 review).
+        render();
         return action;
       }
       return null;
+    }
+
+    // =====================================================================
+    // T5: Col 3 SESSIONS (SPEC 6.3) + top bar (6.4) + banners/freeze/degraded
+    //     reactions (8) + armed bar (7.3).
+    // =====================================================================
+
+    var qaNotes = []; // normalize notes (unknown mock case) for the top-bar badge
+    var freezeActive = false; // tracking degraded: prefix seen in the current doc
+
+    // ---- degraded-entry machinery (SPEC 8 closed vocabulary, PREFIX matching) ----
+
+    function degradedEntriesOf(docEl) {
+      var serverObj = docEl !== null && docEl !== undefined ? nullable(docEl.server) : null;
+      var d = serverObj !== null && Array.isArray(serverObj.degraded) ? serverObj.degraded : [];
+      var out = [];
+      for (var i = 0; i < d.length; i += 1) out.push(typeof d[i] === "string" ? d[i] : String(d[i]));
+      return out;
+    }
+    function degradedEntries() {
+      return stateDoc !== null ? degradedEntriesOf(stateDoc) : [];
+    }
+
+    var ADVISORY_PREFIXES = [
+      "network degraded:",
+      "join degraded:",
+      "join ambiguous session:",
+      "launch state degraded:",
+      "note rows skipped:",
+      "precondition state unknown:",
+    ];
+    // Exact prefix match against the closed vocabulary — never substring.
+    function degradedKind(entry) {
+      if (entry.indexOf("tracking degraded:") === 0) return "freeze";
+      if (entry.indexOf("notes degraded:") === 0) return "notes";
+      if (entry.indexOf("goals degraded:") === 0) return "goals";
+      for (var i = 0; i < ADVISORY_PREFIXES.length; i += 1) {
+        if (entry.indexOf(ADVISORY_PREFIXES[i]) === 0) return "advisory";
+      }
+      return "unknown";
+    }
+    // Names after "notes degraded: " / repos after "goals degraded: ".
+    function degradedTargets(prefix) {
+      var out = {};
+      var entries = degradedEntries();
+      for (var i = 0; i < entries.length; i += 1) {
+        if (entries[i].indexOf(prefix) === 0) out[entries[i].slice(prefix.length)] = true;
+      }
+      return out;
+    }
+
+    // ---- banner strip (SPEC 8): degraded lines verbatim, freeze headline,
+    //      dismissable operator line, page-generated bad-doc line ----
+
+    function renderBanners(docEl) {
+      var strip = byId("banner-strip");
+      if (!strip) return;
+      clearNode(strip);
+      freezeActive = false;
+      var valid = docEl !== null && isPlainObject(docEl) && MCW.state.validateDoc(docEl).ok;
+      if (valid) {
+        var entries = degradedEntriesOf(docEl);
+        for (var i = 0; i < entries.length; i += 1) {
+          var line = el("div");
+          line.classList.add("banner-line");
+          var kind = degradedKind(entries[i]);
+          if (kind === "freeze") {
+            freezeActive = true; // L1: freeze while ANY tracking-degraded entry exists
+            line.classList.add("banner--freeze");
+            var headline = el("strong");
+            headline.setText("tracking degraded");
+            line.appendChild(headline);
+            var entrySpan = el("span");
+            entrySpan.setText(" " + entries[i]);
+            line.appendChild(entrySpan);
+          } else {
+            line.setText(entries[i]);
+            if (kind === "advisory") line.classList.add("banner--advisory");
+          }
+          strip.appendChild(line);
+        }
+        var serverObj = nullable(docEl.server);
+        var banner =
+          serverObj !== null && typeof serverObj.banner === "string" && serverObj.banner !== ""
+            ? serverObj.banner
+            : null;
+        if (banner !== null) {
+          var op = el("div");
+          op.classList.add("banner-line");
+          op.classList.add("banner--operator");
+          var opText = el("span");
+          opText.setText(banner);
+          op.appendChild(opText);
+          var dismiss = el("button");
+          dismiss.setAttribute("type", "button");
+          dismiss.classList.add("banner-dismiss");
+          dismiss.setAttribute("aria-label", "dismiss banner");
+          dismiss.setText("×");
+          if (typeof dismiss.addEventListener === "function") {
+            dismiss.addEventListener("click", function () {
+              if (op.parentNode) op.parentNode.removeChild(op);
+              if (strip.children.length === 0) strip.setAttribute("hidden", "");
+            });
+          }
+          op.appendChild(dismiss);
+          strip.appendChild(op);
+        }
+      } else if (docEl !== null && isPlainObject(docEl)) {
+        // L0 in QA: page-generated wording; never the reserved tracking prefix.
+        var v = MCW.state.validateDoc(docEl);
+        var bad = el("div");
+        bad.classList.add("banner-line");
+        bad.classList.add("banner--bad-doc");
+        bad.setText("wall: bad state document (" + v.reason + ")");
+        strip.appendChild(bad);
+      }
+      if (strip.children.length > 0) strip.removeAttribute("hidden");
+      else strip.setAttribute("hidden", "");
+      if (doc && doc.body) {
+        if (freezeActive) doc.body.classList.add("frozen");
+        else doc.body.classList.remove("frozen");
+      }
+    }
+
+    // ---- top bar (SPEC 6.4) ----
+
+    function renderTopBar(valid) {
+      var badge = byId("mode-badge");
+      if (badge) {
+        clearNode(badge);
+        if (deps.location.protocol !== "file:") badge.setText("LIVE"); // never the token
+        else badge.setText("QA · case: " + (qaCase !== null ? qaCase : "full"));
+        for (var i = 0; i < qaNotes.length; i += 1) {
+          var noteBadge = el("span");
+          noteBadge.classList.add("case-note");
+          noteBadge.setText(qaNotes[i]);
+          badge.appendChild(noteBadge);
+        }
+      }
+      var cap = byId("state-age-caption");
+      if (cap) {
+        var ts = 0;
+        if (valid) {
+          var serverObj = nullable(stateDoc.server);
+          if (serverObj !== null && isInt(serverObj.generated_ts)) ts = serverObj.generated_ts;
+        }
+        if (ts === 0) cap.setText("state age unknown");
+        else cap.setText("state " + MCW.util.humanizeAge(Math.floor(deps.now() / 1000) - ts));
+      }
+      var badges = byId("degraded-badges");
+      if (badges) {
+        clearNode(badges);
+        var entries = valid ? degradedEntries() : [];
+        for (var j = 0; j < entries.length; j += 1) {
+          var b = el("span");
+          b.classList.add("badge");
+          var kind = degradedKind(entries[j]);
+          if (kind === "advisory") b.classList.add("badge--advisory");
+          else if (kind === "freeze") b.classList.add("badge--freeze");
+          b.setText(entries[j]);
+          badges.appendChild(b);
+        }
+      }
+      var dot = byId("live-dot");
+      if (dot) {
+        dot.classList.remove("live");
+        dot.classList.remove("stale");
+        dot.classList.remove("frozen");
+        if (freezeActive) dot.classList.add("frozen");
+        else if (valid) dot.classList.add("live");
+        else dot.classList.add("stale");
+      }
+    }
+
+    // ---- armed bar (SPEC 7.3) ----
+
+    function docPending() {
+      if (stateDoc === null) return null;
+      var wall = nullable(stateDoc.wall);
+      return wall !== null ? nullable(wall.pending) : null;
+    }
+    // Resolution of record: QA override wins (override + mock record fields),
+    // dismissed suppresses the mock entirely, else the document's pending.
+    function effectivePending() {
+      if (app.qaArmOverride !== null) {
+        var base = docPending();
+        var rec = base !== null ? Object.assign({}, base) : {};
+        rec.status = app.qaArmOverride;
+        return rec;
+      }
+      if (app.qaArmDismissed) return null;
+      return docPending();
+    }
+
+    function dismissQaArm() {
+      app.qaArmOverride = null;
+      app.qaArmDismissed = true; // the mock no longer shows until reload/remount
+      renderArmedBar();
+      return true;
+    }
+
+    function armedPost(kind, anchor) {
+      var token = liveToken();
+      if (token === null) {
+        transientNote("server only", anchor);
+        return Promise.resolve(false);
+      }
+      var post;
+      try {
+        post = deps.fetch("/" + token + "/launch/" + kind, { method: "POST", body: "{}" });
+      } catch (e) {
+        transientNote(kind + " failed", anchor, true);
+        return Promise.resolve(false);
+      }
+      return Promise.resolve(post)
+        .then(function (res) {
+          if (res.ok) return true;
+          if (res.status === 409) {
+            transientNote("not-await-birth", anchor, true);
+            return false;
+          }
+          transientNote(kind + " failed", anchor, true);
+          return false;
+        })
+        .catch(function () {
+          transientNote(kind + " failed", anchor, true);
+          return false;
+        });
+    }
+
+    function wireArmedControl(btn, kind, qaMode) {
+      if (typeof btn.addEventListener !== "function") return;
+      btn.addEventListener("click", function () {
+        if (qaMode || liveToken() === null) {
+          transientNote("server only", btn);
+          return;
+        }
+        armedPost(kind, btn);
+      });
+    }
+
+    function renderArmedBar() {
+      var slot = byId("armed-indicator-slot");
+      if (!slot) return;
+      clearNode(slot);
+      var rec = effectivePending();
+      if (rec === null) return; // indicator absent
+      var status = typeof rec.status === "string" && rec.status !== "" ? rec.status : "";
+      var reason = typeof rec.reason === "string" && rec.reason !== "" ? rec.reason : null;
+      var wrap = el("span");
+      wrap.classList.add("armed-indicator");
+      if (status === "prompt-armed" || status === "await-birth") {
+        wrap.classList.add("armed--armed");
+        var tag = typeof rec.lane_tag === "string" ? rec.lane_tag : "";
+        wrap.setText("📋 prompt armed: " + tag + " — paste in ZCode");
+      } else if (status === "goal-armed") {
+        wrap.classList.add("armed--armed");
+        wrap.setText("📋 goal copied — paste in the SAME session");
+      } else if (status === "flagged") {
+        wrap.classList.add("armed--flagged");
+        wrap.setText("🚩 launch flagged — " + (reason !== null ? reason : "check pending"));
+      } else if (status === "cleared") {
+        wrap.classList.add("armed--cleared"); // dim tombstone, not armed styling
+        wrap.setText(reason !== null ? "✔ cleared — " + reason : "✔ cleared");
+      } else {
+        wrap.classList.add("armed--unknown");
+        wrap.setText("pending: " + (status !== "" ? status : "unknown"));
+      }
+      slot.appendChild(wrap);
+
+      var qaMode = deps.location.protocol === "file:";
+      var armed = status === "prompt-armed" || status === "await-birth";
+      var nonTerminal = armed || status === "goal-armed";
+      if (armed) {
+        var recopy = el("button");
+        recopy.setAttribute("type", "button");
+        recopy.classList.add("armed-btn");
+        recopy.classList.add("armed-recopy");
+        recopy.setText("re-copy");
+        wireArmedControl(recopy, "re-copy", qaMode);
+        wrap.appendChild(recopy);
+      }
+      if (nonTerminal) {
+        var cancel = el("button");
+        cancel.setAttribute("type", "button");
+        cancel.classList.add("armed-btn");
+        cancel.classList.add("armed-cancel");
+        cancel.setText("cancel");
+        wireArmedControl(cancel, "cancel", qaMode);
+        wrap.appendChild(cancel);
+      }
+      if (qaMode) {
+        if (nonTerminal) {
+          var only = el("span");
+          only.classList.add("armed-note--server-only");
+          only.setText("server only");
+          wrap.appendChild(only);
+        }
+        var x = el("button");
+        x.setAttribute("type", "button");
+        x.classList.add("armed-dismiss");
+        x.setAttribute("aria-label", "dismiss armed state");
+        x.setText("×");
+        if (typeof x.addEventListener === "function") {
+          x.addEventListener("click", function () {
+            dismissQaArm();
+          });
+        }
+        wrap.appendChild(x);
+      }
+    }
+
+    // ---- Col 3: SESSIONS (SPEC 6.3) ----
+
+    function sessionDisplayTitle(ses) {
+      if (ses.title_pending === true) return "title pending";
+      return typeof ses.title === "string" && ses.title !== "" ? ses.title : "title pending";
+    }
+
+    function buildSessionGroups() {
+      var groups = {};
+      if (stateDoc === null) return groups;
+      var progs = MCW.state.items(stateDoc.programs, null).valid;
+      for (var i = 0; i < progs.length; i += 1) {
+        var lanes = MCW.state.items(progs[i].lanes, "row_id").valid;
+        for (var j = 0; j < lanes.length; j += 1) {
+          var ses = nullable(lanes[j].session);
+          if (ses === null) continue;
+          if (typeof ses.id !== "string" || ses.id === "") continue;
+          var repo =
+            typeof lanes[j].repo === "string" && lanes[j].repo !== "" ? lanes[j].repo : "(unconfigured repo)";
+          if (!groups[repo]) groups[repo] = [];
+          groups[repo].push({ kind: "session", id: ses.id, session: ses, lane: lanes[j] });
+        }
+        // Master row: one per program with non-null master.session_id, placed
+        // in the FIRST lane's repo group; lanes:[] -> explicit "(no lanes)" group.
+        var master = nullable(progs[i].master); // L4: wrong-typed reads as null
+        if (master !== null && typeof master.session_id === "string" && master.session_id !== "") {
+          var firstRepo = "(no lanes)";
+          if (lanes.length > 0) {
+            firstRepo =
+              typeof lanes[0].repo === "string" && lanes[0].repo !== "" ? lanes[0].repo : "(unconfigured repo)";
+          }
+          if (!groups[firstRepo]) groups[firstRepo] = [];
+          groups[firstRepo].push({ kind: "master", id: master.session_id, master: master });
+        }
+      }
+      return groups;
+    }
+
+    function memberAge(m) {
+      var raw = m.kind === "master" ? m.master.last_active_ago_s : m.session.last_active_ago_s;
+      return isInt(raw) ? raw : 0;
+    }
+    function byAge(a, b) {
+      return memberAge(a) - memberAge(b);
+    }
+
+    function renderSessionRow(parentEl, m) {
+      var row = el("div");
+      row.classList.add("session-row");
+      row.setAttribute("data-session-id", m.id);
+      var title = el("span");
+      title.classList.add("session-title");
+      if (m.kind === "master") {
+        title.setText(typeof m.master.title === "string" && m.master.title !== "" ? m.master.title : "title pending");
+      } else {
+        title.setText(sessionDisplayTitle(m.session));
+      }
+      row.appendChild(title);
+      if (m.kind === "master") {
+        var tag = el("span");
+        tag.classList.add("session-master-tag");
+        tag.setText("master");
+        row.appendChild(tag);
+      }
+      var bits = m.kind === "session" ? idleBits(m.lane) : [];
+      var idle = el("span");
+      idle.classList.add("session-idle");
+      if (bits.length === 0) idle.classList.add("stale");
+      idle.setText(
+        "idle " +
+          MCW.util.humanizeAge(memberAge(m)) +
+          (bits.length > 0 ? " · " + bits.join(" · ") : " · signals unknown")
+      );
+      row.appendChild(idle);
+      if (typeof row.addEventListener === "function") {
+        row.addEventListener("click", function () {
+          copyText(m.id, null); // copy-without-label-swap (SPEC 7.2)
+        });
+      }
+      parentEl.appendChild(row);
+    }
+
+    function renderSessionGroup(rootEl, repo, members) {
+      var groupEl = el("div");
+      groupEl.classList.add("session-group");
+      var head = el("div");
+      head.classList.add("session-group-head");
+      head.setText(repo);
+      groupEl.appendChild(head);
+      var direct = [];
+      var idle = [];
+      for (var i = 0; i < members.length; i += 1) {
+        if (memberAge(members[i]) > 86400) idle.push(members[i]);
+        else direct.push(members[i]);
+      }
+      direct.sort(byAge);
+      idle.sort(byAge);
+      for (var d = 0; d < direct.length; d += 1) renderSessionRow(groupEl, direct[d]);
+      if (idle.length > 0) {
+        var sub = el("div");
+        sub.classList.add("idle-sub");
+        sub.classList.add("collapsed"); // collapsed by default (SPEC 6.3)
+        var subHead = el("button");
+        subHead.setAttribute("type", "button");
+        subHead.classList.add("idle-sub-head");
+        subHead.setText("idle >24h (" + idle.length + ")");
+        subHead.setAttribute("aria-expanded", "false");
+        if (typeof subHead.addEventListener === "function") {
+          subHead.addEventListener("click", function () {
+            if (sub.classList.contains("collapsed")) {
+              sub.classList.remove("collapsed");
+              subHead.setAttribute("aria-expanded", "true");
+            } else {
+              sub.classList.add("collapsed");
+              subHead.setAttribute("aria-expanded", "false");
+            }
+          });
+        }
+        sub.appendChild(subHead);
+        for (var s = 0; s < idle.length; s += 1) renderSessionRow(sub, idle[s]);
+        groupEl.appendChild(sub);
+      }
+      rootEl.appendChild(groupEl);
+      return members.length;
+    }
+
+    function renderUnmappedStrip(rootEl) {
+      var res = MCW.state.items(stateDoc.sessions_unmapped, "id");
+      if (res.skipped > 0) appendNote(rootEl, "skipped " + res.skipped + " malformed rows");
+      if (res.valid.length === 0) return 0;
+      var strip = el("div");
+      strip.classList.add("unmapped-strip");
+      var head = el("div");
+      head.classList.add("unmapped-head");
+      head.setText("unmapped (" + res.valid.length + ")");
+      strip.appendChild(head);
+      var rowsEl = el("div");
+      rowsEl.classList.add("unmapped-rows");
+      for (var i = 0; i < res.valid.length; i += 1) renderUnmappedRow(rowsEl, res.valid[i]);
+      strip.appendChild(rowsEl);
+      rootEl.appendChild(strip);
+      return res.valid.length;
+    }
+
+    // Separate function so each row's click closure owns its u (no shared var).
+    function renderUnmappedRow(rowsEl, u) {
+      var row = el("div");
+      row.classList.add("unmapped-row");
+      row.setAttribute("data-session-id", u.id);
+      var uTitle = typeof u.title === "string" && u.title !== "" ? u.title : "title pending";
+      var uDir = typeof u.dir === "string" ? u.dir : "";
+      row.setText(
+        uTitle +
+          " · " +
+          uDir +
+          " · " +
+          MCW.util.humanizeAge(isInt(u.last_active_ago_s) ? u.last_active_ago_s : 0)
+      );
+      if (typeof row.addEventListener === "function") {
+        row.addEventListener("click", function () {
+          copyText(u.id, null);
+        });
+      }
+      rowsEl.appendChild(row);
+    }
+
+    function renderCol3(rootEl) {
+      clearNode(rootEl);
+      var groups = buildSessionGroups();
+      var keys = [];
+      for (var k in groups) {
+        if (Object.prototype.hasOwnProperty.call(groups, k)) keys.push(k);
+      }
+      keys.sort(); // headers alphabetical; synthetic "(" groups sort first
+      var rowCount = 0;
+      for (var i = 0; i < keys.length; i += 1) rowCount += renderSessionGroup(rootEl, keys[i], groups[keys[i]]);
+      var cls = MCW.state.classify(stateDoc);
+      var stripCount = 0;
+      if (cls.sessionsUnmapped === "ok") stripCount = renderUnmappedStrip(rootEl);
+      else appendNote(rootEl, "no data"); // L2 on the strip's source array
+      if (rowCount === 0 && stripCount === 0) appendNote(rootEl, "no sessions");
     }
 
     var app = {
@@ -1098,10 +1639,16 @@
       needsMeNow: needsMeNow,
       copyText: copyText,
       dispatchKey: dispatchKey,
+      effectivePending: effectivePending,
+      dismissQaArm: dismissQaArm,
+      renderBanners: renderBanners,
     };
     // T3: QA armed-demo override state (null | "prompt-armed" | "goal-armed" |
     // "cleared"); seeded null, reset by every mountQA.
     app.qaArmOverride = null;
+    // T5: QA-only dismissal flag — once set, the mock pending no longer shows
+    // (override to null, NOT back to the mock value; reload resets).
+    app.qaArmDismissed = false;
     // T3 interim pending gate (wall.pending.status); T5's effectivePending
     // supersedes it.
     app._pendingStatus = null;
