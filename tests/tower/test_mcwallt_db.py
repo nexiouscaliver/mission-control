@@ -7,6 +7,7 @@ no test touches /Users/shahil/.zcode/cli/db/db.sqlite; the live-evidence ids
 below are copied verbatim from the orchestrator-held read-only query results.
 """
 
+import os
 import sqlite3
 from pathlib import Path
 
@@ -204,6 +205,7 @@ def test_mcwallt_join_tag_grammar():
 
 def test_mcwallt_join_directory_never_used(tmp_path):
     repo_path = str(tmp_path / "mcwallt_repo")
+    os.mkdir(repo_path)  # healthy repo root: no T-4 entry 4 in this test's world
     sid = "sess_33333333-3333-4333-8333-333333333333"
     db = mcwallt_make_db(tmp_path, sessions=[
         {"id": sid, "title": "mcwallt dirful", "directory": repo_path + "/lane-dir",

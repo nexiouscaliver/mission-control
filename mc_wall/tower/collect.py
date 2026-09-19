@@ -1,17 +1,17 @@
 """collect_state orchestration (T-1 skeleton; notes wired in T-2; the zcode
-session-db reader wired in T-3).
+session-db reader in T-3; the regenloop goal-state reader in T-4).
 
 Owns the document assembly, the §4 degraded-entry ordering machinery
 (``DegradedLog``), the pending-launch read (§4.5), the §4.2 vault-note read,
-the §4.1 session-store read/join (through ``zcode_db``), and the no-escape
-boundary. The remaining per-source readers (goals, signals) land in T-4/T-5
-and plug into ``_collect``.
+the §4.1 session-store read/join (through ``zcode_db``), the §4.3 goal
+state/manifest read (through ``goals``), and the no-escape boundary. The
+remaining per-source reader (signals) lands in T-5 and plugs into ``_collect``.
 """
 
 import json
 import os
 
-from . import contract, notes, zcode_db
+from . import contract, goals, notes, zcode_db
 from .config import TowerConfig
 
 
@@ -33,14 +33,15 @@ def _collect(config: TowerConfig) -> dict:
     now = config.now_s()
     launch = _read_launch(config.pending_launch_path, log)  # §4.5
     programs = []
-    # Internal lane stash (plan T-2 Produces, F3): T-3 (session joins), T-5
-    # (signals), and T-6 (derivations) consume these records; the contract lane
-    # dict itself never exposes sess_token.
+    # Internal lane stash (plan T-2 Produces, F3): T-3 (session joins), T-4
+    # (goal/manifest), T-5 (signals), and T-6 (derivations) consume these
+    # records; the contract lane dict itself never exposes sess_token.
     lane_records = []  # (program_idx, lane_dict, sess_token, repo_name_or_None,
                        #  repo_idx_or_None, branch, status_parsed)
     for i, p in enumerate(config.programs):
         programs.append(_read_program_notes(config, p, i, log, lane_records))
     sessions_unmapped = _read_sessions(config, now, log, programs, lane_records)
+    _read_goals(config, log, lane_records)
     return {"schema_version": 1,
             "server": {"uptime_s": int(config.uptime_s_provider()),
                        "generated_ts": int(now),
@@ -198,6 +199,32 @@ def _join_sessions(config: TowerConfig, cur, now: float, factor: int,
         joined_ids.add(obj["id"])
     return zcode_db.unmapped_rows(cur, now, factor, config.session_window_s,
                                   joined_ids, tag_map, configured_tags)
+
+
+def _read_goals(config: TowerConfig, log: "DegradedLog", lane_records: list) -> None:
+    """§4.3 regenloop goal state, wired into lanes in place. Per repo in config
+    order: a repo whose configured path does not exist degrades once (entry 4)
+    and every lane of that repo keeps goal/manifest null. Healthy repos: each
+    lane with a configured repo AND a slug gets the goal object (ALWAYS the
+    full {"state","queue_tail","budget"} — read_goal never returns None; a
+    missing slug under an existing root is "absent", not a failure) and the
+    manifest (None without a goal dir). Lanes with no configured repo or no
+    slug keep the lane_shell nulls — absence, not failure, so no entry."""
+    degraded_repos = set()
+    for r, rc in enumerate(config.repos):
+        if not os.path.isdir(rc.path):
+            log.add((2, r, 0, ""), f"goals degraded: {rc.name}")
+            degraded_repos.add(r)
+    for _pidx, lane, _token, _repo_name, repo_idx, _branch, _status in lane_records:
+        if repo_idx is None or repo_idx in degraded_repos:
+            continue  # unconfigured repo / degraded repo: nulls, no entry
+        slug = lane["slug"]
+        if slug is None:
+            continue  # §4.3: slug null -> goal null, manifest null
+        root = goals.goal_root(config.repos[repo_idx].path)
+        state, gd = goals.goal_state(root, slug)
+        lane["goal"] = goals.read_goal(gd, state)
+        lane["manifest"] = goals.read_manifest(gd)
 
 
 def _read_launch(path: str | None, log: "DegradedLog"):

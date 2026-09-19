@@ -105,6 +105,7 @@ def test_mcwallt_failopen_notes_missing(tmp_path):
     old_p = mcwallt_make_note(newest, "mcwallt_note_old.md", [
         header, sep, "| W9-L1 | W9 | L1 | n/a | mcwallt-old | n/a | sess_00000000 | done |"])
     repo_cell = str(tmp_path / "mcwallt_repo_dir")
+    os.mkdir(repo_cell)  # healthy repo root: no T-4 entry 4 in this test's world
     new_p = mcwallt_make_note(newest, "mcwallt_note_new.md", [
         "objective: ship the wall", header, sep,
         f"| W9-L1 | W9 | L1 | {repo_cell} loop/mcwall-tower | mcwallt-new | n/a | merge !5; sess_00000001 | launched |"])
