@@ -175,6 +175,48 @@ def test_mcwallt_cache_no_stale_as_fresh(monkeypatch):
     assert calls["n"] == 2                 # no spawn: failure recorded, never served
 
 
+def test_mcwallt_cache_cross_key_independent(monkeypatch):
+    # Review N2: single-flight is PER KEY — a blocked fetch on key A must not
+    # delay key B. Fully deterministic: Events gate A's spawn, every join and
+    # wait carries a timeout, and B runs in a thread so even a wrongly-global
+    # lock fails an assertion instead of hanging the suite.
+    a_spawned = threading.Event()
+    release_a = threading.Event()
+
+    def handler(argv, cwd):
+        if argv[3] == "mcwallt-branch-a":
+            a_spawned.set()
+            release_a.wait(timeout=10.0)      # A's spawn blocks here, holding A's lock
+            return (0, "mcwallt-a")
+        return (0, "mcwallt-b")
+
+    fake, _calls = mcwallt_fake_cmd(handler)
+    monkeypatch.setattr(netcache_module, "_run_cmd", fake)
+    now_s, _set = mcwallt_settable_clock(1_000.0)
+    cache = NetCache()
+    results = {}
+
+    def fetch(key_branch, out_key):
+        results[out_key] = cache.fetch(
+            ("git_ls_remote", "mcwallt-repo", key_branch),
+            ["git", "ls-remote", "origin", key_branch],
+            "mcwallt-cwd", now_s, 120, 30.0, 600.0)
+
+    ta = threading.Thread(target=fetch, args=("mcwallt-branch-a", "a"))
+    ta.start()
+    assert a_spawned.wait(timeout=10.0)       # A is in flight on ITS key lock
+    tb = threading.Thread(target=fetch, args=("mcwallt-branch-b", "b"))
+    tb.start()
+    tb.join(timeout=5.0)
+    assert not tb.is_alive()                  # B completed while A was blocked
+    assert results["b"].ok is True and results["b"].stdout == "mcwallt-b"
+    assert "a" not in results                 # A genuinely still in flight
+    release_a.set()
+    ta.join(timeout=10.0)
+    assert not ta.is_alive()                  # no leaked threads
+    assert results["a"].ok is True and results["a"].stdout == "mcwallt-a"
+
+
 def test_mcwallt_cache_run_cmd_raising_degrades_key(monkeypatch):
     # Plan F1 seam: a RAISING _run_cmd becomes a per-key rc-None failure —
     # never an exception past fetch, never a zeroed document downstream.

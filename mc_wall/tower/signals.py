@@ -14,6 +14,7 @@ carries only sha+ref, and the sha stays internal to the cache).
 
 import json
 from datetime import datetime
+from typing import Callable
 
 from .config import NetworkSettings, RepoConfig
 
@@ -92,7 +93,7 @@ def normalize_mr(adapted: dict, host: str, now: float) -> dict:
 
 
 def pushed_signal(cache, cfg_network: NetworkSettings, repo: RepoConfig,
-                  branch: str | None, now_s, clock_now: float) -> tuple[dict | None, bool]:
+                  branch: str | None, now_s: Callable[[], float], clock_now: float) -> tuple[dict | None, bool]:
     """(pushed | None, degraded). branch None -> (None, False) — no lookup, no
     entry. Failure -> (None, True) (entry 5 is the caller's). Success parses
     the ls-remote lines: value = a line whose ref column is EXACTLY
@@ -115,7 +116,7 @@ def pushed_signal(cache, cfg_network: NetworkSettings, repo: RepoConfig,
 
 def resolve_mr(cache, cfg_network: NetworkSettings, repo: RepoConfig,
                branch: str | None, mr_bang: str | None, mr_hash: str | None,
-               now_s, clock_now: float) -> tuple[dict | None, bool]:
+               now_s: Callable[[], float], clock_now: float) -> tuple[dict | None, bool]:
     """(mr | None, lookup_failed) for one lane: the artifacts ref matching the
     repo host wins (host-mismatched tokens are ignored); else by-branch newest
     open; else (None, False). The caller handles unconfigured repos."""
@@ -128,7 +129,7 @@ def resolve_mr(cache, cfg_network: NetworkSettings, repo: RepoConfig,
 
 
 def lookup_mr_by_ref(cache, cfg_network: NetworkSettings, repo: RepoConfig,
-                     ref: str, now_s, clock_now: float) -> tuple[dict | None, bool]:
+                     ref: str, now_s: Callable[[], float], clock_now: float) -> tuple[dict | None, bool]:
     """By-ref MR lookup (backing artifacts refs and, in T-6, preconditions).
     v1 recorded choice: rc 0 with empty/unusable stdout (NOT-FOUND) is a lookup
     FAILURE -> (None, True) — unknown != met, absence-as-degraded (documented
@@ -148,13 +149,17 @@ def lookup_mr_by_ref(cache, cfg_network: NetworkSettings, repo: RepoConfig,
     except ValueError:
         obj = None
     adapted = adapt_cli_mr(obj, repo.host)
-    if adapted is None:
+    if adapted is None or _n_of(adapted) is None:
+        # M1: an rc-0 dict WITHOUT a usable id (a glab error body like
+        # {"message": "404"}) is not a usable MR — it takes the same
+        # NOT-FOUND-as-failure path, never a nonsense "!" ref and never a
+        # skipped entry 6.
         return (None, True)
     return (normalize_mr(adapted, repo.host, clock_now), False)
 
 
 def _mr_by_branch(cache, cfg_network: NetworkSettings, repo: RepoConfig,
-                  branch: str, now_s, clock_now: float) -> tuple[dict | None, bool]:
+                  branch: str, now_s: Callable[[], float], clock_now: float) -> tuple[dict | None, bool]:
     """Newest OPEN MR for the branch (created_at desc, tie iid/number desc).
     rc 0 + parseable EMPTY list is a valid empty result -> (None, False); a
     spawn failure or unparseable stdout is a lookup failure -> (None, True)."""
@@ -177,7 +182,10 @@ def _mr_by_branch(cache, cfg_network: NetworkSettings, repo: RepoConfig,
     candidates = []
     for obj in items:
         adapted = adapt_cli_mr(obj, repo.host)
-        if adapted is not None and _state_of(adapted) == "open":
+        # Same id-usability guard as the by-ref path (M1): an id-less dict can
+        # never become a candidate, whatever the list endpoint returned.
+        if (adapted is not None and _n_of(adapted) is not None
+                and _state_of(adapted) == "open"):
             candidates.append(adapted)
     if not candidates:
         return (None, False)

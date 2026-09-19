@@ -49,6 +49,7 @@ Memory-only: the tower writes nothing to disk, ever.
 import subprocess
 import threading
 from dataclasses import dataclass
+from typing import Callable
 
 
 def _run_cmd(argv: list[str], cwd: str, timeout_s: float = 10.0) -> tuple[int | None, str, str]:
@@ -91,7 +92,7 @@ class NetCache:
         self._table_lock = threading.Lock()
 
     def fetch(self, key: tuple[str, str, str], argv: list[str], cwd: str,
-              now_s, ttl_s: int, backoff_base_s: float,
+              now_s: Callable[[], float], ttl_s: int, backoff_base_s: float,
               backoff_max_s: float) -> FetchResult:
         """Fetch through the cache for one normalized key.
 

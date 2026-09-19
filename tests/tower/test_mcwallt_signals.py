@@ -266,6 +266,10 @@ def test_mcwallt_failopen_mr_error(tmp_path, monkeypatch):
     def handler(argv, cwd):
         if argv[0] == "git":
             return (0, "sha000\trefs/heads/loop/mcwallt-b1\n")
+        if argv[0] == "glab" and argv[2] == "view":
+            # rc-0 error BODY (a dict with no iid): must land on the lookup
+            # FAILURE path (review M1), never a nonsense "!"-ref mr.
+            return (0, json.dumps({"message": "404 Not Found"}))
         if argv[0] == "glab":
             return (mode["rc"], "[]" if mode["rc"] == 0 else "")
         return (0, "[]")
@@ -302,3 +306,21 @@ def test_mcwallt_failopen_mr_error(tmp_path, monkeypatch):
     mr, failed = signals.lookup_mr_by_ref(NetCache(), NetworkSettings(), repo,
                                           "!404", now_s, NOW)
     assert (mr, failed) == (None, True)
+
+    # Review M1: an rc-0 JSON dict WITHOUT a usable id (a glab error body) is
+    # the SAME failure path — not a nonsense "!"-ref mr, not a skipped entry 6.
+    mr_body, failed_body = signals.lookup_mr_by_ref(
+        NetCache(), NetworkSettings(), repo, "!5", now_s, NOW)
+    assert (mr_body, failed_body) == (None, True)
+
+    # And through collect: a lane whose artifacts ref resolves to that error
+    # body gets mr null + entry 6 (a failed by-ref lookup never falls back to
+    # by-branch for the lane's own MR).
+    rows_404 = [f"| W1-L1 | W1 | L0 | {repo_path} loop/mcwallt-b1 | n/a | n/a | !5 | launched |"]
+    cfg404, _set404 = _world(tmp_path, rows_404, [repo], name="mcwallt_signals_404")
+    state404 = collect_state(cfg404)
+    lane404 = state404["programs"][0]["lanes"][0]
+    assert lane404["signals"]["pushed"] == {"value": True, "age_s": 0}   # git healthy
+    assert lane404["signals"]["mr"] is None
+    assert state404["server"]["degraded"] == ["network degraded: mr mcwallt-repo"]
+    contract.assert_shape(state404)
