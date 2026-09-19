@@ -1,19 +1,20 @@
-"""collect_state orchestration (T-1 skeleton; notes wired in T-2; the zcode
+"""collect_state orchestration: skeleton in T-1; notes in T-2; the zcode
 session-db reader in T-3; the regenloop goal-state reader in T-4; the network
-signals in T-5).
+signals in T-5; the §6 derivations + final assembly in T-6.
 
 Owns the document assembly, the §4 degraded-entry ordering machinery
 (``DegradedLog``), the pending-launch read (§4.5), the §4.2 vault-note read,
 the §4.1 session-store read/join (through ``zcode_db``), the §4.3 goal
 state/manifest read (through ``goals``), the §4.4 network signals (through
-``signals``, all spawns via ``NetCache``/``_run_cmd``), and the no-escape
-boundary. Derivations land in T-6 and plug into ``_collect``.
+``signals``, all spawns via ``NetCache``/``_run_cmd``), the §6 derivations
+(through ``derive``, with the precondition by-ref lookups and their entry-11
+emissions run HERE — derive stays pure), and the no-escape boundary.
 """
 
 import json
 import os
 
-from . import contract, goals, notes, signals, zcode_db
+from . import contract, derive, goals, notes, signals, zcode_db
 from .config import TowerConfig
 
 
@@ -44,17 +45,20 @@ def _collect(config: TowerConfig) -> dict:
                        #  record for T-6's human_actions.
     for i, p in enumerate(config.programs):
         programs.append(_read_program_notes(config, p, i, log, lane_records))
-    sessions_unmapped = _read_sessions(config, now, log, programs, lane_records)
+    sessions_unmapped, session_epochs = _read_sessions(config, now, log, programs,
+                                                       lane_records)
     _read_goals(config, log, lane_records)
     _read_signals(config, log, lane_records, now)
+    verify_queue, human_actions = _derive(config, programs, log, lane_records,
+                                          session_epochs, now)
     return {"schema_version": 1,
             "server": {"uptime_s": int(config.uptime_s_provider()),
                        "generated_ts": int(now),
                        "degraded": log.emit(),
                        "banner": config.banner_provider()},
             "programs": programs,
-            "verify_queue": [],
-            "human_actions": [],
+            "verify_queue": verify_queue,
+            "human_actions": human_actions,
             "sessions_unmapped": sessions_unmapped,
             "launch_pending": launch}
 
@@ -113,45 +117,50 @@ def _map_repo(repos, repo_token: str | None) -> tuple[str | None, int | None]:
 
 
 def _read_sessions(config: TowerConfig, now: float, log: "DegradedLog",
-                   programs: list, lane_records: list) -> list[dict]:
+                   programs: list, lane_records: list) -> tuple[list[dict], dict]:
     """§4.1 session-store read: ro-open + schema check + ONE unit probe; ANY
     failure -> entry 1 (unreadable/operational) or entry 2 (schema drift), with
     ALL session data left nulled (lane.session everywhere, masters, and no
     unmapped rows — strict fail-open, never partial data). Healthy: windowed
     tag scan, per-program masters, per-lane token joins, unmapped enumeration.
-    Returns the sessions_unmapped rows."""
+    Returns (sessions_unmapped rows, {id(lane): session time_updated epoch in
+    SECONDS} for T-6's stalled derivation — keyed by the lane dict's identity;
+    a NULL timestamp never enters the map, and every failure path returns an
+    empty map so a degraded db contributes no activity epochs)."""
     try:
         con = zcode_db.open_db_ro(config.db_path)
     except Exception:
         log.add((0, 0, 0, ""), zcode_db.DEGRADED_UNREADABLE)
-        return []
+        return [], {}
     try:
         cur = con.cursor()
         if zcode_db.check_schema(cur):
             log.add((0, 0, 0, ""), zcode_db.DEGRADED_SCHEMA_DRIFT)
-            return []
+            return [], {}
         # Exactly ONE unit probe per collect; all cutoffs derive from it.
         factor = zcode_db.probe_factor(cur)
         return _join_sessions(config, cur, now, factor, log, programs, lane_records)
     except Exception:
         # Strict fail-open (§4.1 / assumption 19): a failure MID-join must not
         # leak whatever masters/lane sessions were already written — null them
-        # all before returning (no-op when nothing was written yet).
+        # all before returning (no-op when nothing was written yet); the
+        # partial epochs map is discarded with the same stroke.
         for prog in programs:
             prog["master"] = contract.null_master()
         for record in lane_records:
             record[1]["session"] = None
         log.add((0, 0, 0, ""), zcode_db.DEGRADED_UNREADABLE)
-        return []
+        return [], {}
     finally:
         con.close()
 
 
 def _join_sessions(config: TowerConfig, cur, now: float, factor: int,
-                   log: "DegradedLog", programs: list, lane_records: list) -> list[dict]:
+                   log: "DegradedLog", programs: list, lane_records: list) -> tuple[list[dict], dict]:
     """Healthy-path §5 joins: windowed tag scan (entry 7 per ambiguous session,
     ordered by sid via the log key), newest-wins masters, token-prefix lane
-    joins (entry 9 on ambiguity), then the §6.5 unmapped enumeration."""
+    joins (entry 9 on ambiguity), then the §6.5 unmapped enumeration. Returns
+    (unmapped rows, lane -> joined-session time_updated epoch in seconds)."""
     tag_map = zcode_db.scan_tags(
         cur, zcode_db.cutoff_stored(now, config.tag_scan_window_s, factor))
     for sid in sorted(tag_map):
@@ -186,6 +195,7 @@ def _join_sessions(config: TowerConfig, cur, now: float, factor: int,
             "last_active_ago_s": max(0, int(now - master_ts)) if master_ts is not None else None}
     # Lane sessions: token-prefix joins; the windowed scan never invalidates one.
     joined_ids: set[str] = set()
+    session_epochs: dict[int, float] = {}  # id(lane) -> time_updated epoch (s)
     for _pidx, lane, token, *_rest in lane_records:
         if not token:
             continue
@@ -203,8 +213,11 @@ def _join_sessions(config: TowerConfig, cur, now: float, factor: int,
                            # contract requires int; 0 = the spec's unknown-age convention
                            "last_active_ago_s": max(0, int(now - epoch)) if epoch is not None else 0}
         joined_ids.add(obj["id"])
-    return zcode_db.unmapped_rows(cur, now, factor, config.session_window_s,
-                                  joined_ids, tag_map, configured_tags)
+        if epoch is not None:
+            session_epochs[id(lane)] = epoch
+    return (zcode_db.unmapped_rows(cur, now, factor, config.session_window_s,
+                                   joined_ids, tag_map, configured_tags),
+            session_epochs)
 
 
 def _read_goals(config: TowerConfig, log: "DegradedLog", lane_records: list) -> None:
@@ -262,6 +275,79 @@ def _read_signals(config: TowerConfig, log: "DegradedLog", lane_records: list,
             log.add((3, repo_idx, 1, ""), f"network degraded: mr {repo.name}")
         rec[1]["signals"]["mr"] = mr
         lane_records[i] = rec + (mr, mr_failed)  # T-6 consumes (mr, mr_failed)
+
+
+def _derive(config: TowerConfig, programs: list, log: "DegradedLog",
+            lane_records: list, session_epochs: dict, now: float) -> tuple[list[dict], list[dict]]:
+    """§6 derivations, wired into lanes in place; returns (verify_queue,
+    human_actions). Views are built in lane_records order — program-config
+    order then note order, the document order of both row lists. The
+    precondition by-ref lookups and their entry-11 emissions run HERE (collect
+    owns the cache and the log; ``derive`` stays pure) and only for lanes that
+    produce a merge row with non-empty precondition_mrs."""
+    verify_views: list[dict] = []
+    action_views: list[dict] = []
+    for rec in lane_records:
+        pidx, lane, token = rec[0], rec[1], rec[2]
+        repo_idx = rec[4]
+        status_parsed = rec[6]
+        # Lanes without a configured repo were never extended by _read_signals.
+        mr = rec[9] if len(rec) > 9 else None
+        mr_failed = rec[10] if len(rec) > 10 else False
+        session = lane["session"]
+        session_id = session["id"] if session is not None else None
+        # §6.2/§6.3: finished_ago_s is the lane session's age, 0 unknown.
+        finished_ago_s = session["last_active_ago_s"] if session is not None else 0
+        manifest = lane["manifest"]
+        lane["stalled"] = derive.derive_stalled(
+            manifest, session_epochs.get(id(lane)), session_id,
+            _queue_mtime(manifest), now,
+            manifest["stall_t_hours"] if manifest is not None else None)
+        lane["suggest_verify"] = derive.derive_suggest_verify(
+            status_parsed, finished_ago_s, config.verify_grace_s)
+        master = programs[pidx]["master"]
+        verify_views.append({
+            "row_id": lane["row_id"],
+            "program": config.programs[pidx].program,
+            "status_parsed": status_parsed,
+            "finished_ago_s": finished_ago_s,
+            "master_hint": master["session_id"] or "",
+            # §6.3: the JOINED FULL db id on a 1-hit join, else the raw token.
+            "verify_id": session_id if session is not None else (token or "")})
+        if repo_idx is None or mr is None or mr_failed or mr["state"] != "open":
+            continue  # no merge row can come of this lane — no lookups either
+        repo = config.repos[repo_idx]
+        preconds = (manifest or {}).get("precondition_mrs") or []
+        results: dict[str, str | None] = {}
+        for ref in preconds:
+            pre_mr, pre_failed = signals.lookup_mr_by_ref(
+                config.network_cache, config.network, repo, ref,
+                config.now_s, now)
+            if pre_failed or pre_mr is None:
+                # Unknown != met, never guessed (§4.4/§6.4): the row stays with
+                # ready=False and one entry-11 per failed/unknown ref.
+                results[ref] = None
+                log.add((3, repo_idx, 2, ref), f"precondition state unknown: {ref}")
+            else:
+                results[ref] = pre_mr["state"]
+        action_views.append({"repo_idx": repo_idx, "repo": repo.name,
+                             "repo_host": repo.host, "branch": rec[5],
+                             "mr": mr, "mr_failed": mr_failed,
+                             "manifest": manifest,
+                             "precondition_results": results})
+    return derive.verify_queue_rows(verify_views), derive.human_action_rows(action_views)
+
+
+def _queue_mtime(manifest: dict | None) -> float | None:
+    """The goal dir's queue.md mtime — the §6.1 non-session activity epoch.
+    None when the lane has no manifest (no goal dir) or no queue.md (absence
+    is never fabricated into an epoch)."""
+    if manifest is None:
+        return None
+    try:
+        return os.stat(os.path.join(manifest["path"], "queue.md")).st_mtime
+    except OSError:
+        return None
 
 
 def _read_launch(path: str | None, log: "DegradedLog"):

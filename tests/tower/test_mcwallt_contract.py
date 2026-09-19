@@ -112,10 +112,11 @@ def test_mcwallt_contract_keys_survive_full_degradation(tmp_path):
 
 
 def test_mcwallt_contract_exact_keys_all_levels(tmp_path, monkeypatch):
-    # AC-CONTRACT-1: a fully-populated document (stalled variant so EVERY
-    # nullable object is non-null) passes assert_shape AND carries exactly the
-    # §9 key sequences, in order, at every level.
-    cfg, _set = mcwallt_world(tmp_path, monkeypatch, lane1_age_s=25200.0)
+    # AC-CONTRACT-1: a fully-populated document (stalled variant — session
+    # 7h-idle over an 8h-old queue.md — so EVERY nullable object is non-null)
+    # passes assert_shape AND carries exactly the §9 key sequences, in order,
+    # at every level.
+    cfg, _set = mcwallt_world(tmp_path, monkeypatch, lane1_age_s=25200.0, queue_age_s=28800.0)
     state = collect_state(cfg)
     contract.assert_shape(state)
 
