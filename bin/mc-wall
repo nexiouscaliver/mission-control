@@ -14,6 +14,7 @@ import os
 import secrets
 import subprocess
 import sys
+import urllib.request
 
 MIN_PYTHON = (3, 9)
 PLIST_LABEL = "ai.zcode.mc-wall"
@@ -148,24 +149,72 @@ class Cli:
         return 0 if rc == 0 else 1
 
     def stop(self):
-        # Pinned bootout behavior lands in T13.
+        # Non-zero is the normal "already gone" answer — tolerated, rc 0.
+        rc, _ = self.executor.run(
+            ["launchctl", "bootout", "gui/%d/%s" % (self._uid(), PLIST_LABEL)]
+        )
+        if rc != 0:
+            self._print("launchd: not loaded (ok)")
         return 0
 
     def restart(self):
-        # Pinned stop-then-start order lands in T13.
-        return 0
+        self.stop()  # result ignored: a missing agent must not block a start
+        return self.start()
 
     def status(self):
-        # Pinned launchctl-print + http probe lands in T13.
-        return 0
+        # Dual probe: launchd says the agent is loaded AND the server answers
+        # 2xx on /state. rc 0 iff BOTH are ok.
+        rc, _ = self.executor.run(
+            ["launchctl", "print", "gui/%d/%s" % (self._uid(), PLIST_LABEL)]
+        )
+        launchctl_ok = rc == 0
+        cfg = self._read_wall_json()
+        http_ok = False
+        try:
+            resp = urllib.request.urlopen(
+                "http://127.0.0.1:%d/%s/state" % (cfg["port"], cfg["token"]),
+                timeout=3,
+            )
+            try:
+                http_ok = 200 <= resp.status < 300
+            finally:
+                resp.close()
+        except Exception:
+            http_ok = False
+        self._print("launchctl: %s" % ("ok" if launchctl_ok else "failed"))
+        self._print("http: %s" % ("ok" if http_ok else "failed"))
+        return 0 if launchctl_ok and http_ok else 1
 
     def log(self, n=50):
-        # Pinned last-n-lines behavior lands in T13.
+        path = os.path.join(self.wall_home, "logs", "wall.log")
+        try:
+            with open(path) as f:
+                lines = f.readlines()
+        except OSError:
+            self._print("(no log yet)")
+            return 0
+        for line in lines[-n:] if n > 0 else []:
+            self._print(line.rstrip("\n"))
         return 0
 
     def open_wall(self):
-        # Pinned Chrome app command lands in T13.
-        return 0
+        profile = os.path.join(self.wall_home, "chrome-profile")
+        os.makedirs(profile, exist_ok=True)
+        cfg = self._read_wall_json()
+        url = "http://127.0.0.1:%d/%s/" % (cfg["port"], cfg["token"])
+        rc, _ = self.executor.run(
+            [
+                "open",
+                "-na",
+                "Google Chrome",
+                "--args",
+                "--app=" + url,
+                "--user-data-dir=" + profile,
+            ]
+        )
+        if rc != 0:
+            rc, _ = self.executor.run(["open", url])
+        return 0 if rc == 0 else 1
 
 
 def main(argv=None, version_info=None, wall_home=None, home=None, executor=None):
