@@ -98,8 +98,12 @@ def cutoff_stored(now_s: float, window_s: int, factor: int) -> int:
     return int(now_s * factor - window_s * factor)
 
 
-def to_seconds(v) -> float:
-    """Per-VALUE output normalization: ms magnitudes divide by 1000."""
+def to_seconds(v) -> float | None:
+    """Per-VALUE output normalization: ms magnitudes divide by 1000. None (a
+    SQL-NULL timestamp) stays None — callers handle the unknown age; a stored
+    value is never fabricated into one."""
+    if v is None:
+        return None
     return v / 1000 if v > 1e11 else float(v)
 
 
@@ -123,6 +127,8 @@ def scan_tags(cur, cutoff: int) -> dict[str, set[str]]:
         " WHERE kind='sendText' AND time_created > ? AND payload LIKE ?",
         (cutoff, TAG_PREFILTER)).fetchall()
     for sid, payload in rows:
+        if not isinstance(payload, str):
+            continue  # SQL-NULL/odd-typed payload: skipped, never fatal
         try:
             obj = json.loads(payload)
         except ValueError:
@@ -154,9 +160,11 @@ def session_rows(cur, ids: list[str]) -> dict[str, dict]:
 def lane_join(cur, token: str) -> tuple[dict | None, bool]:
     """Token-prefix join (§5): exactly 1 hit -> ({id, title, dir,
     time_updated_epoch_s}, False); 0 hits -> (None, False); >1 -> (None, True).
-    The contract session object (title_pending / last_active_ago_s) is
-    assembled by collect, which owns `now`. Token membership is never consulted
-    here and the windowed scan never invalidates a join."""
+    time_updated_epoch_s is None for a SQL-NULL timestamp (caller resolves the
+    unknown age). The contract session object (title_pending /
+    last_active_ago_s) is assembled by collect, which owns `now`. Token
+    membership is never consulted here and the windowed scan never invalidates
+    a join."""
     rows = cur.execute(
         "SELECT id, title, directory, time_updated FROM session WHERE id LIKE ?",
         (token + "%",)).fetchall()
@@ -191,10 +199,12 @@ def unmapped_rows(cur, now_s: float, factor: int, session_window_s: int,
         tags = tag_map.get(sid, set())
         if len(tags) == 1 and next(iter(tags)) in configured_tags:
             continue
+        ts = to_seconds(time_updated)
         out.append({"id": sid,
                     "title": title if title is not None else "",
                     "dir": directory if directory is not None else "",
-                    "last_active_ago_s": max(0, int(now_s - to_seconds(time_updated)))})
+                    # contract requires int; 0 is the spec's unknown-age convention
+                    "last_active_ago_s": max(0, int(now_s - ts)) if ts is not None else 0})
     out.sort(key=lambda r: (r["last_active_ago_s"], r["id"]))
     return out
 
@@ -221,10 +231,15 @@ def check_drift(config: TowerConfig) -> list[str]:
                 "SELECT payload FROM session_input"
                 " WHERE kind='sendText' AND time_created > ?"
                 " ORDER BY time_created DESC LIMIT 1", (cutoff,)).fetchone()
-            try:
-                obj = json.loads(row[0]) if row else None
-            except ValueError:
-                obj = None
+            payload = row[0] if row else None
+            obj = None
+            if isinstance(payload, str):
+                try:
+                    obj = json.loads(payload)
+                except ValueError:
+                    obj = None
+            # a SQL-NULL / non-str / non-dict / textless payload is exactly the
+            # drift this guard detects — warning 4, never an entry-1 reaction
             if not (isinstance(obj, dict) and isinstance(obj.get("text"), str)):
                 return [DRIFT_PAYLOAD]
             return []

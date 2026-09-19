@@ -127,6 +127,13 @@ def _read_sessions(config: TowerConfig, now: float, log: "DegradedLog",
         factor = zcode_db.probe_factor(cur)
         return _join_sessions(config, cur, now, factor, log, programs, lane_records)
     except Exception:
+        # Strict fail-open (§4.1 / assumption 19): a failure MID-join must not
+        # leak whatever masters/lane sessions were already written — null them
+        # all before returning (no-op when nothing was written yet).
+        for prog in programs:
+            prog["master"] = contract.null_master()
+        for record in lane_records:
+            record[1]["session"] = None
         log.add((0, 0, 0, ""), zcode_db.DEGRADED_UNREADABLE)
         return []
     finally:
@@ -149,7 +156,9 @@ def _join_sessions(config: TowerConfig, cur, now: float, factor: int,
         if p.master_tag is not None:
             configured_tags[p.master_tag] = "master"
     # Masters: tag set EXACTLY {master_tag}, newest by (time_updated,
-    # time_created, id) descending (§5 tie-breaks).
+    # time_created, id) descending (§5 tie-breaks). The None-safe key prefixes
+    # each timestamp with (ts is not None): a SQL-NULL timestamp loses
+    # newest-wins to ANY real timestamp instead of raising.
     for i, p in enumerate(config.programs):
         if p.master_tag is None:
             continue
@@ -158,13 +167,16 @@ def _join_sessions(config: TowerConfig, cur, now: float, factor: int,
         cands = [sid for sid in cands if sid in rows]  # orphan inputs can't join
         if not cands:
             continue
-        best = max(cands, key=lambda sid: (rows[sid]["time_updated"],
-                                           rows[sid]["time_created"], sid))
+        best = max(cands, key=lambda sid: (
+            rows[sid]["time_updated"] is not None, rows[sid]["time_updated"],
+            rows[sid]["time_created"] is not None, rows[sid]["time_created"], sid))
         row = rows[best]
+        master_ts = zcode_db.to_seconds(row["time_updated"])
         programs[i]["master"] = {
             "session_id": best,
             "title": row["title"],
-            "last_active_ago_s": max(0, int(now - zcode_db.to_seconds(row["time_updated"])))}
+            # None (unknown) is contract-legal for master.last_active_ago_s
+            "last_active_ago_s": max(0, int(now - master_ts)) if master_ts is not None else None}
     # Lane sessions: token-prefix joins; the windowed scan never invalidates one.
     joined_ids: set[str] = set()
     for _pidx, lane, token, *_rest in lane_records:
@@ -177,10 +189,12 @@ def _join_sessions(config: TowerConfig, cur, now: float, factor: int,
         if obj is None:
             continue  # pre-launch row: absence is not failure
         title = obj["title"]
+        epoch = obj["time_updated_epoch_s"]
         lane["session"] = {"id": obj["id"], "title": title,
                            "title_pending": title is None or title == "",
                            "dir": obj["dir"],
-                           "last_active_ago_s": max(0, int(now - obj["time_updated_epoch_s"]))}
+                           # contract requires int; 0 = the spec's unknown-age convention
+                           "last_active_ago_s": max(0, int(now - epoch)) if epoch is not None else 0}
         joined_ids.add(obj["id"])
     return zcode_db.unmapped_rows(cur, now, factor, config.session_window_s,
                                   joined_ids, tag_map, configured_tags)

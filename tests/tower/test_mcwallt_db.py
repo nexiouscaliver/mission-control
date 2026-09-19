@@ -64,6 +64,11 @@ def test_mcwallt_db_ms_normalization(tmp_path, monkeypatch):
              "time_updated": t(100), "time_created": t(100)},
             {"id": unmapped_id, "title": "mcwallt unmapped", "directory": "/mcwallt/u",
              "time_updated": t(50), "time_created": t(50)},
+            # Below the 86400s session window in the SAME stored magnitude: a
+            # seconds-literal cutoff (or any unit confusion) would surface this
+            # row in one db and not the other — pinned HERE, locally.
+            {"id": "sess_07070707-0707-4070-8070-070707070707", "title": "mcwallt old",
+             "directory": "/mcwallt/old", "time_updated": t(200000), "time_created": t(200000)},
         ]
         inputs = [mcwallt_tag_input(master_id, ["secfix-master"], t(100))]
         return sessions, inputs
@@ -120,6 +125,45 @@ def test_mcwallt_failopen_db_corrupt(tmp_path):
     assert state["programs"][0]["lanes"][0]["session"] is None
     assert state["programs"][0]["master"] == contract.null_master()
     assert state["sessions_unmapped"] == []
+    contract.assert_shape(state)
+
+
+def test_mcwallt_failopen_db_midjoin_nulls_all(tmp_path, monkeypatch):
+    # S1 regression: a failure MID-join (after masters were already written)
+    # must null EVERY piece of session data — partial data never leaks into
+    # the document (spec §4.1 / assumption 19: strict fail-open).
+    from mc_wall.tower import zcode_db
+    master_id = "sess_71717171-7171-4717-8717-717171717171"
+    db = mcwallt_make_db(tmp_path, sessions=[
+        {"id": master_id, "title": "mcwallt master", "directory": "/mcwallt/m",
+         "time_updated": ms_ago(100), "time_created": ms_ago(100)},
+        {"id": "sess_9a690ab2-cde8-4e9a-bc4e-177fcc68545f", "title": "mcwallt lane",
+         "directory": "/mcwallt/l", "time_updated": ms_ago(200), "time_created": ms_ago(200)},
+    ], inputs=[mcwallt_tag_input(master_id, ["secfix-master"], ms_ago(100))])
+    note = mcwallt_make_note(tmp_path, "mcwallt_note.md", [
+        "| id | wave | lane | repo/branch | slug | base | session/MR artifacts | status |",
+        "|---|---|---|---|---|---|---|---|",
+        "| W1-L1 | W1 | L1 | n/a | n/a | n/a | sess_9a690ab2 | forged |",
+    ])
+
+    def exploding_lane_join(cur, token):
+        raise RuntimeError("mcwallt mid-join explosion")
+
+    monkeypatch.setattr(zcode_db, "lane_join", exploding_lane_join)
+    cfg = TowerConfig(db_path=db,
+                      programs=(ProgramConfig(program="secfix", tag="secfix",
+                                              note_glob=note,
+                                              master_tag="secfix-master"),),
+                      now_s=mcwallt_clock(NOW))
+    state = collect_state(cfg)
+    # Masters are computed BEFORE lane joins, so the master WAS set when the
+    # explosion hit — it must come back all-null anyway.
+    assert state["programs"][0]["master"] == contract.null_master()
+    assert all(lane["session"] is None
+               for prog in state["programs"] for lane in prog["lanes"])
+    assert state["sessions_unmapped"] == []
+    assert state["server"]["degraded"] == ["tracking degraded: session store unreadable"]
+    assert "internal error: collect_state failed" not in state["server"]["degraded"]
     contract.assert_shape(state)
 
 
@@ -219,6 +263,30 @@ def test_mcwallt_join_master_newest_wins(tmp_path):
     assert masters["pb"]["session_id"] == ids["b2"]
     assert masters["pc"]["session_id"] == ids["c2"]
     assert state["server"]["degraded"] == []
+
+
+def test_mcwallt_master_null_time_updated_loses(tmp_path):
+    # S3 regression: a SQL-NULL time_updated must lose newest-wins to ANY real
+    # timestamp — no TypeError escapes, no entry-1 over-reaction.
+    null_id = "sess_91919191-9191-4919-8919-919191919191"
+    real_id = "sess_92929292-9292-4929-8929-929292929292"
+    db = mcwallt_make_db(tmp_path, sessions=[
+        {"id": null_id, "title": "null-tu", "directory": "/mcwallt/nulltu",
+         "time_updated": None, "time_created": ms_ago(10)},   # newer created, NULL updated
+        {"id": real_id, "title": "real-tu", "directory": "/mcwallt/realtu",
+         "time_updated": ms_ago(5000), "time_created": ms_ago(5000)},  # old but REAL
+    ], inputs=[mcwallt_tag_input(null_id, ["secfix-master"], ms_ago(10)),
+               mcwallt_tag_input(real_id, ["secfix-master"], ms_ago(5000))])
+    cfg = TowerConfig(db_path=db,
+                      programs=(ProgramConfig(program="secfix", tag="secfix",
+                                              note_glob=mcwallt_empty_note(tmp_path),
+                                              master_tag="secfix-master"),),
+                      now_s=mcwallt_clock(NOW))
+    state = collect_state(cfg)
+    assert state["programs"][0]["master"]["session_id"] == real_id
+    assert state["programs"][0]["master"]["last_active_ago_s"] == 5000
+    assert state["server"]["degraded"] == []  # NULL is data, not an unreadable store
+    contract.assert_shape(state)
 
 
 def test_mcwallt_join_ambiguous_flagged(tmp_path):
@@ -379,6 +447,27 @@ def test_mcwallt_drift_warning_not_degradation(tmp_path):
     state2 = collect_state(cfg2)
     assert "drift warning: session_input.payload not extractable" not in state2["server"]["degraded"]
     assert state2["server"]["degraded"] == []
+
+
+def test_mcwallt_drift_null_payload(tmp_path):
+    # S2 regression: a SQL-NULL payload above the cutoff is NOT an unreadable
+    # store — check_drift (no LIKE prefilter on its checks) must answer
+    # warning 4, never entry 1; scan_tags never even sees the row (NULL fails
+    # the LIKE prefilter in SQL) and collect stays clean.
+    from mc_wall.tower import check_drift
+    sid = "sess_8e8e8e8e-8e8e-48e8-88e8-8e8e8e8e8e8e"
+    db = mcwallt_make_db(tmp_path, sessions=[
+        {"id": sid, "title": "null-payload", "directory": "/mcwallt/nullpayload",
+         "time_updated": ms_ago(100), "time_created": ms_ago(100)}],
+        inputs=[{"session_id": sid, "payload": None, "time_created": ms_ago(100)}])
+    cfg = TowerConfig(db_path=db, programs=(), now_s=mcwallt_clock(NOW))
+    assert check_drift(cfg) == ["drift warning: session_input.payload not extractable"]
+    state = collect_state(cfg)
+    assert state["server"]["degraded"] == []  # no entry 1: the row is skipped, tolerated
+    assert state["sessions_unmapped"] == [
+        {"id": sid, "title": "null-payload", "dir": "/mcwallt/nullpayload",
+         "last_active_ago_s": 100}]
+    contract.assert_shape(state)
 
 
 def test_mcwallt_drift_pure(tmp_path):
