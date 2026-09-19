@@ -1,0 +1,7 @@
+never_touch = []
+
+[[gate]]
+name = "python-test"
+when = ["**/*.py"]
+check = ".venv/bin/pytest -q"
+autofix = ""
