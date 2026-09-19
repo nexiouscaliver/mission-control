@@ -1,4 +1,4 @@
-import http.client as http_client, json, socket, tempfile, time, typing
+import http.client as http_client, json, socket, sqlite3, tempfile, time, typing
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -86,6 +86,35 @@ def write_pending(state_dir: Path, record: dict) -> None:
     # Atomic-enough helper for arranging pre-existing state (T6).
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "pending.json").write_text(json.dumps(record), encoding="utf-8")
+
+
+def make_fixture_db(path: Path = None, *, sessions=(), inputs=(), targets=(), keep_wal=False):
+    """Fixture session db with the exact schema the matcher's SQL assumes.
+
+    sessions: (id, directory, time_created) ; inputs: (id, session_id, payload_dict, time_created)
+    targets: (session_id, target_id, time_created). Returns (db_path, anchor_connection_or_None).
+    keep_wal=True -> PRAGMA journal_mode=WAL and one OPEN rw connection returned as anchor
+    (holds -wal alive; test must keep the anchor referenced until done and close it at teardown)."""
+    db = path or make_tmp_root("mcwalls-db-") / "db.sqlite"
+    conn = sqlite3.connect(db)
+    if keep_wal:
+        conn.execute("PRAGMA journal_mode=WAL")
+    conn.executescript("""
+      CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, time_created INTEGER, directory TEXT);
+      CREATE TABLE session_input (id INTEGER PRIMARY KEY, session_id TEXT, kind TEXT, payload TEXT, time_created INTEGER);
+      CREATE TABLE session_target (session_id TEXT, target_id TEXT, objective TEXT, status TEXT, time_created INTEGER);
+    """)
+    for sid, directory, created in sessions:
+        conn.execute("INSERT INTO session VALUES (?,?,?,?)", (sid, "t", created, directory))
+    for iid, sid, payload, created in inputs:
+        conn.execute("INSERT INTO session_input VALUES (?,?,?,?,?)", (iid, sid, "sendText", json.dumps(payload), created))
+    for sid, tid, created in targets:
+        conn.execute("INSERT INTO session_target VALUES (?,?,?,?,?)", (sid, tid, "obj", "open", created))
+    conn.commit()
+    if keep_wal:
+        return db, conn          # anchor kept open -> -wal survives
+    conn.close()
+    return db, None
 
 
 class Resp:
