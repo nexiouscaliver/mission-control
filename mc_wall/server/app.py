@@ -19,6 +19,8 @@ import urllib.parse
 
 from mc_wall.server import auth, state_contract, templates
 from mc_wall.server.logging_setup import setup_logging
+from mc_wall.server.matcher import Matcher
+from mc_wall.server.monitor import HandshakeMonitor
 from mc_wall.server.pending import (
     STATUS_AWAIT_BIRTH,
     STATUS_CLEARED,
@@ -27,6 +29,7 @@ from mc_wall.server.pending import (
     PendingRecord,
     PendingStore,
 )
+from mc_wall.server.runner import SubprocessRunner
 
 MAX_BODY_BYTES = 65536
 
@@ -124,7 +127,11 @@ class ServerConfig:
     web_dir: pathlib.Path = None  # default repo_root/"web"
     state_dir: pathlib.Path = None  # default wall_home/"state"
     log_dir: pathlib.Path = None  # default wall_home/"logs"
-    db_path: pathlib.Path = None  # wired in T9; None -> no monitor
+    db_path: pathlib.Path = None  # since T2; None -> no monitor (T9)
+    runner: typing.Any = None  # None -> SubprocessRunner() in run_server (prod only)
+    monitor_interval_s: float = 2.0
+    clock: typing.Optional[typing.Callable[[], int]] = None  # epoch-ms
+    start_monitor: bool = True
 
 
 @dataclasses.dataclass
@@ -133,7 +140,7 @@ class AppContext:
     web_dir: pathlib.Path
     log_dir: pathlib.Path
     collect_state: typing.Optional[typing.Callable[[], dict]] = None  # None -> lazy tower wrapper (T5)
-    runner: typing.Any = None  # None -> POST routes reply 500 (T6); T9 wires the SubprocessRunner() default
+    runner: typing.Any = None  # None -> POST routes reply 500 (T6); run_server injects SubprocessRunner()
     pending: typing.Any = None  # PendingStore or None (T5 wires)
     allow_hosts: typing.FrozenSet[str] = auth.ALLOWED_HOSTS
     logger: logging.Logger = None
@@ -700,6 +707,13 @@ class WallServer(http.server.ThreadingHTTPServer):
         self.ctx = ctx
         self.ready = False
         self._serve_thread = None
+        self.monitor = None  # HandshakeMonitor (T9); stopped FIRST on shutdown
+
+    def shutdown(self) -> None:
+        # Monitor first: no tick may outlive the HTTP server it serves.
+        if self.monitor is not None:
+            self.monitor.stop()
+        super().shutdown()
 
     def start(self) -> bool:
         self._serve_thread = threading.Thread(
@@ -753,6 +767,10 @@ def create_server(
     collect_state: typing.Optional[typing.Callable[[], dict]] = None,
     state_dir: os.PathLike = None,
     runner: typing.Any = None,
+    db_path: os.PathLike = None,
+    monitor_interval_s: float = 2.0,
+    clock: typing.Optional[typing.Callable[[], int]] = None,
+    start_monitor: bool = True,
 ) -> WallServer:
     web_path = pathlib.Path(web_dir) if web_dir is not None else _repo_root() / "web"
     log_path = pathlib.Path(log_dir) if log_dir is not None else _default_wall_home() / "logs"
@@ -760,7 +778,8 @@ def create_server(
         frozenset(allow_hosts) if allow_hosts is not None else auth.ALLOWED_HOSTS
     )
     # runner=None stays None (tests inject FakeRunner; the POST routes reply
-    # 500 internal-error when the runner is missing). T9 wires the prod default.
+    # 500 internal-error when the runner is missing). run_server — the only
+    # prod path — injects the SubprocessRunner() default.
     ctx = AppContext(
         token=token,
         web_dir=web_path,
@@ -770,6 +789,7 @@ def create_server(
             collect_state if collect_state is not None else _default_collect_state
         ),
         runner=runner,
+        clock=clock,
     )
     # Construct first: OSError on a busy port propagates BEFORE any logging.
     server = WallServer((host, port), ctx)
@@ -783,9 +803,28 @@ def create_server(
     state_path.mkdir(parents=True, exist_ok=True)
     if state_dir is not None:
         # Recovery load at construction, before start()/any request (T11 relies on this).
-        ctx.pending = PendingStore(state_path)
+        # The store shares create_server's clock so launch_click_ms and every
+        # monitor tick read one timeline.
+        ctx.pending = PendingStore(state_path, clock=clock)
         ctx.pending.load()
     server.start()
+    if (
+        db_path is not None
+        and start_monitor
+        and server.ready
+        and ctx.pending is not None
+    ):
+        monitor = HandshakeMonitor(
+            ctx.pending,
+            Matcher(pathlib.Path(db_path)),
+            ctx.runner,
+            ctx.collect_state,
+            logger,
+            interval_s=monitor_interval_s,
+            clock=clock,
+        )
+        server.monitor = monitor
+        monitor.start()
     return server
 
 
@@ -802,6 +841,11 @@ def run_server(cfg: ServerConfig) -> int:
             web_dir=web_dir,
             log_dir=log_dir,
             state_dir=state_dir,
+            runner=cfg.runner if cfg.runner is not None else SubprocessRunner(),
+            db_path=cfg.db_path,
+            monitor_interval_s=cfg.monitor_interval_s,
+            clock=cfg.clock,
+            start_monitor=cfg.start_monitor,
         )
     except OSError as exc:
         logger.error(
