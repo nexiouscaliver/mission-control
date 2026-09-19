@@ -12,9 +12,6 @@ import json
 import os
 import sqlite3
 import threading
-import time
-
-import pytest
 
 from mc_wall.tower import NetCache, ProgramConfig, RepoConfig, TowerConfig
 from mc_wall.tower import netcache as netcache_module
@@ -59,9 +56,11 @@ def mcwallt_make_session_db(tmp_path, name="mcwallt_sessions.db"):
     return mcwallt_make_db(tmp_path, name)
 
 
-def mcwallt_clock(start: float, step: float = 0.0):
-    t = {"v": start}
-    def _now(): t["v"] += step; return t["v"]
+def mcwallt_clock(start: float):
+    """Fixed injected clock pinned at ``start`` (tests that need to ADVANCE the
+    clock use ``mcwallt_settable_clock``)."""
+    def _now():
+        return start
     return _now
 
 
@@ -99,13 +98,13 @@ def mcwallt_settable_clock(start: float):
 
 
 def mcwallt_make_goal_tree(tmp_path, slug="mcwallt-slug", queue_lines=None, budget=None,
-                           manifest=None, archive_slugs=(), root_name="regenloop/local/orchestrator/goals"):
+                           manifest=None, archive_slugs=()):
     """Temp regenloop goal tree (spec §4.3 layout) under tmp_path/mcwallt_repo.
     Always creates the goal dir + prompt.md; queue.md/budget.json/manifest.json
     only when the corresponding arg is not None; _archive/INDEX.md (comma-joined
     slug list) only when archive_slugs is non-empty. Returns (repo_path, goal_dir)."""
     repo = tmp_path / "mcwallt_repo"
-    root = repo / root_name
+    root = repo / "regenloop/local/orchestrator/goals"
     gd = root / slug
     gd.mkdir(parents=True)
     (gd / "prompt.md").write_text("mcwallt prompt\n", encoding="utf-8")

@@ -8,7 +8,8 @@ git / glab / gh execution and zero network).
 import json
 
 from mc_wall.tower import collect_state
-from tests.tower.conftest import (MCWALLT_WORLD_LANE, mcwallt_world,
+from mc_wall.tower import netcache as netcache_module
+from tests.tower.conftest import (MCWALLT_WORLD_LANE, mcwallt_fake_cmd, mcwallt_world,
                                   mcwallt_world_default_handler)
 
 # The canonical merge row (everything but `ready`, which varies per case).
@@ -224,3 +225,16 @@ def test_mcwallt_derive_human_actions_ready(tmp_path, monkeypatch):
     state = collect_state(cfg)
     assert state["human_actions"] == []
     assert state["server"]["degraded"] == []
+
+    # P3 hardening pin: an off-grammar precondition ref from manifest.json
+    # ("--sort=x" would arrive in argv as a flag) is UNKNOWN — never spawned,
+    # entry 11, row kept with ready=False.
+    cfg, _set = mcwallt_world(tmp_path, monkeypatch,
+                              manifest={"stall_t_hours": 6,
+                                        "precondition_mrs": ["--sort=x"]})
+    fake, calls = mcwallt_fake_cmd(mcwallt_world_default_handler)
+    monkeypatch.setattr(netcache_module, "_run_cmd", fake)
+    state = collect_state(cfg)
+    assert state["human_actions"] == [dict(_MERGE_ROW, ready=False)]
+    assert state["server"]["degraded"] == ["precondition state unknown: --sort=x"]
+    assert all("--sort=x" not in argv for argv in calls["argv"])

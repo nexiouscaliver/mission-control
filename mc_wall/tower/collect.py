@@ -68,8 +68,12 @@ def _read_program_notes(config: TowerConfig, program, idx: int,
     """§4.2 note read for one program: resolve the glob (0 matches -> entry 3 +
     zero row; >1 -> newest mtime, no degradation), parse, build the program row
     and its lanes in note order. A present-but-headerless note keeps
-    path/mtime/objective with lanes=[] + entry 3. Entry 10 fires once per
-    program when any row was skipped."""
+    path/mtime/objective with lanes=[] + entry 3. Entry 10 is ADDED once per
+    program when any row was skipped — but its text is the frozen §4 vocabulary
+    with the count as its only variable, so two programs skipping the SAME
+    number of rows emit identical lines and the §4 dedup (identical text, keep
+    first) collapses them to ONE emitted line; which program it came from is an
+    ambiguity the frozen vocabulary knowingly accepts."""
     zero = {"program": program.program, "note_path": "", "note_mtime": 0,
             "objective": "", "master": contract.null_master(), "lanes": []}
     path = notes.find_note(program.note_glob)

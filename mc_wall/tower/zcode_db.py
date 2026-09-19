@@ -38,6 +38,7 @@ resolution 3), so none is added.
 import json
 import re
 import sqlite3
+import urllib.parse
 
 from .config import TowerConfig
 
@@ -61,10 +62,13 @@ TAG_LINE_RE = re.compile(r"^Session title: \[(?P<tag>[^\]\n]+)\]$")
 
 
 def open_db_ro(path: str) -> sqlite3.Connection:
-    """The ONLY connection form: read-only URI. sqlite connects lazily — a
-    corrupt db raises at the FIRST execute, so callers' degradation wrappers
-    must cover connect AND the first schema query (they do)."""
-    return sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    """The ONLY connection form: read-only URI. The path segment is
+    percent-encoded (urllib.parse.quote; "/" stays literal) so '?', '#', '%',
+    or spaces in db_path cannot truncate the URI or flip mode=ro — for
+    ordinary paths quote() is a no-op. sqlite connects lazily — a corrupt db
+    raises at the FIRST execute, so callers' degradation wrappers must cover
+    connect AND the first schema query (they do)."""
+    return sqlite3.connect(f"file:{urllib.parse.quote(path)}?mode=ro", uri=True)
 
 
 def check_schema(cur) -> list[str]:
@@ -210,10 +214,11 @@ def unmapped_rows(cur, now_s: float, factor: int, session_window_s: int,
 
 
 def check_drift(config: TowerConfig) -> list[str]:
-    """§8 drift guard — PURE (no writes, no module state; identical on repeat
-    calls). The caller (server lane) schedules it at startup and hourly; the
-    tower itself starts no threads/timers. Warnings 3/4 are guard-only:
-    collect_state never emits them."""
+    """§8 drift guard — pure: no writes, no module state; identical under a
+    fixed injected clock (the cutoffs read config.now_s(), so a moving clock
+    legitimately moves them). The caller (server lane) schedules it at startup
+    and hourly; the tower itself starts no threads/timers. Warnings 3/4 are
+    guard-only: collect_state never emits them."""
     try:
         con = open_db_ro(config.db_path)
         try:

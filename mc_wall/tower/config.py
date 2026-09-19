@@ -38,7 +38,7 @@ class TowerConfig:
     now_s: Callable[[], float] = time.time
     uptime_s_provider: Callable[[], int] = lambda: 0
     banner_provider: Callable[[], str | None] = lambda: None
-    session_window_s: int = 86400    # recency window for sessions_unmapped
+    session_window_s: int = 86400    # creation window for sessions_unmapped (§6.5: time_created cutoff)
     tag_scan_window_s: int = 259200  # how far back session_input is scanned for tags
     verify_grace_s: int = 300        # min finished age before suggest_verify fires
     network: NetworkSettings = NetworkSettings()

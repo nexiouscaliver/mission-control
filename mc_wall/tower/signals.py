@@ -13,6 +13,7 @@ carries only sha+ref, and the sha stays internal to the cache).
 """
 
 import json
+import re
 from datetime import datetime
 from typing import Callable
 
@@ -21,6 +22,11 @@ from .config import NetworkSettings, RepoConfig
 GIT_LS_REMOTE = "git_ls_remote"
 MR_BY_REF = "mr_by_ref"
 MR_BY_BRANCH = "mr_by_branch"
+
+# By-ref grammar (the notes artifacts regexes yield exactly this; manifest.json
+# precondition refs must match it too BEFORE anything reaches argv): optional
+# !/# prefix, digits only. Anything else is not an MR ref.
+MR_REF_RE = re.compile(r"^[!#]?\d+$")
 
 # Closed normalization maps (§4.4). Raw CLI values are casefolded first so
 # gh's uppercase "OPEN" lands in the same vocabulary as gitlab's "opened".
@@ -133,7 +139,13 @@ def lookup_mr_by_ref(cache, cfg_network: NetworkSettings, repo: RepoConfig,
     """By-ref MR lookup (backing artifacts refs and, in T-6, preconditions).
     v1 recorded choice: rc 0 with empty/unusable stdout (NOT-FOUND) is a lookup
     FAILURE -> (None, True) — unknown != met, absence-as-degraded (documented
-    in netcache.py alongside the flag spellings)."""
+    in netcache.py alongside the flag spellings). Hardening: refs are
+    grammar-checked (``MR_REF_RE``) FIRST — an off-grammar precondition ref
+    from manifest.json (e.g. "--sort=x") must NEVER reach argv; it takes this
+    same failure path (unknown, row kept ready=False + entry 11 in collect),
+    never a spawn."""
+    if not MR_REF_RE.match(ref):
+        return (None, True)
     num = ref[1:] if ref[:1] in ("!", "#") else ref
     if repo.host == "github":
         argv = ["gh", "pr", "view", num, "--json", "number,state,title,createdAt"]

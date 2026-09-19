@@ -52,6 +52,21 @@ def test_mcwallt_db_readonly_uri(tmp_path, monkeypatch):
     assert state["server"]["degraded"] == []
 
 
+def test_mcwallt_db_ro_uri_quoting(tmp_path):
+    # P4 hardening: '?', '#', '%', and spaces in db_path must not truncate the
+    # ro URI or flip mode=ro — the path segment is percent-encoded (a no-op for
+    # ordinary paths, pinned by test_mcwallt_db_readonly_uri above). Without
+    # the quoting, sqlite would parse the query at the '?' INSIDE the path,
+    # open a nonexistent file, and degrade with entry 1.
+    weird = tmp_path / "mcwallt_we?ird#dir %pct"
+    weird.mkdir()
+    db = mcwallt_make_db(weird)
+    state = collect_state(TowerConfig(db_path=db, programs=(),
+                                      now_s=mcwallt_clock(NOW)))
+    assert state["server"]["degraded"] == []
+    contract.assert_shape(state)
+
+
 def test_mcwallt_db_ms_normalization(tmp_path, monkeypatch):
     from mc_wall.tower import zcode_db
     master_id = "sess_11111111-1111-4111-8111-111111111111"
