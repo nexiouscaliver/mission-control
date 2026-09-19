@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+regenloop/local/
+logs/
+state/
+chrome-profile/
+wall.json
