@@ -94,8 +94,8 @@ class Resp:
 def serve(token: str = "mcwalls-token", *, collect_state=None, runner=None, web_dir=None,
           state_dir=None, log_dir=None, db_path=None, port=0, allow_hosts=None,
           monitor_interval_s=0.05, clock=None, start_monitor=True):
-    # collect_state, runner, state_dir, db_path, clock, start_monitor,
-    # monitor_interval_s: accepted-but-unused, # wired in later tasks (T4-T9)
+    # runner, db_path, clock, start_monitor, monitor_interval_s:
+    # accepted-but-unused, # wired in later tasks (T6-T9)
     # alongside create_server's growing signature.
     from mc_wall.server import create_server
 
@@ -105,7 +105,8 @@ def serve(token: str = "mcwalls-token", *, collect_state=None, runner=None, web_
     state = state_dir or tmp / "state"
     logs = log_dir or tmp / "logs"
     srv = create_server(token, port=port, web_dir=web, log_dir=logs,
-                        allow_hosts=allow_hosts)  # grown per task: collect_state, runner, state_dir, db_path, clock, ...
+                        allow_hosts=allow_hosts, collect_state=collect_state,
+                        state_dir=state)  # grown per task: runner, db_path, clock, ...
     class Handle:
         pass
 

@@ -12,10 +12,12 @@ import pathlib
 import re
 import signal
 import threading
+import time
 import typing
 
 from mc_wall.server import auth, templates
 from mc_wall.server.logging_setup import setup_logging
+from mc_wall.server.pending import PendingStore
 
 DEFAULT_PORT = 8765
 DEFAULT_HOST = "127.0.0.1"
@@ -38,6 +40,16 @@ def _default_wall_home() -> pathlib.Path:
 
 def _repo_root() -> pathlib.Path:
     return pathlib.Path(__file__).resolve().parents[2]
+
+
+def _epoch_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def _default_collect_state() -> dict:
+    from mc_wall.tower import collect_state  # LAZY — the only place mc_wall.tower is named in L2
+
+    return collect_state()
 
 
 @dataclasses.dataclass
@@ -130,8 +142,7 @@ class WallRequestHandler(http.server.BaseHTTPRequestHandler):
             if rest == "":
                 self._serve_static("index.html", head_only=head_only)
             elif rest == "state":
-                # /state arrives in T5; placeholder keeps the 404 JSON shape.
-                self._not_found(head_only=head_only)
+                self._serve_state(head_only=head_only)
             elif rest.startswith("assets/"):
                 self._serve_static(rest[len("assets/"):], head_only=head_only)
             else:
@@ -181,6 +192,61 @@ class WallRequestHandler(http.server.BaseHTTPRequestHandler):
             200,
             path.read_bytes(),
             ASSET_TYPES[suffix],
+            head_only=head_only,
+            extra_headers={"Cache-Control": "no-store"},
+        )
+
+    def _serve_state(self, head_only: bool = False) -> None:
+        # Verbatim tower passthrough — the collector runs on EVERY request
+        # (no caching) and any failure degrades to 503 instead of guessing.
+        ctx = self.server.ctx
+        pending_dict = None
+        if ctx.pending is not None:
+            record = ctx.pending.snapshot()
+            if record is not None:
+                pending_dict = record.to_dict()
+        try:
+            tower = ctx.collect_state()
+        except Exception as exc:  # ImportError, RuntimeError, anything
+            self._state_degraded(type(exc).__name__, pending_dict, head_only)
+            return
+        if not isinstance(tower, dict):
+            # Never guess a shape the tower did not return.
+            self._state_degraded("NotADict", pending_dict, head_only)
+            return
+        body = dict(tower)
+        body["wall"] = {"pending": pending_dict}
+        self._reply(
+            200,
+            json.dumps(body).encode("utf-8"),
+            "application/json; charset=utf-8",
+            head_only=head_only,
+            extra_headers={"Cache-Control": "no-store"},
+        )
+
+    def _state_degraded(
+        self,
+        detail: str,
+        pending_dict: typing.Optional[dict],
+        head_only: bool = False,
+    ) -> None:
+        ctx = self.server.ctx
+        if ctx.logger is not None:
+            # Exception type name only — never str(exc) (AC-11 discipline).
+            ctx.logger.warning("state-degraded error=%s", detail)
+        self._reply(
+            503,
+            json.dumps(
+                {
+                    "ok": False,
+                    "degraded": True,
+                    "error": "collect_state_failed",
+                    "detail": detail,
+                    "occurred_at_ms": (ctx.clock or _epoch_ms)(),
+                    "wall": {"pending": pending_dict},
+                }
+            ).encode("utf-8"),
+            "application/json; charset=utf-8",
             head_only=head_only,
             extra_headers={"Cache-Control": "no-store"},
         )
@@ -267,18 +333,32 @@ def create_server(
     web_dir: os.PathLike = None,
     log_dir: os.PathLike = None,
     allow_hosts: typing.Optional[typing.Iterable[str]] = None,
+    collect_state: typing.Optional[typing.Callable[[], dict]] = None,
+    state_dir: os.PathLike = None,
 ) -> WallServer:
     web_path = pathlib.Path(web_dir) if web_dir is not None else _repo_root() / "web"
     log_path = pathlib.Path(log_dir) if log_dir is not None else _default_wall_home() / "logs"
     allowed = (
         frozenset(allow_hosts) if allow_hosts is not None else auth.ALLOWED_HOSTS
     )
-    ctx = AppContext(token=token, web_dir=web_path, log_dir=log_path, allow_hosts=allowed)
+    ctx = AppContext(
+        token=token,
+        web_dir=web_path,
+        log_dir=log_path,
+        allow_hosts=allowed,
+        collect_state=(
+            collect_state if collect_state is not None else _default_collect_state
+        ),
+    )
     # Construct first: OSError on a busy port propagates BEFORE any logging.
     server = WallServer((host, port), ctx)
     logger = setup_logging(log_path, token)
     ctx.logger = logger
     (log_path.parent / "state").mkdir(parents=True, exist_ok=True)
+    if state_dir is not None:
+        # Recovery load at construction, before start()/any request (T11 relies on this).
+        ctx.pending = PendingStore(pathlib.Path(state_dir))
+        ctx.pending.load()
     server.start()
     return server
 
@@ -287,9 +367,16 @@ def run_server(cfg: ServerConfig) -> int:
     wall_home = cfg.wall_home if cfg.wall_home is not None else _default_wall_home()
     web_dir = cfg.web_dir if cfg.web_dir is not None else _repo_root() / "web"
     log_dir = cfg.log_dir if cfg.log_dir is not None else wall_home / "logs"
+    state_dir = cfg.state_dir if cfg.state_dir is not None else wall_home / "state"
     logger = setup_logging(log_dir, cfg.token)
     try:
-        server = create_server(cfg.token, port=cfg.port, web_dir=web_dir, log_dir=log_dir)
+        server = create_server(
+            cfg.token,
+            port=cfg.port,
+            web_dir=web_dir,
+            log_dir=log_dir,
+            state_dir=state_dir,
+        )
     except OSError as exc:
         logger.error(
             "startup failed: cannot listen on 127.0.0.1:%s (%s)",
