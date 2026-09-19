@@ -1,4 +1,4 @@
-"""T-1 contract tests: assert_shape unit coverage, AC-CONTRACT-2, AC-STD-1."""
+"""T-1/T-6 contract tests: assert_shape unit coverage, AC-CONTRACT-1/2, AC-STD-1."""
 
 import ast
 import copy
@@ -9,6 +9,7 @@ import pytest
 
 from mc_wall.tower import ProgramConfig, TowerConfig, collect_state
 from mc_wall.tower import contract
+from tests.tower.conftest import mcwallt_world
 
 TOWER_DIR = Path(__file__).resolve().parents[2] / "mc_wall" / "tower"
 
@@ -108,6 +109,44 @@ def test_mcwallt_contract_keys_survive_full_degradation(tmp_path):
         "launch state degraded: pending-launch unreadable",
     ]
     assert state["launch_pending"] is None
+
+
+def test_mcwallt_contract_exact_keys_all_levels(tmp_path, monkeypatch):
+    # AC-CONTRACT-1: a fully-populated document (stalled variant so EVERY
+    # nullable object is non-null) passes assert_shape AND carries exactly the
+    # §9 key sequences, in order, at every level.
+    cfg, _set = mcwallt_world(tmp_path, monkeypatch, lane1_age_s=25200.0)
+    state = collect_state(cfg)
+    contract.assert_shape(state)
+
+    assert list(state.keys()) == ["schema_version", "server", "programs", "verify_queue",
+                                  "human_actions", "sessions_unmapped", "launch_pending"]
+    assert list(state["server"].keys()) == ["uptime_s", "generated_ts", "degraded", "banner"]
+    prog = state["programs"][0]
+    assert list(prog.keys()) == ["program", "note_path", "note_mtime", "objective",
+                                 "master", "lanes"]
+    assert list(prog["master"].keys()) == ["session_id", "title", "last_active_ago_s"]
+    lane = {l["row_id"]: l for l in prog["lanes"]}["W1-L1"]
+    assert list(lane.keys()) == ["row_id", "repo", "branch", "slug", "status_note",
+                                 "status_parsed", "manifest", "session", "goal",
+                                 "signals", "suggest_verify", "stalled"]
+    assert list(lane["manifest"].keys()) == ["path", "prompt_md", "goal_md",
+                                             "precondition_mrs", "stall_t_hours"]
+    assert list(lane["session"].keys()) == ["id", "title", "title_pending", "dir",
+                                            "last_active_ago_s"]
+    assert list(lane["goal"].keys()) == ["state", "queue_tail", "budget"]
+    assert list(lane["signals"].keys()) == ["pushed", "mr"]
+    assert list(lane["signals"]["pushed"].keys()) == ["value", "age_s"]
+    assert list(lane["signals"]["mr"].keys()) == ["ref", "repo_host", "state", "title",
+                                                  "pipeline", "age_s"]
+    assert list(lane["suggest_verify"].keys()) == ["because"]
+    assert list(lane["stalled"].keys()) == ["because", "last_event"]
+    assert list(state["verify_queue"][0].keys()) == ["row_id", "program", "finished_ago_s",
+                                                     "master_hint", "verify_cmd"]
+    assert list(state["human_actions"][0].keys()) == ["kind", "ref", "repo", "repo_host",
+                                                      "title", "pipeline", "ready"]
+    assert list(state["sessions_unmapped"][0].keys()) == ["id", "title", "dir",
+                                                          "last_active_ago_s"]
 
 
 def test_mcwallt_tower_stdlib_only():
