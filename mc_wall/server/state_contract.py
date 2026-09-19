@@ -12,6 +12,7 @@ ROW_ID_KEY = "row_id"
 LANE_TAG_KEY = "lane_tag"
 PROMPT_TEXT_KEY = "prompt_text"
 GOAL_TEXT_KEY = "goal_text"
+ROW_REPO_ROOT_KEY = "repo_root"  # T8: the goal block renders the row's own repo root
 OWED_ACTIONS_KEY = "owed_actions"
 
 OA_ROW_ID_KEY = "row_id"

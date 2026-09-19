@@ -68,6 +68,54 @@ def deep_link(repo_root: str) -> str:
     return "zcode://workspace/open?path=" + urllib.parse.quote(repo_root, safe="")
 
 
+def choose_owed_action(
+    state: dict, logger: logging.Logger
+) -> typing.Optional[dict]:
+    """Pick the one owed action the user must act on now, or None.
+
+    Pure function (no runner, no store). Parked entries, entries without an
+    int finished_signal_ms, and unknown kinds are each skipped with exactly
+    ONE audit line; survivors rank by (finished_signal_ms, row_id) — the
+    pinned tie-break is lower row_id wins.
+    """
+    valid = []
+    for raw in state_contract.owed_actions(state):
+        entry = raw if isinstance(raw, dict) else {}
+        rid = entry.get(state_contract.OA_ROW_ID_KEY)
+        rid_text = rid if isinstance(rid, str) and rid else "-"
+        if entry.get(state_contract.OA_PARKED_KEY) is True:
+            reason = "parked"
+        else:
+            signal = entry.get(state_contract.OA_FINISHED_SIGNAL_MS_KEY)
+            if not isinstance(signal, int) or isinstance(signal, bool):
+                reason = "invalid-finished-signal"  # never ranked oldest-by-default
+            elif entry.get(state_contract.OA_KIND_KEY) not in ("verify", "merge"):
+                reason = "unknown-kind"
+            else:
+                valid.append((signal, rid_text, entry))
+                continue
+        if logger is not None:
+            logger.info(
+                "needs-me-now-skipped reason=%s row_id=%s", reason, rid_text
+            )
+    if not valid:
+        return None
+    valid.sort(key=lambda item: (item[0], item[1]))
+    signal, _rid_text, entry = valid[0]
+    kind = entry.get(state_contract.OA_KIND_KEY)
+    source_key = (
+        state_contract.OA_VERIFY_CMD_KEY
+        if kind == "verify"
+        else state_contract.OA_MR_LINK_KEY
+    )
+    return {
+        "row_id": entry.get(state_contract.OA_ROW_ID_KEY),
+        "kind": kind,
+        "copied": entry.get(source_key),
+        "finished_signal_ms": signal,
+    }
+
+
 @dataclasses.dataclass
 class ServerConfig:
     token: str
@@ -233,6 +281,18 @@ class WallRequestHandler(http.server.BaseHTTPRequestHandler):
                 self._cancel(body)
             else:
                 self._recopy(body)
+            return
+        if rest in ("copy-goal", "activate-app", "needs-me-now"):
+            # These touch the clipboard/app but never the pending slot.
+            if ctx.runner is None:
+                self._post_error(500, "internal-error", "server state not configured")
+                return
+            if rest == "copy-goal":
+                self._copy_goal(body)
+            elif rest == "activate-app":
+                self._activate_app(body)
+            else:
+                self._needs_me_now(body)
             return
         self._not_found()
 
@@ -448,6 +508,73 @@ class WallRequestHandler(http.server.BaseHTTPRequestHandler):
                     "warnings": warnings,
                 }
             ).encode("utf-8"),
+            "application/json; charset=utf-8",
+        )
+
+    def _copy_goal(self, body: dict) -> None:
+        ctx = self.server.ctx
+        # 1. Validation (400).
+        row_id = body.get("row_id")
+        if not isinstance(row_id, str) or not row_id:
+            self._post_error(400, "bad-request", "row_id must be a non-empty string")
+            return
+        # 2. Resolve the row (runner untouched on failure).
+        row, replied = self._resolve_row(row_id)
+        if replied:
+            return
+        # 3. Render + copy. The {repo_root} token renders from the ROW's own
+        #    data — the request carries only row_id (state_contract is the
+        #    reconciliation point).
+        block = templates.render_file(
+            "goal_block.txt",
+            {
+                "goal_text": row.get(state_contract.GOAL_TEXT_KEY, ""),
+                "lane_tag": row.get(state_contract.LANE_TAG_KEY, ""),
+                "repo_root": row.get(state_contract.ROW_REPO_ROOT_KEY, ""),
+            },
+        )
+        ctx.runner.copy(block)
+        if ctx.logger is not None:
+            ctx.logger.info("audit action=copy-goal row_id=%s", row_id)
+        self._reply(
+            200,
+            json.dumps({"ok": True, "copied": "goal"}).encode("utf-8"),
+            "application/json; charset=utf-8",
+        )
+
+    def _activate_app(self, body: dict) -> None:
+        ctx = self.server.ctx
+        # App activation only — never a URL (the deep link is launch's job).
+        ctx.runner.open_app("ZCode")
+        if ctx.logger is not None:
+            ctx.logger.info("audit action=activate-app")
+        self._reply(
+            200,
+            json.dumps({"ok": True}).encode("utf-8"),
+            "application/json; charset=utf-8",
+        )
+
+    def _needs_me_now(self, body: dict) -> None:
+        ctx = self.server.ctx
+        try:
+            state = ctx.collect_state()
+        except Exception as exc:  # never guess — degraded, not empty
+            self._state_degraded(type(exc).__name__, self._pending_dict(), False)
+            return
+        action = choose_owed_action(state, ctx.logger)
+        if action is not None and action.get("copied") is not None:
+            # verify -> copy AND raise the app; merge -> copy only.
+            ctx.runner.copy(action["copied"])
+            if action.get("kind") == "verify":
+                ctx.runner.open_app("ZCode")
+        if ctx.logger is not None:
+            ctx.logger.info(
+                "audit action=needs-me-now row_id=%s",
+                (action or {}).get("row_id") or "-",
+            )
+        self._reply(
+            200,
+            json.dumps({"ok": True, "action": action}).encode("utf-8"),
             "application/json; charset=utf-8",
         )
 
