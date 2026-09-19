@@ -1,4 +1,4 @@
-import http.client, json, socket, tempfile, time, typing
+import http.client as http_client, json, socket, tempfile, time, typing
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -114,7 +114,9 @@ def serve(token: str = "mcwalls-token", *, collect_state=None, runner=None, web_
     h.base = f"http://127.0.0.1:{srv.server_address[1]}"
 
     def http(method, path, body=None, headers=None):
-        conn = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=5)
+        # http_client (not http.client): the nested "http" name below would
+        # shadow the module import inside this closure.
+        conn = http_client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=5)
         try:
             hdrs = {"Host": f"localhost:{srv.server_address[1]}"}
             hdrs.update(headers or {})

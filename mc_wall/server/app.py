@@ -9,14 +9,24 @@ import json
 import logging
 import os
 import pathlib
+import re
 import signal
 import threading
 import typing
 
+from mc_wall.server import auth, templates
 from mc_wall.server.logging_setup import setup_logging
 
 DEFAULT_PORT = 8765
 DEFAULT_HOST = "127.0.0.1"
+
+ASSET_TYPES = {
+    ".js": "text/javascript",
+    ".css": "text/css",
+    ".html": "text/html; charset=utf-8",
+}
+
+_ASSET_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
 def _default_wall_home() -> pathlib.Path:
@@ -49,47 +59,155 @@ class AppContext:
     collect_state: typing.Optional[typing.Callable[[], dict]] = None  # None -> lazy tower wrapper (T5)
     runner: typing.Any = None  # None -> SubprocessRunner (T4 wires; until then unused)
     pending: typing.Any = None  # PendingStore or None (T5 wires)
-    allow_hosts: typing.FrozenSet[str] = frozenset({"127.0.0.1", "localhost"})  # inline literal in T2 (auth.py does not exist yet); T3 switches this default to auth.ALLOWED_HOSTS
+    allow_hosts: typing.FrozenSet[str] = auth.ALLOWED_HOSTS
     logger: logging.Logger = None
     clock: typing.Optional[typing.Callable[[], int]] = None  # epoch-ms; default int(time.time()*1000)
 
 
 class WallRequestHandler(http.server.BaseHTTPRequestHandler):
-    """T2 placeholder routing: Host gate + 404 JSON for everything else.
-
-    Full routing (token check, static, redirect/HEAD) arrives in T3; until
-    then every request that passes the Host gate answers the not-found JSON.
-    """
+    """Request pipeline, pinned order: Host gate -> token -> 302 -> GET/HEAD
+    routes -> POST placeholder (T6 wires) -> 405 for other methods. HEAD runs
+    the GET path with the body suppressed. No Access-Control-* header is ever
+    emitted (structural: _reply never adds one)."""
 
     def log_message(self, format, *args):  # noqa: A002
         # No-op: the default would log self.path — a token leak (AC-11).
         return
 
     def do_GET(self) -> None:
-        self._dispatch()
-
-    def do_POST(self) -> None:
-        self._dispatch()
+        self._dispatch("GET")
 
     def do_HEAD(self) -> None:
-        self._dispatch(head_only=True)
+        self._dispatch("HEAD")
 
-    def _dispatch(self, head_only: bool = False) -> None:
-        # Minimal inline Host gate in T2 (auth.py arrives in T3): normalize the
-        # same way T3's auth.host_allowed will — strip, lower, drop :port.
-        host = self.headers.get("Host")
-        host_name = host.strip().lower().rsplit(":", 1)[0] if host else None
-        if not host_name or host_name not in self.server.ctx.allow_hosts:
+    def do_POST(self) -> None:
+        self._dispatch("POST")
+
+    def do_PUT(self) -> None:
+        self._dispatch("PUT")
+
+    def do_DELETE(self) -> None:
+        self._dispatch("DELETE")
+
+    def do_PATCH(self) -> None:
+        self._dispatch("PATCH")
+
+    def do_OPTIONS(self) -> None:
+        self._dispatch("OPTIONS")
+
+    def _dispatch(self, method: str) -> None:
+        ctx = self.server.ctx
+        head_only = method == "HEAD"
+        # 1. Host gate first (DNS-rebinding defense) — before anything that
+        #    would echo token-shaped input.
+        if not auth.host_allowed(self.headers.get("Host"), ctx.allow_hosts):
             self._reply(403, b"forbidden\n", "text/plain", head_only=head_only)
             return
-        body = json.dumps(
-            {"ok": False, "error": "not-found", "message": "not found"}
-        ).encode("utf-8")
-        self._reply(404, body, "application/json", head_only=head_only)
+        # 2. Token segment from the RAW path — never unquoted, so %2e%2e%2f
+        #    can never become a path separator.
+        raw = self.path.split("?", 1)[0]
+        token_seg, sep, rest = raw.lstrip("/").partition("/")
+        if not auth.token_matches(token_seg, ctx.token):
+            self._reply(
+                404,
+                templates.load("wrong_token.html").encode("utf-8"),
+                "text/html; charset=utf-8",
+                head_only=head_only,
+            )
+            return
+        # 3. GET/HEAD /<token> (no slash) -> canonical /<token>/.
+        if not sep and method in ("GET", "HEAD"):
+            self._reply(
+                302,
+                b"",
+                None,
+                head_only=head_only,
+                extra_headers={"Location": f"/{ctx.token}/"},
+            )
+            return
+        # 4. GET/HEAD routes.
+        if method in ("GET", "HEAD"):
+            if rest == "":
+                self._serve_static("index.html", head_only=head_only)
+            elif rest == "state":
+                # /state arrives in T5; placeholder keeps the 404 JSON shape.
+                self._not_found(head_only=head_only)
+            elif rest.startswith("assets/"):
+                self._serve_static(rest[len("assets/"):], head_only=head_only)
+            else:
+                self._not_found(head_only=head_only)
+            return
+        # 5. POST routes arrive in T6; until then 404 JSON not-found.
+        if method == "POST":
+            self._not_found(head_only=head_only)
+            return
+        # 6. PUT/DELETE/PATCH/OPTIONS (and anything else routed here).
+        self._reply(
+            405,
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": "method-not-allowed",
+                    "message": "method not allowed",
+                }
+            ).encode("utf-8"),
+            "application/json",
+            head_only=head_only,
+        )
 
-    def _reply(self, status: int, body: bytes, content_type: str, head_only: bool = False) -> None:
+    def _serve_static(self, name: str, head_only: bool = False) -> None:
+        ctx = self.server.ctx
+        if (
+            name in ("", ".", "..")
+            or "/" in name
+            or "\\" in name
+            or name.startswith(".")
+            or _ASSET_NAME_RE.fullmatch(name) is None
+        ):
+            self._not_found(head_only=head_only)
+            return
+        suffix = pathlib.Path(name).suffix
+        if suffix not in ASSET_TYPES:
+            self._not_found(head_only=head_only)
+            return
+        path = ctx.web_dir / name
+        if not path.is_file():
+            if ctx.logger is not None:
+                # Asset name only — never self.path (token leak), no traceback.
+                ctx.logger.warning("static-missing name=%s", name)
+            self._not_found(head_only=head_only)
+            return
+        self._reply(
+            200,
+            path.read_bytes(),
+            ASSET_TYPES[suffix],
+            head_only=head_only,
+            extra_headers={"Cache-Control": "no-store"},
+        )
+
+    def _not_found(self, head_only: bool = False) -> None:
+        self._reply(
+            404,
+            json.dumps(
+                {"ok": False, "error": "not-found", "message": "not found"}
+            ).encode("utf-8"),
+            "application/json",
+            head_only=head_only,
+        )
+
+    def _reply(
+        self,
+        status: int,
+        body: bytes,
+        content_type: typing.Optional[str],
+        head_only: bool = False,
+        extra_headers: typing.Optional[typing.Dict[str, str]] = None,
+    ) -> None:
         self.send_response(status)
-        self.send_header("Content-Type", content_type)
+        if content_type is not None:
+            self.send_header("Content-Type", content_type)
+        for key, value in (extra_headers or {}).items():
+            self.send_header(key, value)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         if not head_only:
@@ -153,9 +271,7 @@ def create_server(
     web_path = pathlib.Path(web_dir) if web_dir is not None else _repo_root() / "web"
     log_path = pathlib.Path(log_dir) if log_dir is not None else _default_wall_home() / "logs"
     allowed = (
-        frozenset(allow_hosts)
-        if allow_hosts is not None
-        else frozenset({"127.0.0.1", "localhost"})
+        frozenset(allow_hosts) if allow_hosts is not None else auth.ALLOWED_HOSTS
     )
     ctx = AppContext(token=token, web_dir=web_path, log_dir=log_path, allow_hosts=allowed)
     # Construct first: OSError on a busy port propagates BEFORE any logging.
