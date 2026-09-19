@@ -132,8 +132,9 @@ def test_mcwallt_mr_normalize_and_precedence(tmp_path, monkeypatch):
                            ("pending", "running"), ("weird", "")):
         adapted = signals.adapt_cli_mr(dict(gl, head_pipeline={"status": raw_pipe}), "gitlab")
         assert signals.normalize_mr(adapted, "gitlab", NOW)["pipeline"] == want
-    # Unparseable created_at -> age 0; a future created_at never goes negative.
-    for bad in ("not-a-date", "2030-01-01T00:00:00Z"):
+    # Unparseable created_at -> age 0; a future created_at never goes negative
+    # (NOW = 2e9 epoch is 2033-05, so 2040 is genuinely in the future).
+    for bad in ("not-a-date", "2040-01-01T00:00:00Z"):
         adapted = signals.adapt_cli_mr(dict(gl, created_at=bad), "gitlab")
         assert signals.normalize_mr(adapted, "gitlab", NOW)["age_s"] == 0
     # github: number/state(OPEN)/createdAt keys, "#" refs; pipeline "" in v1

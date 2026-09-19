@@ -92,6 +92,11 @@ def test_mcwallt_notes_corpus_rows(tmp_path, monkeypatch):
     # live goal tree. Goal wiring is T-4's subject (covered fixture-only by
     # test_mcwallt_goals.py); this test owns the note parse — neutralize it.
     monkeypatch.setattr(collect_module, "_read_goals", lambda *args: None)
+    # Same hermeticity rule for T-5: the corpus lanes carry real branches, and
+    # the signals wiring would spawn real git/glab against the live checkout.
+    # Signals are T-5's subject (covered fixture-only by
+    # test_mcwallt_signals.py); neutralize them here too.
+    monkeypatch.setattr(collect_module, "_read_signals", lambda *args: None)
     note = mcwallt_make_note(tmp_path, "mcwallt_corpus.md", CORPUS_NOTE.splitlines())
     cfg = TowerConfig(
         db_path=mcwallt_make_session_db(tmp_path),

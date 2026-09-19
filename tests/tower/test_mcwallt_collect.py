@@ -82,7 +82,13 @@ def test_mcwallt_failopen_launch_binary(tmp_path):
     assert state["programs"] == []
 
 
-def test_mcwallt_failopen_notes_missing(tmp_path):
+def test_mcwallt_failopen_notes_missing(tmp_path, monkeypatch):
+    # Hermeticity: the >1-matches world below maps a lane to a configured repo
+    # with a branch + an !5 artifacts ref; T-5's signals wiring would spawn
+    # real git/glab subprocesses. Signals are T-5's subject (covered
+    # fixture-only by test_mcwallt_signals.py); neutralize them here.
+    from mc_wall.tower import collect as collect_module
+    monkeypatch.setattr(collect_module, "_read_signals", lambda *args: None)
     db_path = mcwallt_make_session_db(tmp_path)
 
     # 0 glob matches: program row zeroed per §4.2 + entry 3 exactly.

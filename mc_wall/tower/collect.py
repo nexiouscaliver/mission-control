@@ -1,17 +1,19 @@
 """collect_state orchestration (T-1 skeleton; notes wired in T-2; the zcode
-session-db reader in T-3; the regenloop goal-state reader in T-4).
+session-db reader in T-3; the regenloop goal-state reader in T-4; the network
+signals in T-5).
 
 Owns the document assembly, the §4 degraded-entry ordering machinery
 (``DegradedLog``), the pending-launch read (§4.5), the §4.2 vault-note read,
 the §4.1 session-store read/join (through ``zcode_db``), the §4.3 goal
-state/manifest read (through ``goals``), and the no-escape boundary. The
-remaining per-source reader (signals) lands in T-5 and plugs into ``_collect``.
+state/manifest read (through ``goals``), the §4.4 network signals (through
+``signals``, all spawns via ``NetCache``/``_run_cmd``), and the no-escape
+boundary. Derivations land in T-6 and plug into ``_collect``.
 """
 
 import json
 import os
 
-from . import contract, goals, notes, zcode_db
+from . import contract, goals, notes, signals, zcode_db
 from .config import TowerConfig
 
 
@@ -37,11 +39,14 @@ def _collect(config: TowerConfig) -> dict:
     # (goal/manifest), T-5 (signals), and T-6 (derivations) consume these
     # records; the contract lane dict itself never exposes sess_token.
     lane_records = []  # (program_idx, lane_dict, sess_token, repo_name_or_None,
-                       #  repo_idx_or_None, branch, status_parsed)
+                       #  repo_idx_or_None, branch, status_parsed, mr_bang,
+                       #  mr_hash) — _read_signals appends (mr, mr_failed) per
+                       #  record for T-6's human_actions.
     for i, p in enumerate(config.programs):
         programs.append(_read_program_notes(config, p, i, log, lane_records))
     sessions_unmapped = _read_sessions(config, now, log, programs, lane_records)
     _read_goals(config, log, lane_records)
+    _read_signals(config, log, lane_records, now)
     return {"schema_version": 1,
             "server": {"uptime_s": int(config.uptime_s_provider()),
                        "generated_ts": int(now),
@@ -84,7 +89,8 @@ def _read_program_notes(config: TowerConfig, program, idx: int,
                                    row.status_note, row.status_parsed)
         lanes.append(lane)
         lane_records.append((idx, lane, row.sess_token, repo_name, repo_idx,
-                             row.branch, row.status_parsed))
+                             row.branch, row.status_parsed, row.mr_bang,
+                             row.mr_hash))
     if parsed.skipped >= 1:
         log.add((1, idx, 1, ""), f"note rows skipped: {parsed.skipped}")
     return {"program": program.program, "note_path": os.path.abspath(path),
@@ -215,7 +221,7 @@ def _read_goals(config: TowerConfig, log: "DegradedLog", lane_records: list) -> 
         if not os.path.isdir(rc.path):
             log.add((2, r, 0, ""), f"goals degraded: {rc.name}")
             degraded_repos.add(r)
-    for _pidx, lane, _token, _repo_name, repo_idx, _branch, _status in lane_records:
+    for _pidx, lane, _token, _repo_name, repo_idx, _branch, _status, *_refs in lane_records:
         if repo_idx is None or repo_idx in degraded_repos:
             continue  # unconfigured repo / degraded repo: nulls, no entry
         slug = lane["slug"]
@@ -225,6 +231,37 @@ def _read_goals(config: TowerConfig, log: "DegradedLog", lane_records: list) -> 
         state, gd = goals.goal_state(root, slug)
         lane["goal"] = goals.read_goal(gd, state)
         lane["manifest"] = goals.read_manifest(gd)
+
+
+def _read_signals(config: TowerConfig, log: "DegradedLog", lane_records: list,
+                  now: float) -> None:
+    """§4.4 network signals, wired into lanes in place. Per lane with a
+    configured repo: pushed (branch None -> null, no entry; lookup failure ->
+    null + entry 5) and the MR (artifacts ref first, else by-branch; lookup
+    failure -> null + entry 6). Entries are added per lane but deduped to once
+    per repo per collect by DegradedLog (identical text, keep first).
+    Unconfigured-repo lanes keep the lane_shell signal nulls — a config gap is
+    absence, not failure. (mr, mr_failed) is appended to the internal lane
+    record for T-6's human_actions. A repo whose configured path is missing
+    needs no special-casing here: the spawn fails inside _run_cmd (nonexistent
+    cwd) and degrades through these same entries."""
+    for i, rec in enumerate(lane_records):
+        repo_idx = rec[4]
+        if repo_idx is None:
+            continue
+        repo = config.repos[repo_idx]
+        pushed, p_degraded = signals.pushed_signal(
+            config.network_cache, config.network, repo, rec[5], config.now_s, now)
+        if p_degraded:
+            log.add((3, repo_idx, 0, ""), f"network degraded: git {repo.name}")
+        rec[1]["signals"]["pushed"] = pushed
+        mr, mr_failed = signals.resolve_mr(
+            config.network_cache, config.network, repo, rec[5], rec[7], rec[8],
+            config.now_s, now)
+        if mr_failed:
+            log.add((3, repo_idx, 1, ""), f"network degraded: mr {repo.name}")
+        rec[1]["signals"]["mr"] = mr
+        lane_records[i] = rec + (mr, mr_failed)  # T-6 consumes (mr, mr_failed)
 
 
 def _read_launch(path: str | None, log: "DegradedLog"):
