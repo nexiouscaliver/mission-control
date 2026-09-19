@@ -1090,7 +1090,7 @@ test("T2-util: humanizeAge bands (45s / 3m / 2h / 4d; floors 0, negative, non-nu
   assert.equal(h(45.9), "45s", "fractional seconds floor");
 });
 
-test("T2-app: mountQA applies the case via setDocument; render stays blank-noted until T3", () => {
+test("T2-app: mountQA applies the case via setDocument (delegates to normalize)", () => {
   const MCW = loadApp();
   const mocks = parseIndexMocks(readWebFile("index.html"));
   const dom = buildMockDom(mocks);
@@ -1103,12 +1103,397 @@ test("T2-app: mountQA applies the case via setDocument; render stays blank-noted
   for (const name of NINE_CASES) {
     assert.doesNotThrow(() => app.mountQA(name), "mountQA(" + name + ") must not throw");
   }
-  for (const id of ["col1-programs", "panel-verify", "panel-human", "col3-sessions"]) {
-    assert.ok(
-      collectText(dom.getElementById(id)).indexOf("waiting for mock") !== -1,
-      "#" + id + " keeps the T1 blank note until T3 renders real columns"
-    );
+});
+
+// =====================================================================
+// Tier: T3 — Col 1 PROGRAMS + trust chips + launch panel (AC-9/12/13/21/26/34)
+// =====================================================================
+
+// Fixed clock so "stamped <age>" is deterministic: now/1000 = 1789862700.
+// secfix note_mtime 1789861800 -> age 900 -> "15m"; 1789860000 -> 2700 -> "45m".
+const FIXED_NOW_MS = 1789862700000;
+
+function makeQaApp(caseName, extraDeps) {
+  const MCW = loadApp();
+  const mocks = parseIndexMocks(readWebFile("index.html"));
+  const dom = buildMockDom(mocks);
+  const deps = MCW.createDeps(
+    Object.assign({ document: dom, now: () => FIXED_NOW_MS, location: fakeLocation({}) }, extraDeps || {})
+  );
+  const app = MCW.createApp(deps);
+  const sel = app.mountQA(caseName);
+  return { MCW: MCW, app: app, dom: dom, sel: sel };
+}
+
+function fixedStampAge(mtime) {
+  return loadApp().util.humanizeAge(Math.floor(FIXED_NOW_MS / 1000) - mtime);
+}
+
+test("T3-step0: mountQA delegates to normalize — exactly one extract/select pipeline", () => {
+  const src = readWebFile("app.js");
+  assert.equal(
+    (src.match(/extractMocks\s*\(/g) || []).length,
+    2,
+    "extractMocks must have exactly one definition + ONE call site (inside normalize)"
+  );
+  assert.equal(
+    (src.match(/selectCase\s*\(/g) || []).length,
+    2,
+    "selectCase must have exactly one definition + ONE call site (inside normalize)"
+  );
+  const { sel } = makeQaApp("nope");
+  assert.deepEqual(sel, { appliedCase: "full", unknownCase: true }, "unknown case still selects full + flags");
+  const named = makeQaApp("unparsed");
+  assert.deepEqual(named.sel, { appliedCase: "unparsed", unknownCase: false });
+});
+
+test("AC-9[S]: every lane in every fixture maps to its trust chip class + stamped age", () => {
+  const items = loadApp().state.items;
+  for (const caseName of NINE_CASES) {
+    const doc = parseIndexMocks(readWebFile("index.html"))[caseName];
+    const { dom } = makeQaApp(caseName);
+    const col1 = dom.getElementById("col1-programs");
+    assert.ok(col1, caseName + ": col1 root must exist");
+    for (const prog of items(doc.programs, null).valid) {
+      const mtime = Number.isInteger(prog.note_mtime) ? prog.note_mtime : 0;
+      for (const lane of items(prog.lanes, "row_id").valid) {
+        const laneEl = findByData(col1, "data-row-id", lane.row_id);
+        assert.ok(laneEl, caseName + ": lane " + lane.row_id + " must render with data-row-id");
+        const chips = byClass(laneEl, "chip");
+        assert.ok(chips.length >= 1, caseName + " " + lane.row_id + ": at least one chip");
+        // truth level: UNPARSED or an unstamped authority (note_mtime 0) is stale;
+        // everything else is a solid note-status chip (SPEC 5)
+        const wantClass =
+          lane.status_parsed === "UNPARSED" || mtime === 0 ? "chip--stale" : "chip--note";
+        const matching = chips.filter((c) => c.classList.contains(wantClass));
+        assert.ok(
+          matching.length >= 1,
+          caseName + " " + lane.row_id + " (" + lane.status_parsed + ", mtime " + mtime +
+            ") needs a " + wantClass + " chip"
+        );
+        const text = collectText(laneEl);
+        if (lane.status_parsed === "UNPARSED") {
+          assert.ok(text.indexOf("UNPARSED:") !== -1, "UNPARSED prefix on " + lane.row_id);
+          if (lane.status_note === "") {
+            assert.ok(text.indexOf("(empty status)") !== -1, "empty status placeholder on " + lane.row_id);
+          } else {
+            assert.ok(
+              text.indexOf(lane.status_note) !== -1,
+              "status_note verbatim on " + lane.row_id + ": " + lane.status_note
+            );
+          }
+        } else {
+          assert.ok(text.indexOf(lane.status_parsed) !== -1, "status word " + lane.status_parsed);
+          if (mtime === 0) {
+            assert.ok(text.indexOf("stamped: unknown") !== -1, "mtime 0 -> stamped: unknown");
+          } else {
+            assert.ok(
+              text.indexOf("stamped " + fixedStampAge(mtime)) !== -1,
+              "chip stamp 'stamped <age>' from note_mtime; got: " + text
+            );
+          }
+        }
+        // derived chips carry the pinned verbatim inline forms
+        const sig = lane.signals;
+        if (sig && sig.pushed !== null && (sig.pushed.value === true || sig.pushed.value === false)) {
+          const want =
+            sig.pushed.value === true
+              ? "push: ls-remote " + sig.pushed.age_s + "s"
+              : "push: not pushed";
+          const chip = chips.find((c) => collectText(c).indexOf(want) !== -1);
+          assert.ok(chip, caseName + " " + lane.row_id + ": derived chip '" + want + "'");
+          assert.ok(chip.classList.contains("chip--derived"), want + " must be chip--derived");
+        }
+        if (sig && sig.mr !== null) {
+          const want = "mr: " + sig.mr.ref + " " + sig.mr.state + " " + sig.mr.age_s + "s";
+          const chip = chips.find((c) => collectText(c).indexOf(want) !== -1);
+          assert.ok(chip, caseName + " " + lane.row_id + ": derived chip '" + want + "'");
+          assert.ok(chip.classList.contains("chip--derived"), want + " must be chip--derived");
+        }
+      }
+    }
   }
+});
+
+test("AC-12: program cards render (name/objective/lane chips; no lanes; skipped N malformed rows)", () => {
+  const full = makeQaApp("full");
+  const col1 = full.dom.getElementById("col1-programs");
+  const cards = byClass(col1, "program-card");
+  assert.equal(cards.length, 2, "full has two valid programs");
+  assert.ok(collectText(cards[0]).indexOf("secfix") !== -1, "program name in card header");
+  assert.ok(
+    collectText(cards[0]).indexOf("harden session join against tag drift") !== -1,
+    "objective subtitle"
+  );
+  assert.ok(collectText(cards[0]).indexOf("stamped 15m") !== -1, "card stamp line from note_mtime");
+  for (const rid of ["W2-L1", "W2-L6", "W2-L10"]) {
+    assert.ok(findByData(col1, "data-row-id", rid), "lane chip " + rid + " carries data-row-id");
+  }
+  assert.ok(collectText(cards[1]).indexOf("omniforge") !== -1, "second program card");
+  assert.ok(collectText(cards[1]).indexOf("stamped: unknown") !== -1, "note_mtime 0 card stamp");
+
+  const empty = makeQaApp("empty-lanes");
+  const col1e = empty.dom.getElementById("col1-programs");
+  assert.equal(byClass(col1e, "program-card").length, 1);
+  assert.ok(collectText(col1e).indexOf("no lanes") !== -1, "empty lanes -> no lanes note");
+  assert.ok(collectText(col1e).indexOf("stamped 45m") !== -1, "empty-lanes stamp (mtime 1789860000)");
+
+  const np = makeQaApp("null-program");
+  const col1n = np.dom.getElementById("col1-programs");
+  assert.equal(byClass(col1n, "program-card").length, 1, "null entry skipped, valid card intact");
+  assert.ok(collectText(col1n).indexOf("secfix") !== -1, "valid card intact after skip");
+  assert.ok(collectText(col1n).indexOf("skipped 1 malformed rows") !== -1, "skip count note");
+
+  const mini = makeQaApp("minimal");
+  assert.ok(
+    collectText(mini.dom.getElementById("col1-programs")).indexOf("no lanes") !== -1,
+    "zero programs -> panel-level no-lanes note (AC-22 minimal pins this)"
+  );
+
+  // unnamed program header via an in-test doc
+  const unnamed = makeQaApp("minimal");
+  unnamed.app.setDocument({
+    schema_version: 1,
+    server: { uptime_s: 0, generated_ts: 0, degraded: [], banner: null },
+    programs: [
+      {
+        program: "",
+        note_path: "",
+        note_mtime: 0,
+        objective: "",
+        master: { session_id: null, title: null, last_active_ago_s: null },
+        lanes: [],
+      },
+    ],
+    verify_queue: [],
+    human_actions: [],
+    sessions_unmapped: [],
+    launch_pending: null,
+    wall: { pending: null },
+  });
+  unnamed.app.render();
+  const col1u = unnamed.dom.getElementById("col1-programs");
+  assert.ok(collectText(col1u).indexOf("(unnamed program)") !== -1, "empty name -> dim unnamed header");
+  assert.ok(collectText(col1u).indexOf("stamped: unknown") !== -1);
+});
+
+test("AC-13: full census render — statuses, UNPARSED verbatim, legacy, STALLED, parked, padlock-attention", () => {
+  const { dom } = makeQaApp("full");
+  const col1 = dom.getElementById("col1-programs");
+  const text = collectText(col1);
+  for (const s of ["forged", "launched", "done", "partial", "failed", "parked", "in-flight"]) {
+    assert.ok(text.indexOf(s) !== -1, "status word " + s + " must render");
+  }
+  // UNPARSED chip: status_note verbatim
+  const l8 = findByData(col1, "data-row-id", "W2-L8");
+  assert.ok(l8 && byClass(l8, "chip--stale").length >= 1, "UNPARSED chip is stale-styled");
+  assert.ok(collectText(l8).indexOf("Waiting on CI!!") !== -1, "status_note verbatim");
+  // empty status_note -> dim placeholder
+  const l10 = findByData(col1, "data-row-id", "W2-L10");
+  assert.ok(collectText(l10).indexOf("(empty status)") !== -1, "empty status placeholder");
+  // legacy lane (manifest === null)
+  const l2 = findByData(col1, "data-row-id", "W2-L2");
+  assert.ok(byClass(l2, "legacy-badge").length >= 1, "legacy badge on manifest:null lane");
+  assert.ok(collectText(l2).indexOf("launch via master") !== -1, "launch via master note");
+  // STALLED treatment: because + last_event verbatim, attention class on the chip
+  const l9 = findByData(col1, "data-row-id", "W2-L9");
+  assert.ok(l9 && byClass(l9, "stalled").length >= 1, "stalled class on the lane's chip");
+  assert.ok(collectText(l9).indexOf("inactive for 21600s > stall_t 6h") !== -1, "because verbatim");
+  assert.ok(collectText(l9).indexOf("queue.md mtime at 21600s ago") !== -1, "last_event verbatim");
+  // parked chip
+  const l6 = findByData(col1, "data-row-id", "W2-L6");
+  assert.ok(l6 && collectText(l6).indexOf("parked") !== -1, "parked renders");
+  assert.ok(byClass(l6, "chip--note").length >= 1, "parked chip keeps note trust level");
+  // padlock lane (manifest non-null, precondition_mrs ["!12"]) + CSS attention mapping
+  const l3 = findByData(col1, "data-row-id", "W2-L3");
+  const locks = byClass(l3, "padlock");
+  assert.ok(locks.length >= 1, "padlock glyph on locked lane");
+  assert.ok(collectText(locks[0]).indexOf("🔒") !== -1, "padlock glyph text");
+  const css = readWebFile("style.css");
+  const tokens = parseRootTokens(css);
+  const padRule = parseCssRules(css).find((r) => r.selector === ".padlock" && r.media === "");
+  assert.ok(padRule && padRule.decls["color"], ".padlock color rule must exist");
+  const m = /var\((--[\w-]+)\)/.exec(padRule.decls["color"]);
+  assert.ok(m, "padlock color must reference a :root token");
+  assert.equal(tokens[m[1]], tokens["--attention"], "padlock maps to --attention");
+  assert.notEqual(tokens[m[1]], tokens["--border"], "padlock must never be the hairline grey");
+  assert.notEqual(tokens[m[1]], tokens["--ink-dim"], "padlock must never be the dim grey");
+});
+
+test("AC-21: mr badges derive from repo_host (!N/#N verbatim, unknown host neutral, never parsed from ref)", () => {
+  const { dom } = makeQaApp("full");
+  const col1 = dom.getElementById("col1-programs");
+  const l1 = findByData(col1, "data-row-id", "W2-L1");
+  const b1 = byClass(l1, "mr-badge");
+  assert.ok(b1.length >= 1, "gitlab mr badge renders");
+  assert.equal(collectText(b1[0]).trim(), "!34", "gitlab badge = ref verbatim");
+  const l4 = findByData(col1, "data-row-id", "W2-L4");
+  const b4 = byClass(l4, "mr-badge");
+  assert.ok(b4.length >= 1, "github mr badge renders");
+  assert.equal(collectText(b4[0]).trim(), "#56", "github badge = ref verbatim");
+
+  // unknown host + no-digit-parsing, via an in-test doc
+  const cust = makeQaApp("minimal");
+  cust.app.setDocument({
+    schema_version: 1,
+    server: { uptime_s: 0, generated_ts: 0, degraded: [], banner: null },
+    programs: [
+      {
+        program: "probe",
+        note_path: "",
+        note_mtime: 1789861800,
+        objective: "",
+        master: { session_id: null, title: null, last_active_ago_s: null },
+        lanes: [
+          {
+            row_id: "X-1",
+            repo: "r",
+            branch: null,
+            slug: null,
+            status_note: "",
+            status_parsed: "forged",
+            manifest: null,
+            session: null,
+            goal: null,
+            signals: {
+              pushed: null,
+              mr: { ref: "zz!7zz", repo_host: "gerrit", state: "open", title: "t", pipeline: "", age_s: 60 },
+            },
+            suggest_verify: null,
+            stalled: null,
+          },
+          {
+            row_id: "X-2",
+            repo: "r",
+            branch: null,
+            slug: null,
+            status_note: "",
+            status_parsed: "done",
+            manifest: null,
+            session: null,
+            goal: null,
+            signals: {
+              pushed: null,
+              mr: { ref: "!99x", repo_host: "gitlab", state: "merged", title: "t2", pipeline: "", age_s: 5 },
+            },
+            suggest_verify: null,
+            stalled: null,
+          },
+        ],
+      },
+    ],
+    verify_queue: [],
+    human_actions: [],
+    sessions_unmapped: [],
+    launch_pending: null,
+    wall: { pending: null },
+  });
+  cust.app.render();
+  const col1c = cust.dom.getElementById("col1-programs");
+  const x1 = findByData(col1c, "data-row-id", "X-1");
+  assert.ok(collectText(x1).indexOf("zz!7zz") !== -1, "mr chip text keeps the ref verbatim (no digit parsing)");
+  assert.equal(
+    collectText(byClass(x1, "mr-badge")[0]).trim(),
+    "MR zz!7zz",
+    "unknown host -> neutral 'MR <ref>'"
+  );
+  const x2 = findByData(col1c, "data-row-id", "X-2");
+  assert.equal(
+    collectText(byClass(x2, "mr-badge")[0]).trim(),
+    "!99x",
+    "gitlab badge = non-canonical ref verbatim, still never parsed"
+  );
+});
+
+test("AC-26: chip floors + trust borders/dots resolve to status tokens; flash defined", () => {
+  const css = readWebFile("style.css");
+  const tokens = parseRootTokens(css);
+  const rules = parseCssRules(css);
+  const chip = rules.find((r) => r.selector === ".chip" && r.media === "");
+  assert.ok(chip, "unconditional .chip base rule");
+  assert.ok(parseFloat(chip.decls["font-size"]) >= 14, "chip font-size >= 14px");
+  assert.ok(parseInt(chip.decls["font-weight"], 10) >= 600, "chip font-weight >= 600");
+  assert.ok(parseFloat(chip.decls["min-height"]) >= 26, "chip min-height >= 26px");
+  // trust borders: line style + status token per level
+  const noteRule = rules.find((r) => r.selector === ".chip--note" && r.media === "");
+  const derivedRule = rules.find((r) => r.selector === ".chip--derived" && r.media === "");
+  const staleRule = rules.find((r) => r.selector === ".chip--stale" && r.media === "");
+  assert.ok(noteRule && derivedRule && staleRule, "all three trust chip rules exist");
+  assert.equal(noteRule.decls["border"], "2px solid var(--note)", "note chip: SOLID border in --note");
+  assert.equal(derivedRule.decls["border"], "2px dashed var(--derived)", "derived chip: DASHED border in --derived");
+  assert.equal(staleRule.decls["border"], "2px solid var(--stale)", "stale chip border in --stale");
+  assert.match(staleRule.decls["background-image"], /repeating-linear-gradient/, "stale chip: HATCHED background");
+  assert.match(staleRule.decls["background-image"], /var\(--stale\)\s+30%/, "hatch stripes use --stale at ~30% alpha");
+  // corner dots: filled disk / thin open outline / thick hollow donut
+  const dotNote = rules.find((r) => r.selector === ".chip--note::after" && r.media === "");
+  const dotDerived = rules.find((r) => r.selector === ".chip--derived::after" && r.media === "");
+  const dotStale = rules.find((r) => r.selector === ".chip--stale::after" && r.media === "");
+  assert.ok(dotNote && dotDerived && dotStale, "all three corner-dot rules exist");
+  assert.equal(dotNote.decls["background"], "var(--note)", "note dot = FILLED disk");
+  assert.equal(dotNote.decls["border-radius"], "50%");
+  assert.equal(dotDerived.decls["border"], "1.5px solid var(--derived)", "derived dot = thin OPEN outline");
+  assert.equal(dotDerived.decls["background"], "transparent");
+  assert.ok(parseFloat(dotStale.decls["border"]) >= 3, "stale dot = HOLLOW donut ring >= 3px");
+  assert.equal(dotStale.decls["background"], "transparent");
+  assert.equal(dotStale.decls["border-radius"], "50%");
+  // every var() referenced by the chip rules resolves to a :root token
+  for (const rule of [noteRule, derivedRule, staleRule, dotNote, dotDerived, dotStale]) {
+    for (const decl of Object.keys(rule.decls)) {
+      const vm = /var\((--[\w-]+)\)/.exec(rule.decls[decl]);
+      if (vm) assert.ok(tokens[vm[1]], decl + " references unknown token " + vm[1]);
+    }
+  }
+  // flash class defined (the T4 jump primitive T3 pins)
+  assert.ok(rules.find((r) => r.selector === ".flash" && r.media === ""), ".flash must be defined");
+});
+
+test("AC-34: LIVE LAUNCH design-off (disabled + note + zero fetch); QA demo cycles the override", () => {
+  // QA: the demo cycles null -> prompt-armed -> goal-armed -> cleared -> null; mount resets
+  const fetchQa = fakeFetchScript([]);
+  const qa = makeQaApp("full", { fetch: fetchQa });
+  assert.strictEqual(qa.app.qaArmOverride, null, "override seeded null");
+  assert.equal(typeof qa.app.qaArmCycle, "function", "qaArmCycle must exist");
+  assert.equal(qa.app.qaArmCycle(), "prompt-armed");
+  assert.equal(qa.app.qaArmCycle(), "goal-armed");
+  assert.equal(qa.app.qaArmCycle(), "cleared");
+  assert.strictEqual(qa.app.qaArmCycle(), null, "cycle wraps to null");
+  qa.app.qaArmCycle(); // prompt-armed again
+  qa.app.mountQA("full");
+  assert.strictEqual(qa.app.qaArmOverride, null, "mountQA resets the demo override");
+  // QA panel: LAUNCH enabled + mock-arm note, demo path unaffected
+  assert.strictEqual(qa.app.openLaunchPanel("W2-L1"), true);
+  const panelQ = qa.dom.getElementById("launch-panel");
+  const btnQ = byClass(panelQ, "launch-btn")[0];
+  assert.ok(btnQ, "LAUNCH button renders");
+  assert.ok(!("disabled" in btnQ.attrs), "QA LAUNCH stays enabled (demo path unaffected)");
+  assert.ok(collectText(panelQ).indexOf("(mock arm — server action in LIVE)") !== -1, "QA mock-arm note");
+  assert.ok(collectText(panelQ).indexOf("launch via master (v1)") === -1, "no LIVE design-off note in QA");
+  assert.equal(fetchQa.calls.length, 0, "QA never fetches");
+  // LIVE sim: disabled + note + zero POSTs
+  const fetchLive = fakeFetchScript([]);
+  const live = makeQaApp("full", {
+    fetch: fetchLive,
+    location: fakeLocation({ protocol: "https:", pathname: "/tok1/" }),
+  });
+  assert.strictEqual(live.app.openLaunchPanel("W2-L1"), true);
+  const panelL = live.dom.getElementById("launch-panel");
+  assert.ok(panelL.classList.contains("open"), "panel opens (open class)");
+  const btnL = byClass(panelL, "launch-btn")[0];
+  assert.ok(btnL, "LAUNCH button renders in LIVE");
+  assert.ok("disabled" in btnL.attrs, "LIVE LAUNCH renders disabled (v1 design-off)");
+  assert.ok(collectText(panelL).indexOf("launch via master (v1)") !== -1, "design-off note visible");
+  assert.equal(fetchLive.calls.length, 0, "LIVE LAUNCH never POSTs");
+  // panel content basics + close + unknown row
+  assert.ok(collectText(panelL).indexOf("W2-L1") !== -1, "row_id in panel");
+  assert.ok(
+    collectText(panelL).indexOf("prompt preview: not in v1 state contract") !== -1,
+    "pinned placeholder"
+  );
+  live.app.closeLaunchPanel();
+  assert.ok(!live.dom.getElementById("launch-panel").classList.contains("open"), "close removes open");
+  assert.strictEqual(live.app.openLaunchPanel("does-not-exist"), false, "unknown row is a no-op");
+  // interim pending gate feeds the panel (superseded by T5's effectivePending)
+  assert.equal(live.app._pendingStatus, "prompt-armed", "_pendingStatus from wall.pending.status");
 });
 
 // ---------------- runner ----------------

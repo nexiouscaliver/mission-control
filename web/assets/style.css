@@ -138,6 +138,264 @@ button:disabled {
   font-size: 14px;
 }
 
+/* ---- Col 1: program cards (SPEC 6.1) ---- */
+
+.program-card {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.program-card + .program-card {
+  margin-top: 12px;
+}
+
+.card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+}
+
+.card-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.card-objective {
+  color: var(--ink-dim);
+  font-size: 14px;
+}
+
+.card-stamp {
+  margin-left: auto;
+  color: var(--ink-dim);
+  font-size: 14px;
+}
+
+.dim {
+  color: var(--ink-dim);
+}
+
+/* ---- trust chip grammar (SPEC 5): line style AND dot shape encode the level ---- */
+
+.lane {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.lane--launchable {
+  cursor: pointer;
+}
+
+.lane--launchable:hover .chip,
+.lane--launchable:active .chip {
+  border-color: var(--attention);
+}
+
+.lane--launchable:focus-visible {
+  outline: 2px solid var(--note);
+  outline-offset: 2px;
+}
+
+.lane .stalled-note,
+.lane .session-line,
+.lane .goal-line {
+  flex-basis: 100%;
+  font-size: 14px;
+  color: var(--ink-dim);
+}
+
+.stalled-note {
+  color: var(--attention);
+  font-weight: 600;
+}
+
+.chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 2px 16px 2px 10px; /* right padding leaves room for the corner dot */
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  background: var(--panel);
+}
+
+/* Note status: SOLID 2px border + FILLED disk corner dot */
+.chip--note {
+  border: 2px solid var(--note);
+  color: var(--note);
+}
+
+.chip--note::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--note);
+}
+
+/* Derived signal: DASHED 2px border + thin OPEN outline dot */
+.chip--derived {
+  border: 2px dashed var(--derived);
+  color: var(--derived);
+}
+
+.chip--derived::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid var(--derived);
+  background: transparent;
+}
+
+/* Stale / unknown: HATCHED stripes (stale ~30% alpha over transparent) + HOLLOW donut dot */
+.chip--stale {
+  border: 2px solid var(--stale);
+  color: var(--stale);
+  background-image: repeating-linear-gradient(45deg, color-mix(in srgb, var(--stale) 30%, transparent) 0 2px, transparent 2px 6px);
+}
+
+.chip--stale::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 3px solid var(--stale);
+  background: transparent;
+}
+
+.chip-stamp {
+  color: var(--ink-dim);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* STALLED is a treatment ON a chip, not a fourth trust level (SPEC 5) */
+.chip.stalled {
+  border-color: var(--attention);
+  box-shadow: 0 0 0 1px var(--attention);
+}
+
+.padlock {
+  color: var(--attention);
+  font-size: 14px;
+}
+
+.legacy-badge,
+.mr-badge,
+.verify-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.legacy-badge {
+  border: 1px solid var(--border);
+  color: var(--ink-dim);
+}
+
+.mr-badge {
+  margin-left: 6px;
+  border: 1px solid var(--derived);
+  color: var(--derived);
+  background: var(--panel);
+}
+
+.verify-tag {
+  border: 1px dashed var(--derived);
+  color: var(--derived);
+}
+
+/* jump flash primitive (defined here; T4 wires the jump + pulse) */
+.flash {
+  outline: 2px solid var(--attention);
+  outline-offset: 2px;
+}
+
+/* ---- launch side panel (SPEC 6.1, fixed-right overlay) ---- */
+
+#launch-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(420px, 92vw);
+  padding: 12px 16px 24px;
+  overflow-y: auto;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  z-index: 20;
+}
+
+/* The hidden attribute ships in index.html; the open class outranks it —
+ * among author !important rules id+class specificity beats [hidden]. */
+#launch-panel.open {
+  display: block !important;
+}
+
+.launch-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.launch-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.launch-close {
+  min-width: 34px;
+}
+
+.launch-line {
+  margin: 4px 0;
+  font-size: 14px;
+}
+
+.launch-k {
+  margin-right: 6px;
+  color: var(--ink-dim);
+}
+
+.launch-placeholder {
+  margin-top: 10px;
+}
+
+.launch-btn {
+  width: 100%;
+  margin-top: 12px;
+  padding: 8px;
+}
+
+.launch-note {
+  margin-top: 6px;
+  color: var(--ink-dim);
+  font-size: 14px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
