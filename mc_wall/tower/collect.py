@@ -1,17 +1,17 @@
-"""collect_state orchestration (T-1 skeleton; notes wired in T-2).
+"""collect_state orchestration (T-1 skeleton; notes wired in T-2; the zcode
+session-db reader wired in T-3).
 
 Owns the document assembly, the §4 degraded-entry ordering machinery
-(``DegradedLog``), the pending-launch read (§4.5), a minimal session-store
-probe, the §4.2 vault-note read, and the no-escape boundary. The remaining
-per-source readers (zcode db, goals, signals) land in T-3..T-5 and plug into
-``_collect``.
+(``DegradedLog``), the pending-launch read (§4.5), the §4.2 vault-note read,
+the §4.1 session-store read/join (through ``zcode_db``), and the no-escape
+boundary. The remaining per-source readers (goals, signals) land in T-4/T-5
+and plug into ``_collect``.
 """
 
 import json
 import os
-import sqlite3
 
-from . import contract, notes
+from . import contract, notes, zcode_db
 from .config import TowerConfig
 
 
@@ -32,8 +32,6 @@ def _collect(config: TowerConfig) -> dict:
     log = DegradedLog()
     now = config.now_s()
     launch = _read_launch(config.pending_launch_path, log)  # §4.5
-    if not _db_ok(config.db_path):  # T-1 minimal probe; T-3 replaces with the real reader
-        log.add((0, 0, 0, ""), "tracking degraded: session store unreadable")
     programs = []
     # Internal lane stash (plan T-2 Produces, F3): T-3 (session joins), T-5
     # (signals), and T-6 (derivations) consume these records; the contract lane
@@ -42,6 +40,7 @@ def _collect(config: TowerConfig) -> dict:
                        #  repo_idx_or_None, branch, status_parsed)
     for i, p in enumerate(config.programs):
         programs.append(_read_program_notes(config, p, i, log, lane_records))
+    sessions_unmapped = _read_sessions(config, now, log, programs, lane_records)
     return {"schema_version": 1,
             "server": {"uptime_s": int(config.uptime_s_provider()),
                        "generated_ts": int(now),
@@ -50,7 +49,7 @@ def _collect(config: TowerConfig) -> dict:
             "programs": programs,
             "verify_queue": [],
             "human_actions": [],
-            "sessions_unmapped": [],
+            "sessions_unmapped": sessions_unmapped,
             "launch_pending": launch}
 
 
@@ -106,19 +105,85 @@ def _map_repo(repos, repo_token: str | None) -> tuple[str | None, int | None]:
     return (None, None)
 
 
-def _db_ok(path: str) -> bool:
-    """Minimal T-1 check: the db opens read-only (mode=ro URI only) and has a
-    session table. sqlite connects/opens eagerly under mode=ro, so a missing
-    or corrupt file raises at connect or at the first execute — both covered."""
+def _read_sessions(config: TowerConfig, now: float, log: "DegradedLog",
+                   programs: list, lane_records: list) -> list[dict]:
+    """§4.1 session-store read: ro-open + schema check + ONE unit probe; ANY
+    failure -> entry 1 (unreadable/operational) or entry 2 (schema drift), with
+    ALL session data left nulled (lane.session everywhere, masters, and no
+    unmapped rows — strict fail-open, never partial data). Healthy: windowed
+    tag scan, per-program masters, per-lane token joins, unmapped enumeration.
+    Returns the sessions_unmapped rows."""
     try:
-        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-        try:
-            con.execute("SELECT 1 FROM session LIMIT 1")
-        finally:
-            con.close()
-        return True
+        con = zcode_db.open_db_ro(config.db_path)
     except Exception:
-        return False
+        log.add((0, 0, 0, ""), zcode_db.DEGRADED_UNREADABLE)
+        return []
+    try:
+        cur = con.cursor()
+        if zcode_db.check_schema(cur):
+            log.add((0, 0, 0, ""), zcode_db.DEGRADED_SCHEMA_DRIFT)
+            return []
+        # Exactly ONE unit probe per collect; all cutoffs derive from it.
+        factor = zcode_db.probe_factor(cur)
+        return _join_sessions(config, cur, now, factor, log, programs, lane_records)
+    except Exception:
+        log.add((0, 0, 0, ""), zcode_db.DEGRADED_UNREADABLE)
+        return []
+    finally:
+        con.close()
+
+
+def _join_sessions(config: TowerConfig, cur, now: float, factor: int,
+                   log: "DegradedLog", programs: list, lane_records: list) -> list[dict]:
+    """Healthy-path §5 joins: windowed tag scan (entry 7 per ambiguous session,
+    ordered by sid via the log key), newest-wins masters, token-prefix lane
+    joins (entry 9 on ambiguity), then the §6.5 unmapped enumeration."""
+    tag_map = zcode_db.scan_tags(
+        cur, zcode_db.cutoff_stored(now, config.tag_scan_window_s, factor))
+    for sid in sorted(tag_map):
+        if len(tag_map[sid]) >= 2:
+            log.add((4, 0, 0, sid), f"join degraded: ambiguous tags {sid}")
+    configured_tags: dict[str, str] = {}
+    for p in config.programs:
+        configured_tags[p.tag] = "program"
+        if p.master_tag is not None:
+            configured_tags[p.master_tag] = "master"
+    # Masters: tag set EXACTLY {master_tag}, newest by (time_updated,
+    # time_created, id) descending (§5 tie-breaks).
+    for i, p in enumerate(config.programs):
+        if p.master_tag is None:
+            continue
+        cands = [sid for sid, tags in tag_map.items() if tags == {p.master_tag}]
+        rows = zcode_db.session_rows(cur, cands)
+        cands = [sid for sid in cands if sid in rows]  # orphan inputs can't join
+        if not cands:
+            continue
+        best = max(cands, key=lambda sid: (rows[sid]["time_updated"],
+                                           rows[sid]["time_created"], sid))
+        row = rows[best]
+        programs[i]["master"] = {
+            "session_id": best,
+            "title": row["title"],
+            "last_active_ago_s": max(0, int(now - zcode_db.to_seconds(row["time_updated"])))}
+    # Lane sessions: token-prefix joins; the windowed scan never invalidates one.
+    joined_ids: set[str] = set()
+    for _pidx, lane, token, *_rest in lane_records:
+        if not token:
+            continue
+        obj, ambiguous = zcode_db.lane_join(cur, token)
+        if ambiguous:
+            log.add((5, 0, 0, token), f"join ambiguous session: {token}")
+            continue
+        if obj is None:
+            continue  # pre-launch row: absence is not failure
+        title = obj["title"]
+        lane["session"] = {"id": obj["id"], "title": title,
+                           "title_pending": title is None or title == "",
+                           "dir": obj["dir"],
+                           "last_active_ago_s": max(0, int(now - obj["time_updated_epoch_s"]))}
+        joined_ids.add(obj["id"])
+    return zcode_db.unmapped_rows(cur, now, factor, config.session_window_s,
+                                  joined_ids, tag_map, configured_tags)
 
 
 def _read_launch(path: str | None, log: "DegradedLog"):

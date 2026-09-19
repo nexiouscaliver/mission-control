@@ -3,5 +3,7 @@
 from .collect import collect_state
 from .config import NetworkSettings, ProgramConfig, RepoConfig, TowerConfig
 from .netcache import NetCache
+from .zcode_db import check_drift
 
-__all__ = ["collect_state", "TowerConfig", "ProgramConfig", "RepoConfig", "NetworkSettings", "NetCache"]
+__all__ = ["collect_state", "check_drift", "TowerConfig", "ProgramConfig",
+           "RepoConfig", "NetworkSettings", "NetCache"]
