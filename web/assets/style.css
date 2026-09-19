@@ -1,0 +1,148 @@
+/* MC Wall — style.css (canonical). The copy at assets/style.css must stay
+ * byte-identical (AC-32). The :root token set below is the design contract
+ * of record (SPEC section 10) — dark, dense-but-scannable, information-first. */
+
+:root {
+  --bg: #0b0e14;
+  --panel: #11151d;
+  --panel-2: #161b26;
+  --border: #232b3a;
+  --ink: #e8eef5;
+  --ink-dim: #9aa4b1;
+  --note: #3fd47f;
+  --derived: #e3b341;
+  --stale: #f16a60;
+  --attention: #f0883e;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+/* ---- top bar shell ---- */
+
+#topbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+#wordmark {
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+#live-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--stale);
+}
+
+#mode-badge,
+#state-age-caption {
+  color: var(--ink-dim);
+}
+
+/* ---- generic interactive states (every control the page introduces) ---- */
+
+button {
+  font: inherit;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  min-height: 26px;
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--note);
+}
+
+button:focus-visible {
+  outline: 2px solid var(--note);
+  outline-offset: 2px;
+}
+
+button:active {
+  background: var(--panel);
+  border-color: var(--note);
+}
+
+button:disabled {
+  color: var(--ink-dim);
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ---- three-column grid (SPEC section 6) ---- */
+
+#grid {
+  display: grid;
+  grid-template-columns: minmax(340px, 1fr) minmax(420px, 1.25fr) minmax(340px, 1fr);
+  gap: 12px;
+  padding: 16px;
+}
+
+.col {
+  min-width: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+}
+
+#col2 {
+  display: flex;
+  flex-direction: column;
+}
+
+.subpanel {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+}
+
+#col2 .subpanel + .subpanel {
+  margin-top: 12px;
+}
+
+/* dim empty-state note rendered by app.renderBlank */
+
+.panel-note {
+  color: var(--ink-dim);
+  font-size: 14px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
