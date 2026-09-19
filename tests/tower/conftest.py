@@ -58,3 +58,23 @@ def mcwallt_clock(start: float, step: float = 0.0):
     t = {"v": start}
     def _now(): t["v"] += step; return t["v"]
     return _now
+
+
+def mcwallt_make_goal_tree(tmp_path, slug="mcwallt-slug", queue_lines=None, budget=None,
+                           manifest=None, archive_slugs=(), root_name="regenloop/local/orchestrator/goals"):
+    """Temp regenloop goal tree (spec §4.3 layout) under tmp_path/mcwallt_repo.
+    Always creates the goal dir + prompt.md; queue.md/budget.json/manifest.json
+    only when the corresponding arg is not None; _archive/INDEX.md (comma-joined
+    slug list) only when archive_slugs is non-empty. Returns (repo_path, goal_dir)."""
+    repo = tmp_path / "mcwallt_repo"
+    root = repo / root_name
+    gd = root / slug
+    gd.mkdir(parents=True)
+    (gd / "prompt.md").write_text("mcwallt prompt\n", encoding="utf-8")
+    if queue_lines is not None: (gd / "queue.md").write_text("\n".join(queue_lines) + "\n", encoding="utf-8")
+    if budget is not None: (gd / "budget.json").write_text(json.dumps(budget), encoding="utf-8")
+    if manifest is not None: (gd / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    if archive_slugs:
+        idx = root / "_archive"; idx.mkdir()
+        (idx / "INDEX.md").write_text("archived: " + ", ".join(archive_slugs) + "\n", encoding="utf-8")
+    return str(repo), str(gd)
