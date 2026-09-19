@@ -1524,8 +1524,6 @@ test("AC-34: LIVE LAUNCH design-off (disabled + note + zero fetch); QA demo cycl
   live.app.closeLaunchPanel();
   assert.ok(!live.dom.getElementById("launch-panel").classList.contains("open"), "close removes open");
   assert.strictEqual(live.app.openLaunchPanel("does-not-exist"), false, "unknown row is a no-op");
-  // interim pending gate feeds the panel (superseded by T5's effectivePending)
-  assert.equal(live.app._pendingStatus, "prompt-armed", "_pendingStatus from wall.pending.status");
 });
 
 // =====================================================================
@@ -1954,7 +1952,7 @@ test("AC-19: keyboard map pure + dispatch (n/Esc/r; modifiers ignored; r QA re-r
     "full",
     Object.assign({ fetch: fetchQa, clipboard: stubClipboard(copied) }, clockDeps(clock))
   );
-  assert.equal(typeof app.pollOnce, "undefined", "pre-T6: pollOnce must not exist yet");
+  assert.equal(typeof app.pollOnce, "undefined", "pollOnce attaches only via startLive — a QA app never has it");
   app.openLaunchPanel("W2-L1");
   assert.ok(dom.getElementById("launch-panel").classList.contains("open"));
   assert.equal(app.dispatchKey({ key: "Escape" }), "close-panel");
@@ -1970,7 +1968,7 @@ test("AC-19: keyboard map pure + dispatch (n/Esc/r; modifiers ignored; r QA re-r
   const newRow = findByData(dom.getElementById("panel-verify"), "data-row-id", "W2-L3");
   assert.notEqual(oldRow, newRow, "r rebuilt the panels (QA re-render)");
   assert.strictEqual(oldRow.parentNode, null, "old row detached by the re-render");
-  assert.equal(fetchQa.calls.length, 0, "r never fetches pre-T6 (pollOnce guard)");
+  assert.equal(fetchQa.calls.length, 0, "QA r re-renders in place, never fetches");
   assert.strictEqual(app.dispatchKey({ key: "n", ctrlKey: true }), null, "modifiers never dispatch");
 });
 
@@ -2640,6 +2638,474 @@ test("AC-10: banned word — no /\\bfinished\\b/i in any case's rendered text", 
       assert.ok(text.indexOf("prompt armed") !== -1, "scan covers the armed bar text");
     }
   }
+});
+
+// =====================================================================
+// Tier: T6 — LIVE lifecycle (AC-4 / AC-5 / AC-6 / AC-7 / AC-8 counter /
+//       AC-24 poll-continues / AC-30) + T5 review carry-overs (a)-(e)
+// =====================================================================
+
+// LIVE-mode wall: fresh fake DOM + https location + scripted fetch + fake
+// clock driving the deps.schedule chain + a reload recorder. startLive()
+// fires the immediate first poll, so callers await flushMicrotasks().
+function makeLiveWall(steps, opts) {
+  const MCW = loadApp();
+  const clock = fakeClock(FIXED_NOW_MS);
+  const fetchFn = fakeFetchScript(steps || []);
+  const reloads = [];
+  const dom = makeFakeDocument();
+  const deps = MCW.createDeps(Object.assign(
+    {
+      document: dom,
+      fetch: fetchFn,
+      now: clock,
+      schedule: clock.schedule,
+      cancel: clock.cancel,
+      reload: () => reloads.push(1),
+      clipboard: stubClipboard([]),
+      location: fakeLocation({ protocol: "https:", pathname: "/tok1/" }),
+    },
+    opts || {}
+  ));
+  const app = MCW.createApp(deps);
+  app.startLive();
+  return { MCW: MCW, app: app, dom: dom, clock: clock, fetchFn: fetchFn, reloads: reloads };
+}
+
+// Minimal conformance doc served by the fake state endpoint (variants in-test).
+function liveDoc(variant) {
+  const mocks = parseIndexMocks(readWebFile("index.html"));
+  const d = JSON.parse(JSON.stringify(mocks.minimal));
+  const v = variant || {};
+  if (v.version !== undefined) d.schema_version = v.version;
+  if (v.freeze) d.server.degraded = ["tracking degraded: session store unreadable"];
+  return d;
+}
+const okState = (doc) => ({ status: 200, json: doc });
+
+test("AC-4: LIVE bootstrap — token parse, /tok1/state + cache:no-store, 5s cadence chain, r immediate poll", async () => {
+  const w = makeLiveWall([
+    okState(liveDoc()),
+    okState(liveDoc()),
+    okState(liveDoc()),
+    okState(liveDoc()),
+    okState(liveDoc()), // the r-immediate poll
+    okState(liveDoc()), // the next cadence tick
+  ]);
+  assert.equal(typeof w.app.startLive, "function", "app.startLive exists (plan-pinned)");
+  await flushMicrotasks();
+  assert.deepEqual(
+    w.fetchFn.calls[0],
+    { url: "/tok1/state", init: { cache: "no-store" } },
+    "pinned state URL + init (SPEC 4.3)"
+  );
+  // 5s cadence via the deps.schedule chain: immediate poll + one per advance
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  assert.equal(w.fetchFn.calls.length, 4, "advance(5000) x3 -> 4 polls total");
+  for (const c of w.fetchFn.calls) assert.equal(c.url, "/tok1/state");
+  // r = immediate poll (SPEC 7.4 LIVE branch) without disturbing the cadence
+  const before = w.fetchFn.calls.length;
+  await w.app.dispatchKey({ key: "r" });
+  assert.equal(w.fetchFn.calls.length, before + 1, "r fires an immediate poll");
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  assert.equal(w.fetchFn.calls.length, before + 2, "manual poll never double-schedules the chain");
+  assert.ok(w.dom.getElementById("live-dot").classList.contains("live"), "live after success");
+  // missing token: exact banner, zero fetch, blank panels with notes
+  const mt = makeLiveWall([], { location: fakeLocation({ protocol: "https:", pathname: "/" }) });
+  const mtStrip = mt.dom.getElementById("banner-strip");
+  assert.equal(
+    collectText(byClass(mtStrip, "banner--bad-doc")[0]),
+    "wall: missing token in URL",
+    "exact missing-token banner (SPEC 4.3)"
+  );
+  assert.equal(mt.fetchFn.calls.length, 0, "no polling without a token");
+  for (const id of ["col1-programs", "panel-verify", "panel-human", "col3-sessions"]) {
+    assert.ok(collectText(mt.dom.getElementById(id)).length > 0, id + " carries a blank note");
+  }
+  // a token deeper in the path still resolves to the FIRST segment
+  const deep = makeLiveWall([], { location: fakeLocation({ protocol: "https:", pathname: "/tok9/whatever/else" }) });
+  assert.equal(deep.fetchFn.calls.length, 1, "first non-empty pathname segment is the token");
+  assert.equal(deep.fetchFn.calls[0].url, "/tok9/state");
+});
+
+test("AC-5: 3-strike debounce with last-good — stale at 1, no banner until 3, age label, success clears", async () => {
+  const w = makeLiveWall([
+    okState(liveDoc()),
+    { reject: "network" },
+    { reject: "network" },
+    { reject: "network" },
+    okState(liveDoc()),
+  ]);
+  await flushMicrotasks();
+  const dot = w.dom.getElementById("live-dot");
+  const strip = w.dom.getElementById("banner-strip");
+  assert.ok(dot.classList.contains("live"), "live after the first success");
+  assert.equal(collectText(w.dom.getElementById("col1-programs")).indexOf("waiting for first state"), -1, "panels rendered");
+  assert.equal(w.app.diagnostics().failures, 0);
+  // 1st failure: stale dot, NO banner, panels keep last-good labeled with age
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  assert.ok(dot.classList.contains("stale"), "stale after one failure");
+  assert.equal(byClass(strip, "banner-line").length, 0, "no banner at 1 failure");
+  assert.equal(collectText(w.dom.getElementById("state-age-caption")), "last-good 5s", "last-good age label");
+  assert.ok(collectText(w.dom.getElementById("col1-programs")).indexOf("no programs") !== -1, "last-good panels kept");
+  // 2nd failure: still no banner, cadence continues across failures
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  assert.equal(byClass(strip, "banner-line").length, 0, "no banner at 2 failures");
+  assert.equal(w.fetchFn.calls.length, 3, "poll cadence continues across failures");
+  // 3rd consecutive failure: banner WITH the last-good age, dismissable
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  const lines = byClass(strip, "banner--degraded");
+  assert.equal(lines.length, 1, "3-strike DEGRADED banner");
+  assert.equal(
+    collectText(lines[0].children[0]),
+    "wall server unreachable (last good 15s)",
+    "exact wording with the age segment"
+  );
+  assert.equal(byClass(lines[0], "banner-dismiss").length, 1, "dismissable");
+  assert.ok(!w.dom.body.classList.contains("frozen"), "failure banner is NOT a freeze");
+  // next success clears counter + banner immediately
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  assert.equal(byClass(strip, "banner--degraded").length, 0, "success clears the banner");
+  assert.equal(w.app.diagnostics().failures, 0, "counter reset");
+  assert.ok(dot.classList.contains("live"), "dot live again");
+});
+
+test("AC-5 no-last-good: failing from boot — waiting notes, stale from FIRST failure, banner without age", async () => {
+  const w = makeLiveWall([{ reject: "network" }, { reject: "network" }, { reject: "network" }, okState(liveDoc())]);
+  await flushMicrotasks();
+  assert.ok(w.dom.getElementById("live-dot").classList.contains("stale"), "stale from the FIRST failed poll");
+  for (const id of ["col1-programs", "panel-verify", "panel-human", "col3-sessions"]) {
+    assert.ok(
+      collectText(w.dom.getElementById(id)).indexOf("waiting for first state") !== -1,
+      id + " carries the waiting note before any success"
+    );
+  }
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  const lines = byClass(w.dom.getElementById("banner-strip"), "banner--degraded");
+  assert.equal(lines.length, 1, "3 strikes from boot");
+  assert.equal(
+    collectText(lines[0].children[0]),
+    "wall server unreachable",
+    "no age segment without a last-good"
+  );
+  // next success clears the banner and the waiting notes
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  assert.equal(byClass(w.dom.getElementById("banner-strip"), "banner--degraded").length, 0);
+  assert.equal(collectText(w.dom.getElementById("col1-programs")).indexOf("waiting for first state"), -1, "panels render");
+  assert.ok(w.dom.getElementById("live-dot").classList.contains("live"));
+});
+
+test("AC-6: flap-safe reload — first success APPLIES (no reload), change -> one reload, equal -> none, A->B->A -> two", async () => {
+  const w = makeLiveWall([
+    okState(liveDoc({ version: 2 })),
+    okState(liveDoc({ version: 2 })),
+    okState(liveDoc({ version: 3 })),
+    okState(liveDoc({ version: 3 })),
+    okState(liveDoc({ version: 2 })),
+  ]);
+  await flushMicrotasks();
+  assert.equal(w.reloads.length, 0, "first success applies the version — no reload (else: boot loop)");
+  assert.equal(w.app.diagnostics().appliedVersion, 2);
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  assert.equal(w.reloads.length, 0, "same version re-served -> no reload");
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  assert.equal(w.reloads.length, 1, "version change between polls -> exactly one reload");
+  assert.equal(w.app.diagnostics().appliedVersion, 3);
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  assert.equal(w.reloads.length, 1, "same version again -> still one");
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  assert.equal(w.reloads.length, 2, "flap A->B->A -> two reloads; the applied-version compare is the only guard");
+  // failed (L0) polls never mutate the applied version
+  const w2 = makeLiveWall([okState(liveDoc({ version: 2 })), { reject: "network" }, okState(liveDoc({ version: 3 }))]);
+  await flushMicrotasks();
+  assert.equal(w2.app.diagnostics().appliedVersion, 2);
+  w2.clock.advance(5000);
+  await flushMicrotasks();
+  assert.equal(w2.app.diagnostics().appliedVersion, 2, "failed poll never mutates the applied version");
+  assert.equal(w2.app.diagnostics().failures, 1);
+  w2.clock.advance(5000);
+  await flushMicrotasks();
+  assert.equal(w2.reloads.length, 1, "post-failure change still reloads exactly once");
+});
+
+test("AC-7: dot precedence — live after success, stale after failure, frozen beats both", async () => {
+  const w = makeLiveWall([okState(liveDoc()), okState(liveDoc({ freeze: true })), { reject: "network" }, okState(liveDoc())]);
+  await flushMicrotasks();
+  const dot = w.dom.getElementById("live-dot");
+  assert.ok(dot.classList.contains("live"), "live after success");
+  // freeze doc success: frozen wins even with failures === 0
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  assert.ok(w.dom.body.classList.contains("frozen"), "tracking degraded entry freezes the body");
+  assert.ok(dot.classList.contains("frozen"), "frozen beats live");
+  assert.ok(!dot.classList.contains("live"));
+  // failure while frozen: frozen still wins over stale
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  assert.equal(w.app.diagnostics().failures, 1);
+  assert.ok(dot.classList.contains("frozen"), "frozen beats stale");
+  assert.ok(!dot.classList.contains("stale"));
+  // later clean doc: freeze clears, success -> live
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  assert.ok(!w.dom.body.classList.contains("frozen"), "later doc without such entries clears freeze");
+  assert.ok(dot.classList.contains("live"));
+  assert.ok(!dot.classList.contains("frozen"));
+});
+
+test("AC-30: 503 degraded body — exact detail wording, dismissable, NOT freeze, body never rendered; bad-doc + no-detail variants", async () => {
+  const body503 = {
+    ok: false,
+    degraded: true,
+    error: "collect_state_failed",
+    detail: "collect_state_failed: tower hang",
+    occurred_at_ms: FIXED_NOW_MS,
+    wall: { poisoned: "NEVER-RENDER-503-BODY" },
+  };
+  const w = makeLiveWall([
+    okState(liveDoc()),
+    { status: 503, json: body503 },
+    { status: 503, json: body503 },
+    { status: 503, json: body503 },
+    { status: 503, json: body503 },
+  ]);
+  await flushMicrotasks();
+  const strip = w.dom.getElementById("banner-strip");
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  const lines = byClass(strip, "banner--degraded");
+  assert.equal(lines.length, 1, "503 x3 -> DEGRADED banner");
+  assert.equal(
+    collectText(lines[0].children[0]),
+    "wall server degraded: collect_state_failed: tower hang",
+    "exact 'wall server degraded: {detail}' wording"
+  );
+  assert.ok(collectText(strip).indexOf("tracking degraded:") === -1, "never the reserved freeze prefix");
+  assert.ok(!w.dom.body.classList.contains("frozen"), "503 is NOT a freeze");
+  assert.ok(collectText(w.dom.body).indexOf("NEVER-RENDER-503-BODY") === -1, "the 503 body never reaches the render");
+  assert.ok(collectText(w.dom.getElementById("col1-programs")).indexOf("no programs") !== -1, "panels hold last-good");
+  assert.equal(w.app.diagnostics().failures, 3, "503 counts as an L0 failure");
+  // dismissable, and the dismissal persists for the rest of the episode
+  byClass(lines[0], "banner-dismiss")[0].click();
+  assert.equal(byClass(strip, "banner--degraded").length, 0, "dismiss removes the line");
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  assert.equal(byClass(strip, "banner--degraded").length, 0, "dismissal holds while the failure episode continues");
+  // no-detail 503 -> unreachable wording (with last-good age)
+  const w2 = makeLiveWall([
+    okState(liveDoc()),
+    { status: 503, json: { ok: false, degraded: true } },
+    { status: 503, json: { ok: false, degraded: true } },
+    { status: 503, json: { ok: false, degraded: true } },
+  ]);
+  await flushMicrotasks();
+  w2.clock.advance(15000);
+  await flushMicrotasks();
+  const l2 = byClass(w2.dom.getElementById("banner-strip"), "banner--degraded");
+  assert.equal(collectText(l2[0].children[0]), "wall server unreachable (last good 15s)", "no-detail fallback wording");
+  // 200 with a bad doc -> L0 failure path: not applied, no QA bad-doc banner, keeps last-good
+  const w3 = makeLiveWall([
+    okState(liveDoc()),
+    { status: 200, json: { broken: true } },
+    { status: 200, json: { broken: true } },
+    { status: 200, json: { broken: true } },
+  ]);
+  await flushMicrotasks();
+  w3.clock.advance(5000);
+  await flushMicrotasks();
+  assert.equal(w3.app.diagnostics().failures, 1, "bad 200 doc counts as a poll failure");
+  assert.ok(collectText(w3.dom.getElementById("col1-programs")).indexOf("no programs") !== -1, "last-good kept");
+  assert.equal(byClass(w3.dom.getElementById("banner-strip"), "banner--bad-doc").length, 0, "no QA bad-doc banner in LIVE");
+  assert.equal(collectText(w3.dom.body).indexOf("broken"), -1, "the bad doc is never rendered");
+  w3.clock.advance(5000);
+  await flushMicrotasks();
+  w3.clock.advance(5000);
+  await flushMicrotasks();
+  const l3 = byClass(w3.dom.getElementById("banner-strip"), "banner--degraded");
+  assert.equal(collectText(l3[0].children[0]), "wall server unreachable (last good 15s)", "bad-doc strikes use the unreachable wording");
+});
+
+test("AC-8 completion: a rejected LIVE POST never touches the poll-failure counter", async () => {
+  const mocks = parseIndexMocks(readWebFile("index.html"));
+  const w = makeLiveWall([okState(mocks.full), { reject: "network" }, okState(mocks.full)]);
+  await flushMicrotasks();
+  assert.equal(w.app.diagnostics().failures, 0);
+  const r = await w.app.dispatchKey({ key: "n" }); // keyboard LIVE path -> POST
+  assert.equal(w.fetchFn.calls[1].url, "/tok1/needs-me-now", "n dispatches the LIVE POST");
+  assert.ok(r.note !== null, "rejected POST -> fallback note");
+  assert.equal(w.app.diagnostics().failures, 0, "POST rejection is never a poll failure");
+  assert.ok(w.dom.getElementById("live-dot").classList.contains("live"), "dot unchanged by the POST failure");
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  assert.equal(w.app.diagnostics().failures, 0, "next poll succeeds; counter untouched");
+});
+
+test("AC-24 poll-continues: freeze renders but polling never stops; later clean doc clears", async () => {
+  const w = makeLiveWall([okState(liveDoc({ freeze: true })), okState(liveDoc({ freeze: true })), okState(liveDoc())]);
+  await flushMicrotasks();
+  assert.ok(w.dom.body.classList.contains("frozen"), "frozen from the first doc");
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  assert.equal(w.fetchFn.calls.length, 2, "the poll fired while frozen");
+  assert.ok(w.dom.body.classList.contains("frozen"), "still frozen (last-good freeze doc)");
+  w.clock.advance(5000);
+  await flushMicrotasks();
+  assert.equal(w.fetchFn.calls.length, 3, "polling continued through the freeze");
+  assert.ok(!w.dom.body.classList.contains("frozen"), "later doc without tracking degraded clears freeze");
+});
+
+test("T6-API: diagnostics shape, pollOnce never throws, _pendingStatus deleted (carry e)", async () => {
+  const w = makeLiveWall([]); // empty script: every fetch rejects — never a throw
+  await flushMicrotasks();
+  assert.equal(w.app.diagnostics().failures, 1, "the rejection is counted, not thrown");
+  const d = w.app.diagnostics();
+  assert.deepEqual(
+    Object.keys(d).sort(),
+    ["appliedVersion", "dot", "failures", "lastGoodAtMs", "polls"],
+    "diagnostics: the live state + derived dot (plan T6 step 5)"
+  );
+  assert.equal(d.dot, "stale");
+  assert.strictEqual(d.appliedVersion, null);
+  await assert.doesNotReject(() => w.app.pollOnce());
+  assert.equal(w.app.diagnostics().failures, 2, "manual pollOnce counted too");
+  assert.ok(!("_pendingStatus" in w.app), "the dead interim gate is gone (T5 review carry e)");
+  // QA app: the LIVE surface attaches only via startLive
+  const qa = makeQaApp("full");
+  assert.equal(typeof qa.app.pollOnce, "undefined", "QA app has no pollOnce");
+  assert.equal(typeof qa.app.startLive, "function", "startLive is on the app object");
+  assert.equal(typeof qa.app.diagnostics, "function", "diagnostics is on the app object");
+});
+
+test("T6-carry(a): idle bits compose signal ages — 'push <age>s' / 'mr <ref> <age>s'", () => {
+  function sigLane(rowId, signals, sid) {
+    return {
+      row_id: rowId,
+      repo: "zeta",
+      branch: null,
+      slug: null,
+      status_note: "",
+      status_parsed: "in-flight",
+      manifest: null,
+      session: { id: sid, title: "t " + sid, title_pending: false, dir: "", last_active_ago_s: 30 },
+      goal: null,
+      signals: signals,
+      suggest_verify: null,
+      stalled: null,
+    };
+  }
+  const t = makeQaApp("minimal");
+  t.app.setDocument({
+    schema_version: 1,
+    server: { uptime_s: 0, generated_ts: 0, degraded: [], banner: null },
+    programs: [
+      {
+        program: "p1",
+        note_path: "",
+        note_mtime: 0,
+        objective: "",
+        master: { session_id: null, title: null, last_active_ago_s: null },
+        lanes: [
+          sigLane("A-1", { pushed: { value: true, age_s: 45 }, mr: null }, "s-a"),
+          sigLane("A-2", { pushed: null, mr: { ref: "!7", repo_host: "gitlab", state: "open", title: "t", pipeline: "green", age_s: 240 } }, "s-b"),
+          sigLane("A-3", { pushed: { value: false, age_s: 30 }, mr: null }, "s-c"),
+        ],
+      },
+    ],
+    verify_queue: [],
+    human_actions: [],
+    sessions_unmapped: [],
+    launch_pending: null,
+    wall: { pending: null },
+  });
+  t.app.render();
+  const col3 = t.dom.getElementById("col3-sessions");
+  const line = (sid) => collectText(findByData(col3, "data-session-id", sid));
+  const a1 = line("s-a");
+  assert.ok(a1.indexOf("push 45s") !== -1, "push age bit composes: " + a1);
+  assert.ok(a1.indexOf("signals unknown") === -1, "goal:null + live push is never 'signals unknown'");
+  const a2 = line("s-b");
+  assert.ok(a2.indexOf("mr !7 240s") !== -1, "mr age bit composes: " + a2);
+  assert.ok(a2.indexOf("signals unknown") === -1);
+  const a3 = line("s-c");
+  assert.ok(a3.indexOf("signals unknown") !== -1, "a false push carries no age -> nothing composable (SPEC 6.3: signal AGES compose)");
+  // full-mock regression: s-101 composes goal bits AND signal ages now
+  const full = makeQaApp("full");
+  const s101 = collectText(findByData(full.dom.getElementById("col3-sessions"), "data-session-id", "s-101"));
+  assert.ok(s101.indexOf("push 900s") !== -1, "s-101 idle line carries the push age: " + s101);
+  assert.ok(s101.indexOf("mr !34 3600s") !== -1, "s-101 idle line carries the mr age");
+  const s105 = collectText(findByData(full.dom.getElementById("col3-sessions"), "data-session-id", "s-105"));
+  assert.ok(s105.indexOf("signals unknown") !== -1, "all-null signals keep the honest 'signals unknown'");
+});
+
+test("T6-carry(b): operator-banner dismissal persists across re-renders until the banner text changes", () => {
+  const mocks = parseIndexMocks(readWebFile("index.html"));
+  const t = makeQaApp("full");
+  const strip = t.dom.getElementById("banner-strip");
+  const bannerText = mocks.full.server.banner;
+  assert.ok(collectText(strip).indexOf(bannerText) !== -1, "operator line initially visible");
+  byClass(strip, "banner-dismiss")[0].click();
+  assert.ok(collectText(strip).indexOf(bannerText) === -1, "dismissed");
+  t.app.render(); // same doc re-render — exactly what a 5s poll does
+  assert.ok(collectText(strip).indexOf(bannerText) === -1, "dismissal survives the re-render");
+  const d2 = JSON.parse(JSON.stringify(mocks.full));
+  d2.server.banner = "new operator text";
+  t.app.setDocument(d2);
+  t.app.render();
+  assert.ok(collectText(strip).indexOf("new operator text") !== -1, "changed banner text is visible again");
+  byClass(strip, "banner-dismiss")[0].click();
+  t.app.setDocument(mocks.full); // back to the OLD text — that is another change
+  t.app.render();
+  assert.ok(collectText(strip).indexOf(bannerText) !== -1, "a text change re-arms dismissal for the old text too");
+});
+
+test("T6-carry(c)+(d): unmapped rows carry a dim id span; session/unmapped rows are keyboard-operable", async () => {
+  const copied = [];
+  const t = makeQaApp("full", { clipboard: stubClipboard(copied) });
+  const col3 = t.dom.getElementById("col3-sessions");
+  // (c) dim span with u.id on every unmapped row
+  const umRows = byClass(byClass(col3, "unmapped-strip")[0], "unmapped-row");
+  assert.equal(umRows.length, 2);
+  for (let i = 0; i < umRows.length; i += 1) {
+    const dimSpans = byClass(umRows[i], "dim").map((s) => collectText(s));
+    assert.ok(
+      dimSpans.some((txt) => txt.indexOf("s-unmapped-" + (i + 1)) !== -1),
+      "unmapped row " + (i + 1) + " shows its dim id span: " + JSON.stringify(dimSpans)
+    );
+  }
+  // (d) role=button + tabindex=0 + Enter/Space run the same copy action
+  const sess = findByData(col3, "data-session-id", "s-101");
+  for (const row of [sess, umRows[0]]) {
+    assert.equal(row.attrs.role, "button", "clickable div carries role=button");
+    assert.equal(row.attrs.tabindex, "0", "keyboard reachable");
+  }
+  const ev = sess.dispatch("keydown", { key: "Enter" });
+  assert.strictEqual(ev.defaultPrevented, true, "Enter keydown prevented");
+  const ev2 = umRows[0].dispatch("keydown", { key: " " });
+  assert.strictEqual(ev2.defaultPrevented, true, "Space keydown prevented");
+  await flushMicrotasks();
+  assert.deepEqual(copied, ["s-101", "s-unmapped-1"], "Enter/Space copy the same id a click would");
 });
 
 // ---------------- runner ----------------

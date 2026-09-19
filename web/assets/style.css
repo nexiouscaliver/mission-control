@@ -581,6 +581,12 @@ button:disabled {
   gap: 8px;
 }
 
+/* T6: the debounced LIVE poll-failure banner (SPEC 4.3) — stale tone, and it
+ * rides the operator layout so its dismiss button aligns. NOT a freeze. */
+.banner--degraded {
+  color: var(--stale);
+}
+
 .banner-dismiss {
   min-width: 28px;
 }

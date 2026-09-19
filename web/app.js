@@ -188,7 +188,11 @@
       if (arguments.length > 0) setDocument(nextDoc);
       ensureShell();
       var valid = stateDoc !== null && MCW.state.validateDoc(stateDoc).ok;
-      var blankNote = stateDoc === null ? "waiting for mock" : "no data";
+      // T6: LIVE panels blank differently — waiting for the first state (or a
+      // missing token); QA keeps the mock/no-data wordings.
+      var blankNote = "no data";
+      if (live === null) blankNote = stateDoc === null ? "waiting for mock" : "no data";
+      else blankNote = live.token === null ? "no token" : "waiting for first state";
       for (var i = 0; i < PANEL_ROOT_IDS.length; i += 1) {
         var id = PANEL_ROOT_IDS[i];
         var rootEl = byId(id);
@@ -462,7 +466,9 @@
       return bits.length > 0 ? " · " + bits.join(" · ") : "";
     }
     // Col-3 idle composition (SPEC 6.3): "idle <age>" is NEVER bare — the
-    // lane's goal state / tail / budget compose it; [] means "signals unknown".
+    // lane's goal state / tail / budget / signal ages compose it; [] means
+    // "signals unknown". T6 carry-over (a): signal ages compose too, so a
+    // lane with goal:null but live signals is not "signals unknown".
     function idleBits(lane) {
       var bits = [];
       var goal = nullable(lane.goal);
@@ -470,20 +476,28 @@
         if (typeof goal.state === "string" && goal.state !== "") bits.push("goal " + goal.state);
         bits = bits.concat(goalBits(goal));
       }
+      var sig = nullable(lane.signals);
+      if (sig !== null) {
+        var pushed = nullable(sig.pushed);
+        // Only a successful ls-remote carries a meaningful age (SPEC 6.3: the
+        // AGES compose; a false push has none).
+        if (pushed !== null && pushed.value === true) {
+          bits.push("push " + (isInt(pushed.age_s) ? pushed.age_s : 0) + "s");
+        }
+        var mr = nullable(sig.mr);
+        if (mr !== null) {
+          var ref = typeof mr.ref === "string" ? mr.ref : mr.ref === null || mr.ref === undefined ? "" : String(mr.ref);
+          bits.push("mr " + ref + " " + (isInt(mr.age_s) ? mr.age_s : 0) + "s");
+        }
+      }
       return bits;
     }
 
     // T2: the mounted state document (stash for T3+ renderers). Non-documents
     // coerce to null so renderers never see a half-typed state object.
-    // T3: also derives the interim launch gate app._pendingStatus from
-    // wall.pending.status (T5's effectivePending supersedes it).
     var stateDoc = null;
     function setDocument(next) {
       stateDoc = isPlainObject(next) ? next : null;
-      var wall = stateDoc !== null ? nullable(stateDoc.wall) : null;
-      var pending = wall !== null ? nullable(wall.pending) : null;
-      app._pendingStatus =
-        pending !== null && typeof pending.status === "string" ? pending.status : null;
     }
 
     // QA mock mount. Delegates entirely to MCW.state.normalize — the single
@@ -1142,6 +1156,14 @@
 
     var qaNotes = []; // normalize notes (unknown mock case) for the top-bar badge
     var freezeActive = false; // tracking degraded: prefix seen in the current doc
+    // T6: LIVE poll-cycle state (SPEC 4.3). Null until startLive(); survives
+    // across polls so the 3-strike debounce / applied-version / last-good age
+    // have one home. diagnostics() exposes a copy of the counters + the dot.
+    var live = null;
+    // T6 carry-over (b): the dismissed server.banner text — a dismissal
+    // persists across re-renders (5s polls) until the doc's banner text
+    // changes, so polling never resurrects a dismissed operator line.
+    var dismissedOperatorBanner = null;
 
     // ---- degraded-entry machinery (SPEC 8 closed vocabulary, PREFIX matching) ----
 
@@ -1219,7 +1241,12 @@
           serverObj !== null && typeof serverObj.banner === "string" && serverObj.banner !== ""
             ? serverObj.banner
             : null;
-        if (banner !== null) {
+        // Carry-over (b): a new banner text re-arms dismissal; the same text
+        // stays dismissed across renders (5s polls never resurrect it).
+        if (dismissedOperatorBanner !== null && dismissedOperatorBanner !== banner) {
+          dismissedOperatorBanner = null;
+        }
+        if (banner !== null && banner !== dismissedOperatorBanner) {
           var op = el("div");
           op.classList.add("banner-line");
           op.classList.add("banner--operator");
@@ -1233,6 +1260,7 @@
           dismiss.setText("×");
           if (typeof dismiss.addEventListener === "function") {
             dismiss.addEventListener("click", function () {
+              dismissedOperatorBanner = banner;
               if (op.parentNode) op.parentNode.removeChild(op);
               if (strip.children.length === 0) strip.setAttribute("hidden", "");
             });
@@ -1249,6 +1277,40 @@
         bad.setText("wall: bad state document (" + v.reason + ")");
         strip.appendChild(bad);
       }
+      // T6 LIVE page-generated lines (SPEC 4.3/8): the missing-token line and
+      // the debounced poll-failure DEGRADED banner. Never the reserved
+      // "tracking degraded:" prefix; the DEGRADED banner is NOT a freeze.
+      if (live !== null && live.token === null) {
+        var mt = el("div");
+        mt.classList.add("banner-line");
+        mt.classList.add("banner--bad-doc");
+        mt.setText("wall: missing token in URL");
+        strip.appendChild(mt);
+      }
+      var degradedTxt = degradedBannerText();
+      if (degradedTxt !== null && !live.degradedDismissed) {
+        var dl = el("div");
+        dl.classList.add("banner-line");
+        dl.classList.add("banner--operator");
+        dl.classList.add("banner--degraded");
+        var dlText = el("span");
+        dlText.setText(degradedTxt);
+        dl.appendChild(dlText);
+        var dDismiss = el("button");
+        dDismiss.setAttribute("type", "button");
+        dDismiss.classList.add("banner-dismiss");
+        dDismiss.setAttribute("aria-label", "dismiss degraded banner");
+        dDismiss.setText("×");
+        if (typeof dDismiss.addEventListener === "function") {
+          dDismiss.addEventListener("click", function () {
+            live.degradedDismissed = true; // hidden until the episode resets (first success)
+            if (dl.parentNode) dl.parentNode.removeChild(dl);
+            if (strip.children.length === 0) strip.setAttribute("hidden", "");
+          });
+        }
+        dl.appendChild(dDismiss);
+        strip.appendChild(dl);
+      }
       if (strip.children.length > 0) strip.removeAttribute("hidden");
       else strip.setAttribute("hidden", "");
       if (doc && doc.body) {
@@ -1258,6 +1320,17 @@
     }
 
     // ---- top bar (SPEC 6.4) ----
+
+    // Dot derivation shared by renderTopBar and diagnostics (plan T6 step 5):
+    // frozen wins; then LIVE keys off the poll cycle (live only after a
+    // success with no failure since), QA off the rendered doc.
+    function currentDot(valid) {
+      if (freezeActive) return "frozen";
+      if (live !== null) {
+        return live.failures === 0 && live.lastGoodAtMs !== null ? "live" : "stale";
+      }
+      return valid ? "live" : "stale";
+    }
 
     function renderTopBar(valid) {
       var badge = byId("mode-badge");
@@ -1274,13 +1347,21 @@
       }
       var cap = byId("state-age-caption");
       if (cap) {
-        var ts = 0;
-        if (valid) {
-          var serverObj = nullable(stateDoc.server);
-          if (serverObj !== null && isInt(serverObj.generated_ts)) ts = serverObj.generated_ts;
+        // T6: while LIVE failures stack up, the shown state IS the last-good —
+        // label it with the age of the last successful poll (SPEC 4.3).
+        if (live !== null && live.failures > 0 && live.lastGoodAtMs !== null) {
+          cap.setText(
+            "last-good " + MCW.util.humanizeAge(Math.floor((deps.now() - live.lastGoodAtMs) / 1000))
+          );
+        } else {
+          var ts = 0;
+          if (valid) {
+            var serverObj = nullable(stateDoc.server);
+            if (serverObj !== null && isInt(serverObj.generated_ts)) ts = serverObj.generated_ts;
+          }
+          if (ts === 0) cap.setText("state age unknown");
+          else cap.setText("state " + MCW.util.humanizeAge(Math.floor(deps.now() / 1000) - ts));
         }
-        if (ts === 0) cap.setText("state age unknown");
-        else cap.setText("state " + MCW.util.humanizeAge(Math.floor(deps.now() / 1000) - ts));
       }
       var badges = byId("degraded-badges");
       if (badges) {
@@ -1301,9 +1382,7 @@
         dot.classList.remove("live");
         dot.classList.remove("stale");
         dot.classList.remove("frozen");
-        if (freezeActive) dot.classList.add("frozen");
-        else if (valid) dot.classList.add("live");
-        else dot.classList.add("stale");
+        dot.classList.add(currentDot(valid));
       }
     }
 
@@ -1519,9 +1598,20 @@
           (bits.length > 0 ? " · " + bits.join(" · ") : " · signals unknown")
       );
       row.appendChild(idle);
+      // T6 carry-over (d): clickable divs are keyboard-operable buttons too
+      // (the T4 lane pattern): role + tabindex + Enter/Space -> same action.
+      row.setAttribute("role", "button");
+      row.setAttribute("tabindex", "0");
       if (typeof row.addEventListener === "function") {
         row.addEventListener("click", function () {
           copyText(m.id, null); // copy-without-label-swap (SPEC 7.2)
+        });
+        row.addEventListener("keydown", function (ev) {
+          var key = ev && typeof ev.key === "string" ? ev.key : "";
+          if (key === "Enter" || key === " " || key === "Spacebar") {
+            if (typeof ev.preventDefault === "function") ev.preventDefault();
+            copyText(m.id, null);
+          }
         });
       }
       parentEl.appendChild(row);
@@ -1603,9 +1693,25 @@
           " · " +
           MCW.util.humanizeAge(isInt(u.last_active_ago_s) ? u.last_active_ago_s : 0)
       );
+      // T6 carry-over (c): dim span with the session id so an unmapped row is
+      // identifiable for copying. setText runs first — it wipes children.
+      var idSpan = el("span");
+      idSpan.classList.add("dim");
+      idSpan.setText(" · " + u.id);
+      row.appendChild(idSpan);
+      // T6 carry-over (d): keyboard parity with the session rows (T4 lane pattern).
+      row.setAttribute("role", "button");
+      row.setAttribute("tabindex", "0");
       if (typeof row.addEventListener === "function") {
         row.addEventListener("click", function () {
           copyText(u.id, null);
+        });
+        row.addEventListener("keydown", function (ev) {
+          var key = ev && typeof ev.key === "string" ? ev.key : "";
+          if (key === "Enter" || key === " " || key === "Spacebar") {
+            if (typeof ev.preventDefault === "function") ev.preventDefault();
+            copyText(u.id, null);
+          }
         });
       }
       rowsEl.appendChild(row);
@@ -1628,6 +1734,151 @@
       if (rowCount === 0 && stripCount === 0) appendNote(rootEl, "no sessions");
     }
 
+    // =====================================================================
+    // T6: LIVE mode lifecycle (SPEC 4.3) — token, 5s poll chain, first-state
+    //     semantics, 3-strike debounce, flap-safe schema_version reload, dot.
+    // =====================================================================
+
+    // DEGRADED banner wording (SPEC 4.3/8); null before 3 consecutive
+    // failures. Page-generated — never the reserved "tracking degraded:".
+    function degradedBannerText() {
+      if (live === null || live.failures < 3) return null;
+      if (live.lastDetail !== null) return "wall server degraded: " + live.lastDetail;
+      var txt = "wall server unreachable";
+      if (live.lastGoodAtMs !== null) {
+        txt +=
+          " (last good " +
+          MCW.util.humanizeAge(Math.floor((deps.now() - live.lastGoodAtMs) / 1000)) +
+          ")";
+      }
+      return txt;
+    }
+
+    // One poll: GET /<token>/state. Never throws — every failure funnels into
+    // pollFailure (the 3-strike counter); successes into pollSuccess. The
+    // 503 degraded body only ever contributes its detail string.
+    function pollOnce() {
+      if (live === null || live.token === null) return Promise.resolve(null);
+      var fetchP;
+      try {
+        fetchP = deps.fetch("/" + live.token + "/state", { cache: "no-store" });
+      } catch (e) {
+        fetchP = Promise.reject(e);
+      }
+      return Promise.resolve(fetchP)
+        .then(function (res) {
+          if (res && res.ok) {
+            return Promise.resolve(res.json())
+              .then(function (docEl) {
+                if (isPlainObject(docEl) && MCW.state.validateDoc(docEl).ok) return pollSuccess(docEl);
+                return pollFailure(null); // 200 with a bad doc: L0 (SPEC 3.3)
+              })
+              .catch(function () {
+                return pollFailure(null); // unparsable JSON
+              });
+          }
+          return Promise.resolve(res.json())
+            .then(function (body) {
+              var detail = null;
+              if (
+                isPlainObject(body) &&
+                body.degraded === true &&
+                typeof body.detail === "string" &&
+                body.detail !== ""
+              ) {
+                detail = body.detail; // the ONLY thing the 503 body may feed
+              }
+              return pollFailure(detail);
+            })
+            .catch(function () {
+              return pollFailure(null); // non-2xx without a parsable body
+            });
+        })
+        .catch(function () {
+          return pollFailure(null); // network rejection
+        });
+    }
+
+    // The self-rescheduling 5s cadence (SPEC 4.3). pollTick — not pollOnce —
+    // carries the chain, so a manual r-poll never double-schedules it and no
+    // failure state (or freeze) ever stops polling (AC-24 poll-continues).
+    function pollTick() {
+      deps.schedule(pollTick, 5000);
+      pollOnce();
+    }
+
+    function pollFailure(detail) {
+      if (live === null) return false;
+      try {
+        live.polls += 1;
+        live.failures += 1;
+        live.lastDetail = typeof detail === "string" && detail !== "" ? detail : null;
+        render(); // panels keep the last-good render; dot stale; 3-strike banner
+      } catch (e) {
+        // never throw out of the poll cycle
+      }
+      return false;
+    }
+
+    function pollSuccess(docEl) {
+      if (live === null) return true;
+      try {
+        live.polls += 1;
+        live.failures = 0;
+        live.lastDetail = null;
+        live.degradedDismissed = false; // a new episode may re-show the banner
+        live.lastGoodAtMs = deps.now();
+        var v = docEl.schema_version;
+        if (live.appliedVersion === null || v === live.appliedVersion) {
+          live.appliedVersion = v; // the FIRST success applies (no reload — else boot loop)
+          setDocument(docEl);
+          render();
+        } else {
+          // Flap-safe gate (SPEC 4.3): version changed vs the last APPLIED —
+          // checked BEFORE rendering that doc; failed polls never reach here.
+          live.appliedVersion = v;
+          deps.reload();
+        }
+      } catch (e) {
+        // never throw out of the poll cycle
+      }
+      return true;
+    }
+
+    // LIVE entry point (bootstrap calls it for every non-file: protocol).
+    // Attaches app.pollOnce so dispatchKey's refresh guard takes the LIVE
+    // path (QA apps never see the method — plan T6 step 2).
+    function startLive() {
+      live = {
+        polls: 0,
+        failures: 0,
+        lastGoodAtMs: null,
+        appliedVersion: null,
+        lastDetail: null,
+        degradedDismissed: false,
+        token: liveToken(),
+      };
+      app.pollOnce = pollOnce;
+      render(); // blank panels + waiting notes + stale dot (+ missing-token banner)
+      if (live.token !== null) {
+        pollOnce();
+        deps.schedule(pollTick, 5000);
+      }
+      return live.token;
+    }
+
+    // Plan T6 step 5: the poll-cycle state + the derived dot ("frozen" wins).
+    function diagnostics() {
+      var valid = stateDoc !== null && MCW.state.validateDoc(stateDoc).ok;
+      return {
+        polls: live !== null ? live.polls : 0,
+        failures: live !== null ? live.failures : 0,
+        lastGoodAtMs: live !== null ? live.lastGoodAtMs : null,
+        appliedVersion: live !== null ? live.appliedVersion : null,
+        dot: currentDot(valid),
+      };
+    }
+
     var app = {
       render: render,
       renderBlank: renderBlank,
@@ -1642,6 +1893,8 @@
       effectivePending: effectivePending,
       dismissQaArm: dismissQaArm,
       renderBanners: renderBanners,
+      startLive: startLive,
+      diagnostics: diagnostics,
     };
     // T3: QA armed-demo override state (null | "prompt-armed" | "goal-armed" |
     // "cleared"); seeded null, reset by every mountQA.
@@ -1649,9 +1902,6 @@
     // T5: QA-only dismissal flag — once set, the mock pending no longer shows
     // (override to null, NOT back to the mock value; reload resets).
     app.qaArmDismissed = false;
-    // T3 interim pending gate (wall.pending.status); T5's effectivePending
-    // supersedes it.
-    app._pendingStatus = null;
     return app;
   }
 
@@ -1875,10 +2125,12 @@
     var app = createApp(deps);
     if (deps.location.protocol === "file:") {
       // QA mode (SPEC 4.1): mount the embedded mock case picked by ?case=
-      // (Cols 1-2 render from the doc; col 3 arrives with T5).
       app.mountQA(caseNameFromSearch(deps.location.search));
+    } else {
+      // LIVE mode (SPEC 4.3): token + poll chain (missing token -> banner,
+      // blank panels, zero fetch — startLive handles it).
+      app.startLive();
     }
-    // LIVE mode wiring (state polling) arrives with T6.
     // Keyboard map (SPEC 7.4): document-level keydown -> app.dispatchKey.
     // Real-DOM-only wiring; the fake DOM has no document.addEventListener.
     if (deps.document && typeof deps.document.addEventListener === "function") {
