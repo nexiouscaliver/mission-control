@@ -31,7 +31,12 @@ WHERE si.kind = 'sendText'
 """
 
 _DUPLICATE_SQL = """
-SELECT payload FROM session_input
+SELECT payload, time_created FROM session_input
+WHERE session_id = :sid AND kind = 'sendText' AND time_created > :since
+"""
+
+_SESSION_CURSOR_SQL = """
+SELECT COALESCE(MAX(time_created), 0) AS cursor_ms FROM session_input
 WHERE session_id = :sid AND kind = 'sendText' AND time_created > :since
 """
 
@@ -116,19 +121,40 @@ class Matcher:
                 )
         return candidates
 
-    def find_duplicate_paste(
+    def find_duplicate_paste_ms(
         self, session_id: str, prompt_sha256: str, since_ms: int
-    ) -> bool:
-        rows = self._query(
-            _DUPLICATE_SQL, {"sid": session_id, "since": since_ms}
-        )
+    ) -> int:
+        """The LATEST time_created of a confirmed duplicate paste of the
+        prompt in the session after since_ms — 0 when there is none. The
+        monitor uses that timestamp as its data-derived evaluation cursor:
+        advancing last_eval_ms to it guarantees the SAME paste is never
+        re-detected, whatever the wall clock said when the query ran (a
+        clock read taken before the query would leave the cursor BEHIND a
+        paste committed in between — the false-duplicate race)."""
+        rows = self._query(_DUPLICATE_SQL, {"sid": session_id, "since": since_ms})
+        latest = 0
         for row in rows:
             text = _payload_text(row["payload"])
             if text is None:
                 continue
             if hashlib.sha256(text.encode("utf-8")).hexdigest() == prompt_sha256:
-                return True
-        return False
+                latest = max(latest, row["time_created"])
+        return latest
+
+    def find_duplicate_paste(
+        self, session_id: str, prompt_sha256: str, since_ms: int
+    ) -> bool:
+        return self.find_duplicate_paste_ms(session_id, prompt_sha256, since_ms) > 0
+
+    def session_input_cursor(self, session_id: str, since_ms: int) -> int:
+        """MAX(time_created) over the session's sendText rows after since_ms
+        (0 when none) — everything already said in the session. The safe
+        data-derived starting cursor at goal-arm: it can never sit BEFORE a
+        row the matching query already saw."""
+        rows = self._query(
+            _SESSION_CURSOR_SQL, {"sid": session_id, "since": since_ms}
+        )
+        return rows[0]["cursor_ms"] if rows else 0
 
     def has_target_since(self, session_id: str, since_ms: int) -> bool:
         rows = self._query(_TARGET_SQL, {"sid": session_id, "since": since_ms})
