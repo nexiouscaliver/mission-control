@@ -787,6 +787,24 @@ def _self_test(server: "WallServer") -> bool:
     return True
 
 
+def _recover(store: PendingStore, logger: logging.Logger) -> None:
+    """Boot recovery: a crash between the durable create and the promote left
+    a prompt-armed record — promote it to await-birth with ONE audit line.
+    await-birth resumes matching on its own (the monitor polls the store);
+    goal-armed resumes from the persisted last_eval_ms / matched_at_ms /
+    *_fired flags; terminal tombstones surface as-is, untouched."""
+    rec = store.snapshot()
+    if rec is None:
+        return
+    if rec.status == STATUS_PROMPT_ARMED:
+        store.update(
+            lambda r: dataclasses.replace(r, status=STATUS_AWAIT_BIRTH)
+            if r
+            else r
+        )
+        logger.info("recovered status=await-birth row_id=%s", rec.row_id)
+
+
 def create_server(
     token: str,
     *,
@@ -838,6 +856,9 @@ def create_server(
         # monitor tick read one timeline.
         ctx.pending = PendingStore(state_path, clock=clock)
         ctx.pending.load()
+        # Crash recovery runs at boot, BEFORE any request or monitor tick can
+        # observe a half-launched record.
+        _recover(ctx.pending, logger)
     server.start()
     if (
         db_path is not None
