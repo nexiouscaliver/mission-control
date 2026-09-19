@@ -685,6 +685,432 @@ test("AC-32: byte-identical assets copies + assets/ references + no page-route r
   }
 });
 
+// =====================================================================
+// Tier: T2 state layer + mock fixtures (AC-3 / AC-23 / AC-31)
+// =====================================================================
+
+const NINE_CASES = [
+  "full",
+  "minimal",
+  "null-program",
+  "unparsed",
+  "no-schema-version",
+  "empty-lanes",
+  "freeze",
+  "pending-null",
+  "pending-flagged",
+];
+
+// The frozen key-set manifest of record (plan "Frozen key-set manifest", derived
+// verbatim from SPEC 3.2 tables + tower spec section 9). KEYSETS must equal this
+// exactly; the conformance mocks must equal KEYSETS at every level (AC-31).
+const FROZEN_MANIFEST = {
+  root: ["schema_version", "server", "programs", "verify_queue", "human_actions", "sessions_unmapped", "launch_pending", "wall"],
+  server: ["uptime_s", "generated_ts", "degraded", "banner"],
+  program: ["program", "note_path", "note_mtime", "objective", "master", "lanes"],
+  master: ["session_id", "title", "last_active_ago_s"],
+  lane: ["row_id", "repo", "branch", "slug", "status_note", "status_parsed", "manifest", "session", "goal", "signals", "suggest_verify", "stalled"],
+  manifest: ["path", "prompt_md", "goal_md", "precondition_mrs", "stall_t_hours"],
+  session: ["id", "title", "title_pending", "dir", "last_active_ago_s"],
+  goal: ["state", "queue_tail", "budget"],
+  signals: ["pushed", "mr"],
+  signalsPushed: ["value", "age_s"],
+  signalsMr: ["ref", "repo_host", "state", "title", "pipeline", "age_s"],
+  suggestVerify: ["because"],
+  stalled: ["because", "last_event"],
+  verifyRow: ["row_id", "program", "finished_ago_s", "master_hint", "verify_cmd"],
+  humanRow: ["kind", "ref", "repo", "repo_host", "title", "pipeline", "ready"],
+  unmappedRow: ["id", "title", "dir", "last_active_ago_s"],
+  wall: ["pending"],
+  wallPending: ["version", "status", "flag", "reason", "row_id", "lane_tag", "repo_root", "prompt_sha256", "launch_click_ms", "matched_session_id", "matched_at_ms", "last_eval_ms", "advisory_120s_fired", "canary_fired", "updated_at_ms"],
+};
+
+function sortedKeys(obj) {
+  return Object.keys(obj).sort();
+}
+
+function assertKeySet(actual, expected, where) {
+  assert.ok(actual && typeof actual === "object" && !Array.isArray(actual), where + ": expected an object");
+  assert.deepEqual(sortedKeys(actual), expected.slice().sort(), where + " key set mismatch");
+}
+
+// Walks one conformance-shaped doc against MCW.state.KEYSETS at every level (AC-31):
+// root, server, program, master, lane + all nullable expansions, verify/human/unmapped
+// rows, and wall.wallPending. `doc.wall` must exist on every conformance mock.
+function assertManifestWalk(doc, caseName) {
+  const K = loadApp().state.KEYSETS;
+  assert.ok(doc && typeof doc === "object", caseName + ": doc must be an object");
+  assertKeySet(doc, K.root, caseName + " root");
+  assertKeySet(doc.server, K.server, caseName + " server");
+  for (const prog of doc.programs) {
+    assertKeySet(prog, K.program, caseName + " program " + prog.program);
+    assertKeySet(prog.master, K.master, caseName + " master " + prog.program);
+    for (const lane of prog.lanes) {
+      const where = caseName + " lane " + lane.row_id;
+      assertKeySet(lane, K.lane, where);
+      assertKeySet(lane.signals, K.signals, where + ".signals");
+      if (lane.manifest !== null) assertKeySet(lane.manifest, K.manifest, where + ".manifest");
+      if (lane.session !== null) assertKeySet(lane.session, K.session, where + ".session");
+      if (lane.goal !== null) assertKeySet(lane.goal, K.goal, where + ".goal");
+      if (lane.signals.pushed !== null) assertKeySet(lane.signals.pushed, K.signalsPushed, where + ".signals.pushed");
+      if (lane.signals.mr !== null) assertKeySet(lane.signals.mr, K.signalsMr, where + ".signals.mr");
+      if (lane.suggest_verify !== null) assertKeySet(lane.suggest_verify, K.suggestVerify, where + ".suggest_verify");
+      if (lane.stalled !== null) assertKeySet(lane.stalled, K.stalled, where + ".stalled");
+    }
+  }
+  for (const row of doc.verify_queue) assertKeySet(row, K.verifyRow, caseName + " verify " + row.row_id);
+  for (const row of doc.human_actions) assertKeySet(row, K.humanRow, caseName + " human " + row.ref);
+  for (const row of doc.sessions_unmapped) assertKeySet(row, K.unmappedRow, caseName + " unmapped " + row.id);
+  assertKeySet(doc.wall, K.wall, caseName + " wall");
+  if (doc.wall.pending !== null) assertKeySet(doc.wall.pending, K.wallPending, caseName + " wall.pending");
+}
+
+// Rebuilds the embedded mocks as fake-DOM script blocks — the DOM path
+// MCW.state.extractMocks must handle identically to parseIndexMocks's regex path.
+function buildMockDom(mocks) {
+  const dom = makeFakeDocument();
+  for (const name of Object.keys(mocks)) {
+    const s = dom.createElement("script");
+    s.setAttribute("id", "mock-" + name);
+    s.setAttribute("type", "application/json");
+    s.text = JSON.stringify(mocks[name]);
+    dom.body.appendChild(s);
+  }
+  return dom;
+}
+
+test("T2-state: KEYSETS manifest frozen (18 manifests; master 3 keys; wallPending 15 keys)", () => {
+  const K = loadApp().state.KEYSETS;
+  assert.ok(K, "MCW.state.KEYSETS must exist");
+  assert.deepEqual(K, FROZEN_MANIFEST, "KEYSETS must equal the frozen manifest of record");
+  assert.equal(sortedKeys(K).length, 18, "exactly 18 manifest entries");
+  assert.equal(K.master.length, 3, "master is the tower-section-9 3-key shape");
+  assert.equal(K.wallPending.length, 15, "wall.pending is the 15-key pending.json record");
+  assert.equal(K.lane.length, 12);
+});
+
+test("AC-3: index.html embeds exactly the nine mock cases, in the pinned order, all parsable", () => {
+  const html = readWebFile("index.html");
+  const mocks = parseIndexMocks(html);
+  assert.deepEqual(sortedKeys(mocks), NINE_CASES.slice().sort(), "exactly the nine pinned cases must be embedded");
+  for (const name of NINE_CASES) {
+    assert.ok(
+      mocks[name] && typeof mocks[name] === "object" && !Array.isArray(mocks[name]),
+      name + " must JSON-parse to a plain object"
+    );
+  }
+  const ids = [];
+  const re = /id=["']mock-([^"']+)["']/g;
+  let m;
+  while ((m = re.exec(html)) !== null) ids.push(m[1]);
+  assert.deepEqual(ids, NINE_CASES, "mock blocks must appear in the plan-pinned order");
+});
+
+test("T2-state: extractMocks walks DOM script blocks (parseIndexMocks-compatible, skips bad blocks)", () => {
+  const expected = parseIndexMocks(readWebFile("index.html"));
+  const dom = buildMockDom(expected);
+  // decoys the walker must ignore: wrong type, unparsable body, non-mock script
+  const wrongType = dom.createElement("script");
+  wrongType.setAttribute("id", "mock-wrongtype");
+  wrongType.setAttribute("type", "text/javascript");
+  wrongType.text = '{"a":1}';
+  dom.body.appendChild(wrongType);
+  const broken = dom.createElement("script");
+  broken.setAttribute("id", "mock-broken");
+  broken.setAttribute("type", "application/json");
+  broken.text = "{not json";
+  dom.body.appendChild(broken);
+  const loader = dom.createElement("script");
+  loader.setAttribute("src", "assets/app.js");
+  dom.body.appendChild(loader);
+  const out = loadApp().state.extractMocks(dom);
+  assert.deepEqual(sortedKeys(out), sortedKeys(expected), "extractMocks finds every embedded case");
+  for (const name of Object.keys(expected)) {
+    assert.deepEqual(out[name], expected[name], "extractMocks(" + name + ") must equal parseIndexMocks");
+  }
+  // containment escape: the full mock carries the literal closing-script sequence
+  // inside a JSON string via the JSON-escaped form, and it parses back intact
+  assert.ok(
+    String(expected.full.server.banner).indexOf("<" + "/script>") !== -1,
+    "full mock banner must exercise the script-block containment escape"
+  );
+});
+
+test("AC-31: every conformance mock matches the frozen key-set manifest at every level", () => {
+  const mocks = parseIndexMocks(readWebFile("index.html"));
+  for (const name of NINE_CASES) {
+    // no-schema-version and null-program ARE the violations; everything else walks clean
+    if (name === "no-schema-version" || name === "null-program") continue;
+    assertManifestWalk(mocks[name], name);
+  }
+  // null-program: the null entry is the violation; the valid entry must still conform
+  const np = mocks["null-program"];
+  assert.equal(np.programs.length, 2, "null-program pins [null, <valid>]");
+  assert.strictEqual(np.programs[0], null);
+  assertManifestWalk({ ...np, programs: [np.programs[1]] }, "null-program(valid entry)");
+  // no-schema-version: the ONLY violation is the dropped root key
+  const nsv = mocks["no-schema-version"];
+  const rootMinusVersion = FROZEN_MANIFEST.root.filter((k) => k !== "schema_version").sort();
+  assert.deepEqual(sortedKeys(nsv), rootMinusVersion, "no-schema-version must be otherwise key-complete");
+  assertManifestWalk({ ...nsv, schema_version: 1 }, "no-schema-version(+version)");
+});
+
+test("AC-31: full mock census — masters, lane states, pending records", () => {
+  const mocks = parseIndexMocks(readWebFile("index.html"));
+  const full = mocks.full;
+  assert.ok(full.programs.length >= 2, "full needs >=2 programs");
+  // plan-pinned populated master, plausible-typed values
+  assert.deepEqual(full.programs[0].master, {
+    session_id: "s-master-1",
+    title: "mission-control tower",
+    last_active_ago_s: 412,
+  });
+  assert.equal(typeof full.programs[0].master.session_id, "string");
+  assert.equal(typeof full.programs[0].master.title, "string");
+  assert.ok(Number.isInteger(full.programs[0].master.last_active_ago_s));
+  assert.ok(
+    full.programs.some(
+      (p) => p.master.session_id === null && p.master.title === null && p.master.last_active_ago_s === null
+    ),
+    "one program must carry the all-null master (all three keys null)"
+  );
+  const lanes = full.programs.flatMap((p) => p.lanes);
+  assert.ok(lanes.length >= 8, "full needs >=8 lanes");
+  const statuses = {};
+  for (const l of lanes) statuses[l.status_parsed] = true;
+  for (const s of ["forged", "launched", "done", "partial", "failed", "parked", "in-flight", "UNPARSED"]) {
+    assert.ok(statuses[s], "full must include a " + s + " lane");
+  }
+  assert.ok(lanes.some((l) => l.status_parsed === "UNPARSED" && l.status_note === "Waiting on CI!!"), "UNPARSED lane with raw status_note");
+  assert.ok(lanes.some((l) => l.manifest === null), "legacy lane (manifest null)");
+  assert.ok(lanes.some((l) => l.manifest !== null && l.manifest.precondition_mrs.length > 0), "padlock lane (locked launch gate)");
+  assert.ok(
+    lanes.some(
+      (l) => l.stalled !== null && String(l.stalled.because).indexOf("inactive for") !== -1 && l.stalled.last_event !== ""
+    ),
+    "STALLED lane with because + last_event"
+  );
+  assert.ok(lanes.some((l) => l.signals.pushed !== null && l.signals.pushed.value === true), "pushed true");
+  assert.ok(lanes.some((l) => l.signals.pushed !== null && l.signals.pushed.value === false), "pushed false");
+  assert.ok(lanes.some((l) => l.signals.pushed === null), "pushed null");
+  assert.ok(lanes.some((l) => l.signals.mr !== null && l.signals.mr.repo_host === "gitlab" && l.signals.mr.ref.charAt(0) === "!"), "gitlab !N mr");
+  assert.ok(lanes.some((l) => l.signals.mr !== null && l.signals.mr.repo_host === "github" && l.signals.mr.ref.charAt(0) === "#"), "github #N mr");
+  for (const gs of ["active", "archived", "absent"]) {
+    assert.ok(lanes.some((l) => l.goal !== null && l.goal.state === gs), "goal.state " + gs);
+  }
+  assert.ok(lanes.some((l) => l.session !== null && l.session.title_pending === true), "session with title_pending true");
+  assert.ok(lanes.some((l) => l.session !== null && l.session.last_active_ago_s > 86400), "idle>24h collapsed candidate");
+  assert.ok(full.verify_queue.length >= 3, ">=3 verify rows");
+  assert.ok(full.verify_queue.some((r) => r.master_hint === ""), "verify row with empty master_hint");
+  assert.ok(full.verify_queue.some((r) => r.verify_cmd === ""), "verify row with empty verify_cmd");
+  assert.ok(full.human_actions.length >= 2, ">=2 merge cards");
+  assert.ok(full.human_actions.some((r) => r.ready === false), "one NOT-ready merge");
+  assert.ok(full.sessions_unmapped.length >= 2, ">=2 unmapped rows");
+  assert.ok(full.sessions_unmapped.some((r) => r.last_active_ago_s > 86400), "one unmapped idle>24h");
+  assert.ok(full.server.degraded.indexOf("network degraded: git cleo") !== -1, "non-freezing degraded entry 5");
+  assert.ok(full.server.degraded.indexOf("note rows skipped: 2") !== -1, "non-freezing degraded entry 10");
+  // wall.pending records: full 15-key where present
+  assert.equal(full.wall.pending.status, "prompt-armed");
+  assert.equal(full.wall.pending.lane_tag, "[secfix W2-L7]");
+  assert.equal(Object.keys(full.wall.pending).length, 15);
+  const pf = mocks["pending-flagged"];
+  assert.equal(pf.wall.pending.status, "flagged");
+  assert.equal(pf.wall.pending.reason, "ambiguous tags");
+  assert.equal(Object.keys(pf.wall.pending).length, 15);
+  assert.strictEqual(mocks.minimal.wall.pending, null, "minimal: pending null");
+  assert.strictEqual(mocks["pending-null"].wall.pending, null, "pending-null: pending null");
+});
+
+test("AC-3: selectCase + normalize — named case, default full, unknown falls back with note", () => {
+  const MCW = loadApp();
+  const mocks = parseIndexMocks(readWebFile("index.html"));
+  assert.deepEqual(MCW.state.selectCase("full", mocks), { appliedCase: "full", unknownCase: false });
+  assert.deepEqual(MCW.state.selectCase("unparsed", mocks), { appliedCase: "unparsed", unknownCase: false });
+  assert.deepEqual(MCW.state.selectCase("nope", mocks), { appliedCase: "full", unknownCase: true });
+  assert.deepEqual(MCW.state.selectCase(undefined, mocks), { appliedCase: "full", unknownCase: false });
+  assert.deepEqual(MCW.state.selectCase("", mocks), { appliedCase: "full", unknownCase: false });
+  const dom = buildMockDom(mocks);
+  // default (no ?case=) = full
+  let n = MCW.state.normalize(dom, fakeLocation({ search: "" }));
+  assert.equal(n.case, "full");
+  assert.deepEqual(n.notes, []);
+  assert.deepEqual(n.doc, mocks.full);
+  // named case via ?case=
+  n = MCW.state.normalize(dom, fakeLocation({ search: "?case=unparsed" }));
+  assert.equal(n.case, "unparsed");
+  assert.deepEqual(n.doc, mocks.unparsed);
+  assert.deepEqual(n.notes, []);
+  // unknown case -> full + note (SPEC 4.2 wording)
+  n = MCW.state.normalize(dom, fakeLocation({ search: "?case=nope" }));
+  assert.equal(n.case, "full");
+  assert.deepEqual(n.doc, mocks.full);
+  assert.deepEqual(n.notes, ["unknown mock case 'nope'"]);
+  // explicit full
+  n = MCW.state.normalize(dom, fakeLocation({ search: "?case=full" }));
+  assert.equal(n.case, "full");
+  assert.deepEqual(n.notes, []);
+  // empty ?case= value is the default, not an unknown case
+  n = MCW.state.normalize(dom, fakeLocation({ search: "?case=" }));
+  assert.equal(n.case, "full");
+  assert.deepEqual(n.notes, []);
+  // case param amid other params
+  n = MCW.state.normalize(dom, fakeLocation({ search: "?x=1&case=freeze&y=2" }));
+  assert.equal(n.case, "freeze");
+  // pinned return shape
+  assert.deepEqual(sortedKeys(MCW.state.normalize(dom, fakeLocation({}))), ["case", "doc", "notes"]);
+  // no mocks at all: degrade, never throw
+  assert.deepEqual(MCW.state.normalize(makeFakeDocument(), fakeLocation({ search: "" })), {
+    doc: null,
+    case: "full",
+    notes: [],
+  });
+});
+
+test("AC-23 L0: validateDoc — schema/json reasons, ok on conformance docs", () => {
+  const MCW = loadApp();
+  const mocks = parseIndexMocks(readWebFile("index.html"));
+  assert.deepEqual(MCW.state.validateDoc(null), { ok: false, reason: "json" });
+  assert.deepEqual(MCW.state.validateDoc("junk"), { ok: false, reason: "json" });
+  assert.deepEqual(MCW.state.validateDoc([1]), { ok: false, reason: "json" });
+  assert.deepEqual(MCW.state.validateDoc({}), { ok: false, reason: "schema" }, "missing schema_version");
+  assert.deepEqual(MCW.state.validateDoc({ schema_version: "1" }), { ok: false, reason: "schema" }, "non-int version");
+  assert.deepEqual(MCW.state.validateDoc({ schema_version: 1.5 }), { ok: false, reason: "schema" }, "non-int version");
+  assert.deepEqual(MCW.state.validateDoc({ schema_version: 1 }), { ok: false, reason: "schema" }, "missing root keys");
+  assert.deepEqual(
+    MCW.state.validateDoc({ schema_version: 1, server: {}, programs: [], verify_queue: [], human_actions: [] }),
+    { ok: false, reason: "schema" },
+    "missing sessions_unmapped"
+  );
+  assert.deepEqual(MCW.state.validateDoc(mocks.minimal), { ok: true, reason: null });
+  assert.deepEqual(MCW.state.validateDoc(mocks.full), { ok: true, reason: null });
+  assert.deepEqual(MCW.state.validateDoc(mocks["no-schema-version"]), { ok: false, reason: "schema" });
+  // wall / launch_pending absence is NOT L0 (a tower-only doc is tolerated)
+  const towerOnly = {
+    schema_version: 1,
+    server: {},
+    programs: [],
+    verify_queue: [],
+    human_actions: [],
+    sessions_unmapped: [],
+  };
+  assert.deepEqual(MCW.state.validateDoc(towerOnly), { ok: true, reason: null });
+});
+
+test("AC-23 L2: classify — non-array root key degrades its panel only", () => {
+  const classify = loadApp().state.classify;
+  const ok = { programs: [], verify_queue: [], human_actions: [], sessions_unmapped: [] };
+  assert.deepEqual(classify(ok), { programs: "ok", verifyQueue: "ok", humanActions: "ok", sessionsUnmapped: "ok" });
+  assert.deepEqual(classify({ ...ok, programs: {} }), {
+    programs: "l2",
+    verifyQueue: "ok",
+    humanActions: "ok",
+    sessionsUnmapped: "ok",
+  }, "L2 degrades only the offending panel");
+  assert.equal(classify({ ...ok, verify_queue: "x" }).verifyQueue, "l2");
+  assert.equal(classify({ ...ok, human_actions: null }).humanActions, "l2");
+  assert.equal(classify({ ...ok, sessions_unmapped: 7 }).sessionsUnmapped, "l2");
+  assert.deepEqual(classify(null), { programs: "l2", verifyQueue: "l2", humanActions: "l2", sessionsUnmapped: "l2" });
+});
+
+test("AC-23 L3: items — null / non-object / identity-less entries skipped and counted", () => {
+  const items = loadApp().state.items;
+  let r = items([null, { row_id: "x" }], "row_id");
+  assert.equal(r.valid.length, 1);
+  assert.equal(r.valid[0].row_id, "x");
+  assert.equal(r.skipped, 1);
+  r = items([{ row_id: "" }, { row_id: "y" }], "row_id"); // empty identity = identity-less (SPEC 3.2 lane rule)
+  assert.deepEqual(r.valid.map((v) => v.row_id), ["y"]);
+  assert.equal(r.skipped, 1);
+  r = items([null, { program: "p" }], null); // identityKey null: object-ness only (programs)
+  assert.equal(r.valid.length, 1);
+  assert.equal(r.skipped, 1);
+  r = items(["s", 42, [1], { ref: "r" }], "ref");
+  assert.equal(r.valid.length, 1);
+  assert.equal(r.skipped, 3);
+  r = items({ not: "array" }, "row_id"); // non-array: zero items, never a throw
+  assert.equal(r.valid.length, 0);
+  assert.equal(r.skipped, 0);
+});
+
+test("AC-23 L4: nullable — wrong-typed nullables read as null; ladder never throws on any fixture", () => {
+  const MCW = loadApp();
+  const nullable = MCW.state.nullable;
+  assert.strictEqual(nullable("junk"), null);
+  assert.strictEqual(nullable(null), null);
+  assert.strictEqual(nullable(42), null);
+  assert.strictEqual(nullable([1, 2]), null);
+  const manifest = { path: "x" };
+  assert.equal(nullable(manifest), manifest, "a real nullable object passes through");
+  const mocks = parseIndexMocks(readWebFile("index.html"));
+  for (const name of NINE_CASES) {
+    assert.doesNotThrow(() => {
+      const doc = mocks[name];
+      MCW.state.validateDoc(doc);
+      MCW.state.classify(doc);
+      for (const [key, idKey] of [
+        ["programs", null],
+        ["verify_queue", "row_id"],
+        ["human_actions", "ref"],
+        ["sessions_unmapped", "id"],
+      ]) {
+        MCW.state.items(doc && doc[key], idKey);
+      }
+      for (const prog of MCW.state.items(doc && doc.programs, null).valid) {
+        for (const lane of MCW.state.items(prog.lanes, "row_id").valid) {
+          for (const field of [lane.manifest, lane.session, lane.goal, lane.suggest_verify, lane.stalled]) {
+            MCW.state.nullable(field);
+          }
+          const sig = lane.signals;
+          MCW.state.nullable(sig && sig.pushed);
+          MCW.state.nullable(sig && sig.mr);
+          if (lane.session) MCW.util.humanizeAge(lane.session.last_active_ago_s);
+          if (lane.goal) MCW.util.humanizeAge(lane.goal.budget); // wrong-typed age -> zero-value render, no throw
+        }
+      }
+    }, "the tolerance ladder must never throw on the " + name + " fixture");
+  }
+});
+
+test("T2-util: humanizeAge bands (45s / 3m / 2h / 4d; floors 0, negative, non-number)", () => {
+  const h = loadApp().util.humanizeAge;
+  assert.equal(h(0), "0s");
+  assert.equal(h(45), "45s");
+  assert.equal(h(59), "59s");
+  assert.equal(h(60), "1m");
+  assert.equal(h(180), "3m");
+  assert.equal(h(3599), "59m");
+  assert.equal(h(3600), "1h");
+  assert.equal(h(7200), "2h");
+  assert.equal(h(86399), "23h");
+  assert.equal(h(86400), "1d");
+  assert.equal(h(345600), "4d");
+  assert.equal(h(-5), "0s", "ages floor at 0 (SPEC 3.1)");
+  assert.equal(h("x"), "0s", "non-number degrades to the zero value");
+  assert.equal(h(undefined), "0s");
+  assert.equal(h(45.9), "45s", "fractional seconds floor");
+});
+
+test("T2-app: mountQA applies the case via setDocument; render stays blank-noted until T3", () => {
+  const MCW = loadApp();
+  const mocks = parseIndexMocks(readWebFile("index.html"));
+  const dom = buildMockDom(mocks);
+  const app = MCW.createApp(MCW.createDeps({ document: dom }));
+  assert.equal(typeof app.setDocument, "function", "app.setDocument must exist (plan-pinned)");
+  assert.equal(typeof app.mountQA, "function", "app.mountQA must exist (plan-pinned)");
+  assert.deepEqual(app.mountQA("unparsed"), { appliedCase: "unparsed", unknownCase: false });
+  assert.deepEqual(app.mountQA("nope"), { appliedCase: "full", unknownCase: true });
+  assert.deepEqual(app.mountQA(), { appliedCase: "full", unknownCase: false });
+  for (const name of NINE_CASES) {
+    assert.doesNotThrow(() => app.mountQA(name), "mountQA(" + name + ") must not throw");
+  }
+  for (const id of ["col1-programs", "panel-verify", "panel-human", "col3-sessions"]) {
+    assert.ok(
+      collectText(dom.getElementById(id)).indexOf("waiting for mock") !== -1,
+      "#" + id + " keeps the T1 blank note until T3 renders real columns"
+    );
+  }
+});
+
 // ---------------- runner ----------------
 
 async function main() {
