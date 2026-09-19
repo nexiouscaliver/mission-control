@@ -1,0 +1,217 @@
+#!/opt/homebrew/bin/python3.14
+"""mc-wall control CLI — install/start/stop/restart/status/log/open.
+
+Syntax floor: Python 3.9 (AC-58) — no f-strings, no annotations. Stdlib only
+plus the mc_wall package itself (AC-57). The two roots are separately
+injectable so tests never touch the real ~/.zcode or ~/Library/LaunchAgents:
+wall_home owns wall.json/state/logs/run.sh/chrome-profile; home owns the
+plist, ALWAYS at <home>/Library/LaunchAgents/ai.zcode.mc-wall.plist.
+"""
+
+import argparse
+import json
+import os
+import secrets
+import subprocess
+import sys
+
+MIN_PYTHON = (3, 9)
+PLIST_LABEL = "ai.zcode.mc-wall"
+DEFAULT_PORT = 8765
+
+
+def repo_root():
+    # bin/mc-wall -> the checkout root containing mc_wall/ and templates/.
+    return os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+
+
+def default_wall_home():
+    env = os.environ.get("MC_WALL_HOME")
+    if env:
+        return env
+    return os.path.join(os.path.expanduser("~"), ".zcode", "mc-wall")
+
+
+def _templates():
+    # Lazy import: merely loading this module must not touch sys.path; the
+    # insert makes mc_wall importable when run as a script from anywhere.
+    root = repo_root()
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    from mc_wall.server import templates
+
+    return templates
+
+
+class SubprocessExecutor:
+    def run(self, argv):
+        proc = subprocess.run(list(argv), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        return proc.returncode, proc.stdout.decode("utf-8", "replace")
+
+
+class Cli:
+    def __init__(self, wall_home, home, executor, stdout=None, version_info=None):
+        # wall_home and home are the TWO separately injectable roots (tests
+        # pass BOTH as tmp dirs). The plist path is ALWAYS derived from home —
+        # never from wall_home. executor: object with run(argv) -> (rc, stdout).
+        self.wall_home = wall_home
+        self.home = home
+        self.executor = executor
+        self.stdout = stdout if stdout is not None else sys.stdout
+        self.version_info = version_info if version_info is not None else sys.version_info
+
+    # -- helpers ----------------------------------------------------------
+
+    def _print(self, text):
+        self.stdout.write(text + "\n")
+
+    def _uid(self):
+        return os.getuid()
+
+    def _plist_path(self):
+        return os.path.join(self.home, "Library", "LaunchAgents", PLIST_LABEL + ".plist")
+
+    def _wall_json_path(self):
+        return os.path.join(self.wall_home, "wall.json")
+
+    def _read_wall_json(self):
+        path = self._wall_json_path()
+        if not os.path.exists(path):
+            return {}
+        try:
+            with open(path) as f:
+                data = json.load(f)
+        except ValueError:
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        try:
+            port = int(data.get("port", DEFAULT_PORT))
+        except (TypeError, ValueError):
+            port = DEFAULT_PORT
+        return {"token": data.get("token"), "port": port}
+
+    def _render_plist(self, token):
+        # token is not interpolated: the plist template carries no
+        # token-bearing path (the server reads wall.json itself at boot).
+        return _templates().render_file(
+            "plist.template", {"label": PLIST_LABEL, "wall_home": self.wall_home}
+        )
+
+    def _render_run_sh(self):
+        return _templates().render_file("run_sh.template", {"repo_root": repo_root()})
+
+    # -- commands ---------------------------------------------------------
+
+    def install(self, regenerate_token=False, dry_run=False):
+        wall_json = self._wall_json_path()
+        if dry_run:
+            token = "DRYRUN-TOKEN"
+            self._print(
+                "# mc-wall install --dry-run (token: DRYRUN-TOKEN "
+                "— nothing is written, nothing is started)"
+            )
+            self._print(self._render_plist(token))
+            self._print(self._render_run_sh())
+            return 0  # writes NOTHING, generates NO token, starts NOTHING
+        token = None
+        if not regenerate_token and os.path.exists(wall_json):
+            with open(wall_json) as f:
+                token = json.load(f).get("token")  # PRESERVE (silent rotation breaks the pinned URL)
+        if not token:
+            token = secrets.token_urlsafe(32)
+        os.makedirs(os.path.join(self.wall_home, "state"), exist_ok=True)
+        os.makedirs(os.path.join(self.wall_home, "logs"), exist_ok=True)
+        if regenerate_token or not os.path.exists(wall_json):
+            with open(wall_json, "w", encoding="utf-8") as f:
+                json.dump({"token": token, "port": DEFAULT_PORT}, f, indent=2)
+                f.write("\n")
+            os.chmod(wall_json, 0o600)
+        run_sh = os.path.join(self.wall_home, "run.sh")
+        with open(run_sh, "w", encoding="utf-8") as f:
+            f.write(self._render_run_sh())
+        os.chmod(run_sh, 0o700)
+        plist = self._plist_path()
+        os.makedirs(os.path.dirname(plist), exist_ok=True)
+        with open(plist, "w", encoding="utf-8") as f:
+            f.write(self._render_plist(token))
+        return self.start()
+
+    def start(self):
+        rc, _ = self.executor.run(
+            ["launchctl", "bootstrap", "gui/%d" % self._uid(), self._plist_path()]
+        )
+        if rc != 0:
+            rc, _ = self.executor.run(
+                ["launchctl", "kickstart", "-k", "gui/%d/%s" % (self._uid(), PLIST_LABEL)]
+            )
+        return 0 if rc == 0 else 1
+
+    def stop(self):
+        # Pinned bootout behavior lands in T13.
+        return 0
+
+    def restart(self):
+        # Pinned stop-then-start order lands in T13.
+        return 0
+
+    def status(self):
+        # Pinned launchctl-print + http probe lands in T13.
+        return 0
+
+    def log(self, n=50):
+        # Pinned last-n-lines behavior lands in T13.
+        return 0
+
+    def open_wall(self):
+        # Pinned Chrome app command lands in T13.
+        return 0
+
+
+def main(argv=None, version_info=None, wall_home=None, home=None, executor=None):
+    # wall_home/home/executor are the injection seam for tests; None ->
+    # default_wall_home() / real $HOME / SubprocessExecutor.
+    vi = version_info if version_info is not None else sys.version_info
+    if vi < MIN_PYTHON:
+        print(
+            "mc-wall requires Python %d.%d or newer (found %d.%d)" % (MIN_PYTHON + vi[:2]),
+            file=sys.stderr,
+        )
+        return 2
+    parser = argparse.ArgumentParser(prog="mc-wall", description="mc-wall Wall server control")
+    sub = parser.add_subparsers(dest="command", required=True)
+    p_install = sub.add_parser("install", help="write wall.json/run.sh/plist and start the agent")
+    p_install.add_argument("--dry-run", action="store_true")
+    p_install.add_argument("--regenerate-token", action="store_true")
+    sub.add_parser("start", help="bootstrap the LaunchAgent")
+    sub.add_parser("stop", help="boot out the LaunchAgent")
+    sub.add_parser("restart", help="stop then start")
+    sub.add_parser("status", help="launchd + http health")
+    p_log = sub.add_parser("log", help="tail the wall log")
+    p_log.add_argument("-n", type=int, default=50)
+    sub.add_parser("open", help="open the Wall in an app-mode Chrome")
+    args = parser.parse_args(argv)
+    cli = Cli(
+        wall_home if wall_home is not None else default_wall_home(),
+        home if home is not None else os.path.expanduser("~"),
+        executor if executor is not None else SubprocessExecutor(),
+        stdout=sys.stdout,
+        version_info=vi,
+    )
+    if args.command == "install":
+        return cli.install(regenerate_token=args.regenerate_token, dry_run=args.dry_run)
+    if args.command == "start":
+        return cli.start()
+    if args.command == "stop":
+        return cli.stop()
+    if args.command == "restart":
+        return cli.restart()
+    if args.command == "status":
+        return cli.status()
+    if args.command == "log":
+        return cli.log(n=args.n)
+    return cli.open_wall()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

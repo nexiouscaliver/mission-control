@@ -1,3 +1,4 @@
+import hashlib
 import http.client as http_client, json, socket, sqlite3, tempfile, time, typing
 from contextlib import contextmanager
 from pathlib import Path
@@ -182,3 +183,41 @@ def serve(token: str = "mcwalls-token", *, collect_state=None, runner=None, web_
         for _h in [x for x in _lg.handlers if getattr(x, "baseFilename", None) == str(logs / "wall.log")]:
             _lg.removeHandler(_h)
             _h.close()
+
+
+def load_cli():
+    """Load bin/mc-wall (extensionless) as a module for direct Cli/main testing."""
+    import importlib.machinery, importlib.util
+
+    path = REPO_ROOT / "bin" / "mc-wall"
+    # Extensionless file: bare spec_from_file_location yields loader=None.
+    loader = importlib.machinery.SourceFileLoader("mcwalls_cli_under_test", str(path))
+    spec = importlib.util.spec_from_file_location("mcwalls_cli_under_test", str(path), loader=loader)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class FakeExecutor:
+    """Records every argv; never spawns a process (launchctl stays fake)."""
+
+    def __init__(self, results=None):
+        self.argvs = []
+        self.results = {tuple(k): v for k, v in (results or {}).items()}
+
+    def run(self, argv):
+        argv = list(argv)
+        self.argvs.append(argv)
+        return self.results.get(tuple(argv), (0, ""))
+
+
+def snapshot_tree(root: Path) -> dict:
+    """{relpath: sha256(bytes)} for every file under root ({} if root missing)."""
+    root = Path(root)
+    if not root.exists():
+        return {}
+    out = {}
+    for p in sorted(root.rglob("*")):
+        if p.is_file():
+            out[str(p.relative_to(root))] = hashlib.sha256(p.read_bytes()).hexdigest()
+    return out
