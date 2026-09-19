@@ -71,16 +71,18 @@ def _db_ok(path: str) -> bool:
 def _read_launch(path: str | None, log: "DegradedLog"):
     """§4.5 pending-launch: None-configured or absent file -> None (no entry);
     present + parseable -> parsed value verbatim (any JSON value); present +
-    unparseable -> None + entry 8."""
+    unparseable (bad JSON OR non-UTF-8 bytes) -> None + entry 8."""
     if path is None:
         return None
     try:
-        with open(path, "r", encoding="utf-8") as fh:
-            raw = fh.read()
+        with open(path, "rb") as fh:  # bytes: decode below so undecodable
+            raw = fh.read()           # content is an entry-8 failure, not an escape
     except OSError:
         return None
     try:
-        return json.loads(raw)
+        # UnicodeDecodeError is a ValueError, so decode+parse failures share
+        # the entry-8 path; json.loads gets a str, keeping the encoding pinned.
+        return json.loads(raw.decode("utf-8"))
     except ValueError:
         log.add((6, 0, 0, ""), "launch state degraded: pending-launch unreadable")
         return None
@@ -94,6 +96,8 @@ class DegradedLog:
     entries=1 (entry 3 -> sub 0, entry 10 -> sub 1), entry 4=2, net=3
     (entry 5 -> 0, entry 6 -> 1, entry 11 -> 2 with the ref as extra),
     entry 7=4 (session_id as extra), entry 9=5 (token as extra), entry 8=6.
+    Sorting is by the raw key tuples, so entry-11 refs order LEXICOGRAPHICALLY
+    ("!10" before "!9") — a deliberate v1 choice T-5/T-6 inherit knowingly.
     """
 
     def __init__(self) -> None:

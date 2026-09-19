@@ -1,10 +1,10 @@
-"""T-1 collect tests: AC-API-1, AC-LAUNCH-1/2, AC-FAIL-8, DegradedLog ordering.
-
-Module imports live inside the test functions so pytest collection succeeds
-while the mc_wall.tower modules do not exist yet (red phase).
-"""
+"""T-1 collect tests: AC-API-1, AC-LAUNCH-1/2, AC-FAIL-8, DegradedLog ordering."""
 
 import sqlite3
+
+from mc_wall.tower import NetCache, TowerConfig, collect_state
+from mc_wall.tower import contract
+from mc_wall.tower.collect import DegradedLog
 
 
 def mcwallt_make_session_db(tmp_path, name="mcwallt_sessions.db"):
@@ -21,8 +21,6 @@ def mcwallt_make_session_db(tmp_path, name="mcwallt_sessions.db"):
 
 
 def test_mcwallt_api_signature_and_defaults(tmp_path):
-    from mc_wall.tower import NetCache, TowerConfig, collect_state
-
     # Defaults exist on a bare config (db_path/programs are the only required fields).
     cfg = TowerConfig(db_path="x", programs=())
     assert cfg.uptime_s_provider() == 0
@@ -46,8 +44,6 @@ def test_mcwallt_api_signature_and_defaults(tmp_path):
 
 
 def test_mcwallt_launch_passthrough(tmp_path):
-    from mc_wall.tower import TowerConfig, collect_state
-
     db_path = mcwallt_make_session_db(tmp_path)
     launch = tmp_path / "mcwallt_launch.json"
     launch.write_text('{"slug": "mcwall-tower", "n": 3}', encoding="utf-8")
@@ -63,8 +59,6 @@ def test_mcwallt_launch_passthrough(tmp_path):
 
 
 def test_mcwallt_launch_missing_null(tmp_path):
-    from mc_wall.tower import TowerConfig, collect_state
-
     cfg = TowerConfig(db_path=mcwallt_make_session_db(tmp_path), programs=(),
                       pending_launch_path=str(tmp_path / "mcwallt_absent_launch.json"))
     state = collect_state(cfg)
@@ -73,8 +67,6 @@ def test_mcwallt_launch_missing_null(tmp_path):
 
 
 def test_mcwallt_failopen_launch_corrupt(tmp_path):
-    from mc_wall.tower import TowerConfig, collect_state
-
     launch = tmp_path / "mcwallt_launch.json"
     launch.write_text("not json", encoding="utf-8")
     cfg = TowerConfig(db_path=mcwallt_make_session_db(tmp_path), programs=(),
@@ -84,9 +76,24 @@ def test_mcwallt_failopen_launch_corrupt(tmp_path):
     assert "launch state degraded: pending-launch unreadable" in state["server"]["degraded"]
 
 
-def test_mcwallt_degraded_log_order_unit():
-    from mc_wall.tower.collect import DegradedLog
+def test_mcwallt_failopen_launch_binary(tmp_path):
+    # Present but not decodable UTF-8: same fail-open as any unparseable payload.
+    launch = tmp_path / "mcwallt_launch.bin"
+    launch.write_bytes(b"\xff\xfe\x00mcwallt-not-utf8\xfd")
+    cfg = TowerConfig(db_path=mcwallt_make_session_db(tmp_path), programs=(),
+                      pending_launch_path=str(launch))
+    state = collect_state(cfg)
+    assert state["launch_pending"] is None
+    assert state["server"]["degraded"] == ["launch state degraded: pending-launch unreadable"]
+    contract.assert_shape(state)
+    # The doc was NOT zeroed by the backstop: the marking entry is absent and
+    # the rest of the document is intact.
+    assert "internal error: collect_state failed" not in state["server"]["degraded"]
+    assert state["server"]["uptime_s"] == 0
+    assert state["programs"] == []
 
+
+def test_mcwallt_degraded_log_order_unit():
     log = DegradedLog()
     # Fed in shuffled order: every rank group present, plus an exact duplicate.
     feed = [

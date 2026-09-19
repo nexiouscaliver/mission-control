@@ -1,20 +1,19 @@
-"""T-1 contract tests: assert_shape unit coverage, AC-CONTRACT-2, AC-STD-1.
-
-Module imports live inside the test functions so pytest collection succeeds
-while the mc_wall.tower modules do not exist yet (red phase): each test then
-fails at runtime rather than interrupting collection.
-"""
+"""T-1 contract tests: assert_shape unit coverage, AC-CONTRACT-2, AC-STD-1."""
 
 import ast
 import copy
 import sys
 from pathlib import Path
 
+import pytest
+
+from mc_wall.tower import ProgramConfig, TowerConfig, collect_state
+from mc_wall.tower import contract
+
 TOWER_DIR = Path(__file__).resolve().parents[2] / "mc_wall" / "tower"
 
 
 def _example():
-    from mc_wall.tower import contract
     return copy.deepcopy(contract.CONTRACT_EXAMPLE)
 
 
@@ -56,10 +55,6 @@ def _pushed_missing_age(v):
 
 
 def test_mcwallt_contract_assert_shape_unit():
-    import pytest
-
-    from mc_wall.tower import contract
-
     # The §9 example itself (one zero row per list) is compliant.
     contract.assert_shape(contract.CONTRACT_EXAMPLE)
     # Empty lists are equally compliant.
@@ -88,9 +83,6 @@ def test_mcwallt_contract_assert_shape_unit():
 
 
 def test_mcwallt_contract_keys_survive_full_degradation(tmp_path):
-    from mc_wall.tower import ProgramConfig, TowerConfig, collect_state
-    from mc_wall.tower import contract
-
     launch = tmp_path / "mcwallt_launch.json"
     launch.write_bytes(b"not-json{")
     cfg = TowerConfig(
