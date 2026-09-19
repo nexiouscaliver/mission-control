@@ -327,10 +327,112 @@ button:disabled {
   color: var(--derived);
 }
 
-/* jump flash primitive (defined here; T4 wires the jump + pulse) */
+/* ---- Col 2: VERIFY QUEUE + HUMAN ACTIONS OWED (SPEC 6.2) ---- */
+
+.subpanel-head {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.verify-row {
+  margin-top: 8px;
+  padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.verify-caption {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.verify-signals,
+.verify-master,
+.verify-cmd-note {
+  font-size: 14px;
+}
+
+.verify-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.merge-card {
+  margin-top: 8px;
+  padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+/* MR title + pipeline + repo badge share ONE visual line (SPEC 3.2 human row) */
+.merge-line {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.merge-repo,
+.merge-pipeline {
+  color: var(--ink-dim);
+  font-weight: 600;
+}
+
+.pipeline-unknown {
+  color: var(--stale);
+  font-weight: 600;
+}
+
+.not-ready {
+  color: var(--stale);
+  font-weight: 600;
+}
+
+.ready-flag {
+  color: var(--note);
+  font-weight: 600;
+}
+
+/* transient inline notes (copy failures, fail-soft POST notes — never banners) */
+.inline-note {
+  color: var(--ink-dim);
+  font-size: 14px;
+}
+
+.inline-note--error {
+  color: var(--stale);
+  font-weight: 600;
+}
+
+#nmn-counter {
+  font-weight: 700;
+}
+
+/* jump flash primitive: outline pulse ~1.5 s (class added/removed by the jump) */
 .flash {
   outline: 2px solid var(--attention);
   outline-offset: 2px;
+  animation: flash-pulse 1.5s ease-out 1;
+}
+
+@keyframes flash-pulse {
+  0%,
+  100% {
+    outline-offset: 2px;
+  }
+
+  50% {
+    outline-offset: 6px;
+  }
 }
 
 /* ---- launch side panel (SPEC 6.1, fixed-right overlay) ---- */

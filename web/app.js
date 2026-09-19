@@ -178,22 +178,26 @@
       return MCW.util.humanizeAge(Math.floor(deps.now() / 1000) - mtime);
     }
 
-    // T3 render: Col 1 renders from the mounted state document; the other
-    // panel roots keep a dim note until their owning task (T4/T5) fills them.
+    // T3/T4 render: Col 1 + Col 2 render from the mounted state document;
+    // col3 keeps a dim note until T5 fills it.
     function render(nextDoc) {
       if (arguments.length > 0) setDocument(nextDoc);
       ensureShell();
       var blankNote = stateDoc === null ? "waiting for mock" : "no data";
       for (var i = 0; i < PANEL_ROOT_IDS.length; i += 1) {
-        var rootEl = byId(PANEL_ROOT_IDS[i]);
+        var id = PANEL_ROOT_IDS[i];
+        var rootEl = byId(id);
         if (!rootEl) continue;
-        if (PANEL_ROOT_IDS[i] === "col1-programs" && stateDoc !== null) {
-          renderCol1(rootEl);
-        } else {
+        if (stateDoc !== null && id === "col1-programs") renderCol1(rootEl);
+        else if (stateDoc !== null && id === "panel-verify") renderCol2Verify(rootEl);
+        else if (stateDoc !== null && id === "panel-human") renderCol2Human(rootEl);
+        else {
           clearNode(rootEl);
           appendNote(rootEl, blankNote);
         }
       }
+      updateNeedsMeNow();
+      wireNeedsMeNow();
     }
 
     function renderCol1(rootEl) {
@@ -204,7 +208,7 @@
         return;
       }
       var res = MCW.state.items(stateDoc.programs, null);
-      if (res.valid.length === 0) appendNote(rootEl, "no lanes");
+      if (res.valid.length === 0) appendNote(rootEl, "no programs");
       for (var i = 0; i < res.valid.length; i += 1) renderProgramCard(rootEl, res.valid[i]);
       if (res.skipped > 0) appendNote(rootEl, "skipped " + res.skipped + " malformed rows");
     }
@@ -389,19 +393,25 @@
         laneEl.appendChild(mchip);
       }
 
-      // Journey B: forged lanes open the launch side panel. The click wiring is
-      // real-DOM-only (the fake DOM lacks addEventListener); the fake-DOM test
-      // drives app.openLaunchPanel(rowId) directly.
+      // Journey B: forged lanes open the launch side panel. Event wiring needs
+      // addEventListener (real DOM + the selftest's extended fake DOM); the
+      // role=button div is keyboard-operable: Enter/Space open + preventDefault.
       if (status === "forged") {
         laneEl.classList.add("lane--launchable");
         laneEl.setAttribute("role", "button");
         laneEl.setAttribute("tabindex", "0");
         if (typeof laneEl.addEventListener === "function") {
-          (function (rowId) {
-            laneEl.addEventListener("click", function () {
+          var rowId = lane.row_id; // renderLane parameter scope — no capture IIFE needed
+          laneEl.addEventListener("click", function () {
+            openLaunchPanel(rowId);
+          });
+          laneEl.addEventListener("keydown", function (ev) {
+            var key = ev && typeof ev.key === "string" ? ev.key : "";
+            if (key === "Enter" || key === " " || key === "Spacebar") {
+              if (typeof ev.preventDefault === "function") ev.preventDefault();
               openLaunchPanel(rowId);
-            });
-          })(lane.row_id);
+            }
+          });
         }
       }
 
@@ -417,8 +427,8 @@
       var b = goal.budget;
       if (typeof b === "number" && b > 0) {
         out += " · budget " + b;
-      } else if (isPlainObject(b) && Object.keys(b).length > 0) {
-        out += " · budget " + (isInt(b.whole_run) ? b.whole_run : JSON.stringify(b));
+      } else if (isPlainObject(b) && isInt(b.whole_run) && b.whole_run > 0) {
+        out += " · budget " + b.whole_run;
       }
       return out;
     }
@@ -446,6 +456,7 @@
       var requested = typeof caseName === "string" && caseName !== "" ? caseName : null;
       var search = requested !== null ? "?case=" + encodeURIComponent(requested) : "";
       var n = MCW.state.normalize(doc, { search: search });
+      qaCase = n.case; // remembered so keyboard r can re-mount in QA
       setDocument(n.doc);
       render();
       return { appliedCase: n.case, unknownCase: !!(requested !== null && n.case !== requested) };
@@ -496,6 +507,8 @@
       var panelEl = byId("launch-panel");
       if (!panelEl) return;
       clearNode(panelEl);
+      panelEl.setAttribute("role", "dialog");
+      panelEl.setAttribute("aria-label", "launch panel");
 
       var head = el("div");
       head.classList.add("launch-head");
@@ -508,6 +521,7 @@
       closeBtn.classList.add("launch-close");
       closeBtn.setText("×");
       head.appendChild(closeBtn);
+      launchCloseBtn = closeBtn; // openLaunchPanel focuses it once rendered
       panelEl.appendChild(head);
 
       launchLine(panelEl, "row", lane.row_id);
@@ -548,7 +562,7 @@
       var btn = el("button");
       btn.setAttribute("type", "button");
       btn.classList.add("launch-btn");
-      btn.setText("LIVE LAUNCH");
+      btn.setText("LAUNCH");
       var note = el("div");
       note.classList.add("launch-note");
       if (live) {
@@ -578,15 +592,499 @@
     }
 
     function openLaunchPanel(rowId) {
-      var hit = findLaneRow(String(rowId));
+      var key = String(rowId);
+      var hit = findLaneRow(key);
       if (hit === null) return false;
+      // Remember the triggering lane so close can hand focus back (dialog a11y).
+      lastTrigger = findDataIn(byId("col1-programs"), "row-id", key);
       renderLaunchPanel(hit.prog, hit.lane);
+      if (launchCloseBtn !== null && typeof launchCloseBtn.focus === "function") {
+        launchCloseBtn.focus();
+      }
       return true;
     }
 
     function closeLaunchPanel() {
       var panelEl = byId("launch-panel");
       if (panelEl) panelEl.classList.remove("open");
+      if (lastTrigger !== null && typeof lastTrigger.focus === "function") {
+        lastTrigger.focus();
+      }
+      lastTrigger = null;
+    }
+
+    // =====================================================================
+    // T4: Col 2 (SPEC 6.2) + NEEDS ME NOW (SPEC 7.1) + copy adapter (7.2)
+    //     + keyboard map (7.4).
+    // =====================================================================
+
+    var launchCloseBtn = null; // set by renderLaunchPanel; focused on open
+    var lastTrigger = null; // lane that opened the panel; refocused on close
+    var nmnWired = false; // #needs-me-now click wiring is one-shot
+    var qaCase = null; // applied case, so keyboard r can re-mount in QA
+
+    // Disabled toggling without removeAttribute (not in the fake-DOM surface):
+    // setAttribute on disable; property + guarded attr clear on enable.
+    function setDisabled(node, isDisabled) {
+      if (isDisabled) {
+        node.setAttribute("disabled", "");
+        node.disabled = true;
+      } else {
+        node.disabled = false;
+        if (node.attrs && Object.prototype.hasOwnProperty.call(node.attrs, "disabled")) {
+          delete node.attrs.disabled;
+        }
+        if (typeof node.removeAttribute === "function") node.removeAttribute("disabled");
+      }
+    }
+
+    function textOf(node) {
+      if (!node) return "";
+      return String(node.text !== undefined ? node.text : node.textContent || "");
+    }
+
+    function datasetGet(node, key) {
+      if (!node.dataset) return undefined;
+      var k = key.indexOf("data-") === 0 ? key.slice(5) : key;
+      k = k.replace(/-([a-z])/g, function (_, c) {
+        return c.toUpperCase();
+      });
+      return node.dataset[k];
+    }
+
+    // data-* lookup walker (the pinned no-querySelector surface's twin of
+    // findByData in the selftest).
+    function findDataIn(node, key, value) {
+      var kids = (node && node.children) || [];
+      for (var i = 0; i < kids.length; i += 1) {
+        if (datasetGet(kids[i], key) === value) return kids[i];
+        var hit = findDataIn(kids[i], key, value);
+        if (hit) return hit;
+      }
+      return null;
+    }
+
+    // LIVE token = first non-empty pathname segment (SPEC 4.3); null when absent.
+    function liveToken() {
+      var parts = String(deps.location.pathname || "").split("/");
+      for (var i = 0; i < parts.length; i += 1) {
+        if (parts[i] !== "") return parts[i];
+      }
+      return null;
+    }
+
+    function nmnAnchor() {
+      var btn = byId("needs-me-now");
+      return btn !== null ? btn : doc && doc.body ? doc.body : null;
+    }
+
+    // Transient inline note near an anchor (SPEC 4.3/7.2: never a banner).
+    function transientNote(text, anchor, isError) {
+      if (text === null || text === undefined || !doc) return;
+      var host = anchor && anchor.parentNode ? anchor.parentNode : null;
+      if (host === null) {
+        var btn = nmnAnchor();
+        if (btn && btn.parentNode) host = btn.parentNode;
+      }
+      if (host === null && doc.body) host = doc.body;
+      if (host === null) return;
+      var note = el("span");
+      note.classList.add("inline-note");
+      if (isError) note.classList.add("inline-note--error");
+      note.setText(String(text));
+      host.appendChild(note);
+      deps.schedule(function () {
+        if (note.parentNode) note.parentNode.removeChild(note);
+      }, 2000);
+    }
+
+    // Jump primitive (SPEC 7.1): scrollIntoView + flash outline ~1.5 s. The
+    // target is always recomputed by the caller from the CURRENT render.
+    function jumpTo(node) {
+      node.scrollIntoView({ block: "center" });
+      node.classList.add("flash");
+      deps.schedule(function () {
+        node.classList.remove("flash");
+      }, 1500);
+    }
+
+    function owedCounts() {
+      var v = stateDoc !== null && Array.isArray(stateDoc.verify_queue) ? stateDoc.verify_queue.length : 0;
+      var m = stateDoc !== null && Array.isArray(stateDoc.human_actions) ? stateDoc.human_actions.length : 0;
+      return { v: v, m: m };
+    }
+
+    // Mix counter + disabled state on the top-bar button (SPEC 7.1).
+    function updateNeedsMeNow() {
+      var counterEl = byId("nmn-counter");
+      var btn = byId("needs-me-now");
+      var c = owedCounts();
+      if (counterEl) counterEl.setText(c.v + "v·" + c.m + "m");
+      if (btn) {
+        if (c.v === 0 && c.m === 0) {
+          setDisabled(btn, true);
+          btn.setAttribute("title", "nothing owed");
+        } else {
+          setDisabled(btn, false);
+          btn.setAttribute("title", "");
+        }
+      }
+    }
+
+    function wireNeedsMeNow() {
+      var btn = byId("needs-me-now");
+      if (!btn || nmnWired) return;
+      nmnWired = true;
+      if (typeof btn.addEventListener === "function") {
+        btn.addEventListener("click", function () {
+          needsMeNow();
+        });
+      }
+    }
+
+    // ---- #panel-verify ----
+
+    function renderCol2Verify(rootEl) {
+      clearNode(rootEl);
+      var head = el("div");
+      head.classList.add("subpanel-head");
+      head.setText("VERIFY QUEUE");
+      rootEl.appendChild(head);
+      var cls = MCW.state.classify(stateDoc);
+      if (cls.verifyQueue !== "ok") {
+        appendNote(rootEl, "no data"); // L2
+        return;
+      }
+      var res = MCW.state.items(stateDoc.verify_queue, "row_id");
+      if (res.valid.length === 0) appendNote(rootEl, "nothing to verify");
+      for (var i = 0; i < res.valid.length; i += 1) renderVerifyRow(rootEl, res.valid[i]);
+      if (res.skipped > 0) appendNote(rootEl, "skipped " + res.skipped + " malformed rows");
+    }
+
+    function renderVerifyRow(rootEl, row) {
+      var rowEl = el("div");
+      rowEl.classList.add("verify-row");
+      rowEl.setAttribute("data-row-id", row.row_id);
+
+      var cap = el("div");
+      cap.classList.add("verify-caption");
+      cap.setText(row.row_id + " · " + (typeof row.program === "string" ? row.program : ""));
+      rowEl.appendChild(cap);
+
+      // Banned-word-safe signals line (SPEC 3.2 verify row). The status word
+      // comes from the lane with the same row_id; miss -> age only.
+      var lane = MCW.state.laneByRowId(stateDoc, row.row_id);
+      var age = isInt(row.finished_ago_s) ? row.finished_ago_s : 0;
+      var ageTxt = age === 0 ? "0s (unknown)" : age + "s";
+      var sig = el("div");
+      sig.classList.add("verify-signals");
+      var statusWord =
+        lane !== null && typeof lane.status_parsed === "string" && lane.status_parsed !== ""
+          ? lane.status_parsed + "·"
+          : "";
+      sig.setText("signals: " + statusWord + ageTxt);
+      rowEl.appendChild(sig);
+
+      var master = el("div");
+      master.classList.add("verify-master");
+      var hint = typeof row.master_hint === "string" ? row.master_hint : "";
+      if (hint !== "") {
+        master.setText("master " + hint);
+      } else {
+        master.classList.add("dim");
+        master.setText("no master mapped");
+      }
+      rowEl.appendChild(master);
+
+      var actions = el("div");
+      actions.classList.add("verify-actions");
+      var copyBtn = el("button");
+      copyBtn.setAttribute("type", "button");
+      copyBtn.classList.add("copy-verify-btn");
+      copyBtn.setAttribute("data-row-id", row.row_id);
+      copyBtn.setText("COPY VERIFY");
+      var cmd = typeof row.verify_cmd === "string" ? row.verify_cmd : "";
+      actions.appendChild(copyBtn);
+      if (cmd === "") {
+        setDisabled(copyBtn, true);
+        var dn = el("span");
+        dn.classList.add("verify-cmd-note");
+        dn.classList.add("dim");
+        dn.setText("no verify_cmd (session not parsed)");
+        actions.appendChild(dn);
+      } else if (typeof copyBtn.addEventListener === "function") {
+        copyBtn.addEventListener("click", function () {
+          copyText(cmd, copyBtn);
+        });
+      }
+      var az = el("button");
+      az.setAttribute("type", "button");
+      az.classList.add("activate-btn");
+      az.setText("Bring ZCode forward");
+      actions.appendChild(az);
+      if (typeof az.addEventListener === "function") {
+        az.addEventListener("click", function () {
+          activateApp(az);
+        });
+      }
+      rowEl.appendChild(actions);
+
+      rootEl.appendChild(rowEl);
+    }
+
+    // "Bring ZCode forward": LIVE POST activate-app (fail-soft); QA note only.
+    function activateApp(anchor) {
+      if (deps.location.protocol === "file:" || liveToken() === null) {
+        transientNote("(live-only action)", anchor);
+        return Promise.resolve(false);
+      }
+      var post;
+      try {
+        post = deps.fetch("/" + liveToken() + "/activate-app", { method: "POST", body: "{}" });
+      } catch (e) {
+        transientNote("activate-app failed", anchor, true);
+        return Promise.resolve(false);
+      }
+      return Promise.resolve(post)
+        .then(function (res) {
+          if (!res.ok) {
+            transientNote("activate-app failed", anchor, true);
+            return false;
+          }
+          transientNote("ZCode raised", anchor);
+          return true;
+        })
+        .catch(function () {
+          transientNote("activate-app failed", anchor, true);
+          return false;
+        });
+    }
+
+    // ---- #panel-human ----
+
+    function renderCol2Human(rootEl) {
+      clearNode(rootEl);
+      var head = el("div");
+      head.classList.add("subpanel-head");
+      head.setText("HUMAN ACTIONS OWED");
+      rootEl.appendChild(head);
+      var cls = MCW.state.classify(stateDoc);
+      if (cls.humanActions !== "ok") {
+        appendNote(rootEl, "no data"); // L2
+        return;
+      }
+      var res = MCW.state.items(stateDoc.human_actions, "ref");
+      var skipped = res.skipped;
+      var merges = [];
+      for (var i = 0; i < res.valid.length; i += 1) {
+        if (res.valid[i].kind === "merge") merges.push(res.valid[i]);
+        else skipped += 1; // v1 emits only kind "merge"
+      }
+      if (merges.length === 0) appendNote(rootEl, "nothing owed");
+      for (var j = 0; j < merges.length; j += 1) renderMergeCard(rootEl, merges[j]);
+      if (skipped > 0) appendNote(rootEl, "skipped " + skipped + " malformed rows");
+    }
+
+    function renderMergeCard(rootEl, m) {
+      var card = el("div");
+      card.classList.add("merge-card");
+      card.setAttribute("data-row-id", m.ref);
+      var line = el("div");
+      line.classList.add("merge-line");
+
+      function spanText(clsName, text) {
+        var s = el("span");
+        if (clsName) s.classList.add(clsName);
+        s.setText(text);
+        line.appendChild(s);
+      }
+
+      // ONE inline row (SPEC 3.2): [<repo>] <badge> <title> — pipeline: … · ready
+      spanText("merge-repo", "[" + (typeof m.repo === "string" ? m.repo : "") + "]");
+      spanText(null, " ");
+      var host = typeof m.repo_host === "string" ? m.repo_host : "";
+      var ref = typeof m.ref === "string" ? m.ref : "";
+      spanText("mr-badge", host === "gitlab" || host === "github" ? ref : "MR " + ref);
+      spanText(null, " " + (typeof m.title === "string" ? m.title : "") + " — ");
+      var pipeline = typeof m.pipeline === "string" ? m.pipeline : "";
+      if (pipeline === "") {
+        spanText("pipeline-unknown", "pipeline: unknown");
+      } else {
+        spanText("merge-pipeline", "pipeline: " + pipeline);
+      }
+      spanText(null, " · ");
+      if (m.ready === true) spanText("ready-flag", "ready");
+      else spanText("not-ready", "NOT ready");
+
+      card.appendChild(line);
+      rootEl.appendChild(card);
+    }
+
+    // ---- copy adapter (SPEC 7.2) — the ONLY copy entry point ----
+
+    function copyText(text, labelOwner) {
+      var value = String(text);
+      return new Promise(function (resolve) {
+        var write = null;
+        try {
+          if (deps.clipboard && typeof deps.clipboard.writeText === "function") {
+            write = deps.clipboard.writeText;
+          }
+        } catch (e) {
+          write = null; // clipboard dep unavailable — degrade with a note
+        }
+        if (write === null) {
+          transientNote("copy failed", labelOwner, true);
+          resolve(false);
+          return;
+        }
+        Promise.resolve()
+          .then(function () {
+            return write.call(deps.clipboard, value);
+          })
+          .then(function () {
+            if (labelOwner !== null && labelOwner !== undefined && typeof labelOwner.setText === "function") {
+              var original = textOf(labelOwner);
+              labelOwner.setText("copied ✓");
+              deps.schedule(function () {
+                labelOwner.setText(original);
+              }, 1500);
+            }
+            resolve(true);
+          })
+          .catch(function () {
+            transientNote("copy failed", labelOwner, true);
+            resolve(false);
+          });
+      });
+    }
+
+    // ---- NEEDS ME NOW jump engine (SPEC 7.1) ----
+
+    // Page-side fallback ordering (pinned): verify rows by finished_ago_s DESC
+    // (oldest first), merge cards appended in served order; head wins.
+    function fallbackCandidates() {
+      var cands = [];
+      if (stateDoc !== null && Array.isArray(stateDoc.verify_queue)) {
+        var rows = MCW.state.items(stateDoc.verify_queue, "row_id").valid.slice();
+        rows.sort(function (a, b) {
+          var aa = isInt(a.finished_ago_s) ? a.finished_ago_s : 0;
+          var bb = isInt(b.finished_ago_s) ? b.finished_ago_s : 0;
+          return bb - aa;
+        });
+        for (var i = 0; i < rows.length; i += 1) cands.push({ type: "verify", row: rows[i] });
+      }
+      if (stateDoc !== null && Array.isArray(stateDoc.human_actions)) {
+        var acts = MCW.state.items(stateDoc.human_actions, "ref").valid;
+        for (var j = 0; j < acts.length; j += 1) {
+          if (acts[j].kind === "merge") cands.push({ type: "merge", row: acts[j] });
+        }
+      }
+      return cands;
+    }
+
+    // Jump target lookup, recomputed at click time from the current render.
+    // Verify rows win over lane chips (same row_id); merge cards key on ref.
+    function findRowNode(rowId) {
+      if (!doc) return null;
+      var roots = ["panel-verify", "panel-human", "col1-programs"];
+      for (var i = 0; i < roots.length; i += 1) {
+        var root = byId(roots[i]);
+        if (!root) continue;
+        var hit = findDataIn(root, "row-id", rowId);
+        if (hit) return hit;
+      }
+      return null;
+    }
+
+    function pageSideFallback(triggerNote) {
+      var out = { jumped: null, copied: null, note: triggerNote };
+      if (triggerNote !== null) transientNote(triggerNote, null);
+      var cands = fallbackCandidates();
+      if (cands.length === 0) {
+        out.note = triggerNote === null ? "nothing owed" : triggerNote;
+        if (out.note !== null) transientNote(out.note, null);
+        return Promise.resolve(out);
+      }
+      var head = cands[0];
+      var key = head.type === "verify" ? head.row.row_id : head.row.ref;
+      var node = findRowNode(key);
+      if (node === null) {
+        out.note = "no jump target on page";
+        transientNote(out.note, null);
+        return Promise.resolve(out);
+      }
+      jumpTo(node);
+      out.jumped = key;
+      if (head.type === "merge") return Promise.resolve(out); // jump ONLY — never a URL
+      var cmd = typeof head.row.verify_cmd === "string" ? head.row.verify_cmd : "";
+      if (cmd === "") return Promise.resolve(out);
+      return copyText(cmd, null).then(function (ok) {
+        out.copied = ok ? cmd : null;
+        if (!ok) out.note = "copy failed";
+        return out;
+      });
+    }
+
+    function needsMeNow() {
+      var counts = owedCounts();
+      if (counts.v === 0 && counts.m === 0) {
+        transientNote("nothing owed", null);
+        return Promise.resolve({ jumped: null, copied: null, note: "nothing owed" });
+      }
+      var live = deps.location.protocol !== "file:";
+      var token = live ? liveToken() : null;
+      if (!live || token === null) {
+        return pageSideFallback(null); // QA / no token: page-side directly
+      }
+      var post;
+      try {
+        post = deps.fetch("/" + token + "/needs-me-now", { method: "POST", body: "{}" });
+      } catch (e) {
+        return pageSideFallback("needs-me-now unreachable — page-side fallback");
+      }
+      return Promise.resolve(post)
+        .then(function (res) {
+          if (!res.ok) return pageSideFallback("needs-me-now refused — page-side fallback");
+          return res.json().then(function (body) {
+            var action = body !== null && typeof body === "object" ? body.action : null;
+            if (action === null || typeof action !== "object") {
+              transientNote("nothing owed", null);
+              return { jumped: null, copied: null, note: "nothing owed" };
+            }
+            var rid = typeof action.row_id === "string" ? action.row_id : "";
+            if (rid === "") return pageSideFallback("no row returned — page-side fallback");
+            var node = findRowNode(rid);
+            if (node === null) return pageSideFallback("returned row not on page — page-side fallback");
+            jumpTo(node); // server already copied verify_cmd / raised ZCode
+            return { jumped: rid, copied: null, note: null };
+          });
+        })
+        .catch(function () {
+          return pageSideFallback("needs-me-now unreachable — page-side fallback");
+        });
+    }
+
+    // ---- keyboard map dispatch (SPEC 7.4) ----
+
+    // The bootstrap's real-DOM keydown handler calls this; the selftest drives
+    // it directly. Refresh stays QA-only behind the pollOnce guard until T6
+    // wires the LIVE branch (T4 references no T6 symbol).
+    function dispatchKey(e) {
+      var action = MCW.keyboard.handleKeyEvent(e);
+      if (action === null) return null;
+      if (action === "needs-me-now") return needsMeNow();
+      if (action === "close-panel") {
+        closeLaunchPanel();
+        return action;
+      }
+      if (action === "refresh") {
+        if (typeof app.pollOnce === "function") return app.pollOnce();
+        if (qaCase !== null) mountQA(qaCase);
+        else render();
+        return action;
+      }
+      return null;
     }
 
     var app = {
@@ -597,6 +1095,9 @@
       openLaunchPanel: openLaunchPanel,
       closeLaunchPanel: closeLaunchPanel,
       qaArmCycle: qaArmCycle,
+      needsMeNow: needsMeNow,
+      copyText: copyText,
+      dispatchKey: dispatchKey,
     };
     // T3: QA armed-demo override state (null | "prompt-armed" | "goal-armed" |
     // "cleared"); seeded null, reset by every mountQA.
@@ -785,6 +1286,31 @@
     return Math.floor(n / 86400) + "d";
   }
 
+  // Lane lookup by row_id (T4: feeds the verify-row signals line and any other
+  // row_id->lane join). Tolerant of the ladder: skips malformed programs/lanes.
+  function laneByRowId(doc, rowId) {
+    if (!isPlainObject(doc) || typeof rowId !== "string" || rowId === "") return null;
+    var progs = items(doc.programs, null).valid;
+    for (var i = 0; i < progs.length; i += 1) {
+      var lanes = items(progs[i].lanes, "row_id").valid;
+      for (var j = 0; j < lanes.length; j += 1) {
+        if (lanes[j].row_id === rowId) return lanes[j];
+      }
+    }
+    return null;
+  }
+
+  // Keyboard map (SPEC 7.4) — pure and testable: n = NEEDS ME NOW, Esc = close
+  // launch panel, r = refresh; any modifier key disqualifies the event.
+  function handleKeyEvent(e) {
+    if (!e || typeof e.key !== "string") return null;
+    if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return null;
+    if (e.key === "n") return "needs-me-now";
+    if (e.key === "Escape" || e.key === "Esc") return "close-panel";
+    if (e.key === "r") return "refresh";
+    return null;
+  }
+
   MCW.state.KEYSETS = KEYSETS;
   MCW.state.extractMocks = extractMocks;
   MCW.state.selectCase = selectCase;
@@ -793,17 +1319,26 @@
   MCW.state.items = items;
   MCW.state.nullable = nullable;
   MCW.state.normalize = normalize;
+  MCW.state.laneByRowId = laneByRowId;
   MCW.util.humanizeAge = humanizeAge;
+  MCW.keyboard.handleKeyEvent = handleKeyEvent;
 
   function bootstrap() {
     var deps = createDeps({});
     var app = createApp(deps);
     if (deps.location.protocol === "file:") {
       // QA mode (SPEC 4.1): mount the embedded mock case picked by ?case=
-      // (Col 1 renders from the doc; cols 2-3 arrive with T4/T5).
+      // (Cols 1-2 render from the doc; col 3 arrives with T5).
       app.mountQA(caseNameFromSearch(deps.location.search));
     }
     // LIVE mode wiring (state polling) arrives with T6.
+    // Keyboard map (SPEC 7.4): document-level keydown -> app.dispatchKey.
+    // Real-DOM-only wiring; the fake DOM has no document.addEventListener.
+    if (deps.document && typeof deps.document.addEventListener === "function") {
+      deps.document.addEventListener("keydown", function (ev) {
+        app.dispatchKey(ev);
+      });
+    }
   }
 
   if (typeof module !== "undefined") module.exports = MCW;

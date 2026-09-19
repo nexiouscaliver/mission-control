@@ -102,7 +102,34 @@ function makeNode(tag) {
     // the recorder the jump assertions read (plan: node.scrollIntoView appends opts)
     node.scrollCalls.push(opts === undefined ? null : opts);
   };
+  // Event surface (T4, plan R5 extension): register/dispatch listeners so the
+  // selftest can drive real wiring (button clicks, lane keydown) on fake nodes.
+  node.listeners = {};
+  node.addEventListener = function (type, fn) {
+    (node.listeners[type] = node.listeners[type] || []).push(fn);
+  };
+  node.dispatch = function (type, ev) {
+    const e = ev || {};
+    if (typeof e.preventDefault !== "function") {
+      e.preventDefault = function () {
+        e.defaultPrevented = true;
+      };
+    }
+    for (const fn of (node.listeners[type] || []).slice()) fn(e);
+    return e;
+  };
+  node.click = function () {
+    return node.dispatch("click", {});
+  };
+  node.focus = function () {
+    node.focusCount = (node.focusCount || 0) + 1;
+  };
   return node;
+}
+
+// Drains the microtask queue (rejected/successful fake fetch chains settle).
+function flushMicrotasks() {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 function makeFakeDocument() {
@@ -1246,8 +1273,8 @@ test("AC-12: program cards render (name/objective/lane chips; no lanes; skipped 
 
   const mini = makeQaApp("minimal");
   assert.ok(
-    collectText(mini.dom.getElementById("col1-programs")).indexOf("no lanes") !== -1,
-    "zero programs -> panel-level no-lanes note (AC-22 minimal pins this)"
+    collectText(mini.dom.getElementById("col1-programs")).indexOf("no programs") !== -1,
+    "zero programs -> 'no programs' note ('no lanes' is reserved for lanes:[])"
   );
 
   // unnamed program header via an in-test doc
@@ -1494,6 +1521,521 @@ test("AC-34: LIVE LAUNCH design-off (disabled + note + zero fetch); QA demo cycl
   assert.strictEqual(live.app.openLaunchPanel("does-not-exist"), false, "unknown row is a no-op");
   // interim pending gate feeds the panel (superseded by T5's effectivePending)
   assert.equal(live.app._pendingStatus, "prompt-armed", "_pendingStatus from wall.pending.status");
+});
+
+// =====================================================================
+// Tier: T4 — Col 2 sub-panels + NEEDS ME NOW + copy adapter + keyboard
+//       (AC-8 / AC-14 / AC-15 / AC-17 / AC-18 / AC-19 / AC-21 full)
+// =====================================================================
+
+function stubClipboard(sink) {
+  return { writeText: (t) => { sink.push(t); return Promise.resolve(true); } };
+}
+
+function clockDeps(clock) {
+  return { now: clock, schedule: clock.schedule, cancel: clock.cancel };
+}
+
+// LIVE-mode simulator: QA-rendered panels + https location + scripted fetch.
+function makeLiveApp(steps) {
+  const clock = fakeClock(FIXED_NOW_MS);
+  const copied = [];
+  const fetchFn = fakeFetchScript(steps);
+  const made = makeQaApp("full", Object.assign(
+    {
+      fetch: fetchFn,
+      location: fakeLocation({ protocol: "https:", pathname: "/tok1/" }),
+      clipboard: stubClipboard(copied),
+    },
+    clockDeps(clock)
+  ));
+  made.clock = clock;
+  made.fetchFn = fetchFn;
+  made.copied = copied;
+  return made;
+}
+
+// Minimal conformance doc for in-test scenarios (only verify/human vary).
+function docWith(verify, human) {
+  return {
+    schema_version: 1,
+    server: { uptime_s: 0, generated_ts: 0, degraded: [], banner: null },
+    programs: [],
+    verify_queue: verify,
+    human_actions: human,
+    sessions_unmapped: [],
+    launch_pending: null,
+    wall: { pending: null },
+  };
+}
+
+test("T4-carry: lane Enter/Space open the launch panel; dialog semantics; LAUNCH label", () => {
+  const { app, dom } = makeQaApp("full");
+  const lane = findByData(dom.getElementById("col1-programs"), "data-row-id", "W2-L1");
+  assert.ok(lane, "forged lane renders");
+  const ev = lane.dispatch("keydown", { key: "Enter" });
+  assert.strictEqual(ev.defaultPrevented, true, "Enter keydown must be prevented (page scroll)");
+  let panel = dom.getElementById("launch-panel");
+  assert.ok(panel.classList.contains("open"), "Enter opens the launch panel");
+  assert.equal(panel.attrs.role, "dialog", "panel carries role=dialog");
+  assert.ok(
+    typeof panel.attrs["aria-label"] === "string" && panel.attrs["aria-label"] !== "",
+    "panel carries a non-empty aria-label"
+  );
+  app.closeLaunchPanel();
+  const ev2 = lane.dispatch("keydown", { key: " " });
+  assert.strictEqual(ev2.defaultPrevented, true, "Space keydown must be prevented");
+  assert.ok(dom.getElementById("launch-panel").classList.contains("open"), "Space opens too");
+  // focus management: close button focused on open, trigger lane refocused on close
+  const closeBtn = byClass(dom.getElementById("launch-panel"), "launch-close")[0];
+  assert.ok((closeBtn.focusCount || 0) >= 1, "close button focused on open");
+  app.closeLaunchPanel();
+  assert.ok(!dom.getElementById("launch-panel").classList.contains("open"));
+  assert.ok((lane.focusCount || 0) >= 1, "focus restored to the triggering lane");
+  // button label is LAUNCH (not LIVE LAUNCH); plain click still opens
+  app.openLaunchPanel("W2-L1");
+  const btn = byClass(dom.getElementById("launch-panel"), "launch-btn")[0];
+  assert.equal(collectText(btn), "LAUNCH", "label reads LAUNCH");
+  app.closeLaunchPanel();
+  lane.dispatch("click", {});
+  assert.ok(dom.getElementById("launch-panel").classList.contains("open"), "click opens");
+});
+
+test("T4-carry: 'no programs' vs 'no lanes' notes; whole_run 0 hides budget; IIFE dropped", () => {
+  const mini = makeQaApp("minimal");
+  const t = collectText(mini.dom.getElementById("col1-programs"));
+  assert.ok(t.indexOf("no programs") !== -1, "zero programs -> 'no programs' note");
+  assert.ok(t.indexOf("no lanes") === -1, "'no lanes' is reserved for lanes:[]");
+  const el2 = makeQaApp("empty-lanes");
+  assert.ok(
+    collectText(el2.dom.getElementById("col1-programs")).indexOf("no lanes") !== -1,
+    "lanes:[] -> 'no lanes' note"
+  );
+  // budget object with whole_run 0 renders no budget segment (no ' · budget 0')
+  const cust = makeQaApp("minimal");
+  cust.app.setDocument({
+    schema_version: 1,
+    server: { uptime_s: 0, generated_ts: 0, degraded: [], banner: null },
+    programs: [
+      {
+        program: "probe",
+        note_path: "",
+        note_mtime: 1789861800,
+        objective: "",
+        master: { session_id: null, title: null, last_active_ago_s: null },
+        lanes: [
+          {
+            row_id: "B-1",
+            repo: "r",
+            branch: null,
+            slug: null,
+            status_note: "",
+            status_parsed: "done",
+            manifest: null,
+            session: null,
+            goal: { state: "active", queue_tail: "", budget: { slug: "b1", whole_run: 0, gates: [] } },
+            signals: { pushed: null, mr: null },
+            suggest_verify: null,
+            stalled: null,
+          },
+        ],
+      },
+    ],
+    verify_queue: [],
+    human_actions: [],
+    sessions_unmapped: [],
+    launch_pending: null,
+    wall: { pending: null },
+  });
+  cust.app.render();
+  const goalLine = collectText(byClass(cust.dom.getElementById("col1-programs"), "goal-line")[0]);
+  assert.equal(goalLine, "goal active", "whole_run 0 -> no budget segment; got '" + goalLine + "'");
+  // the redundant capture IIFE in lane click wiring is gone
+  assert.ok(readWebFile("app.js").indexOf("(function (rowId)") === -1, "no capture IIFE in lane wiring");
+});
+
+test("AC-14: verify rows — signals line forms, master forms, COPY VERIFY wired + disabled case", async () => {
+  const { MCW, dom } = makeQaApp("full");
+  const pv = dom.getElementById("panel-verify");
+  assert.ok(collectText(pv).indexOf("VERIFY QUEUE") !== -1, "sub-panel header");
+  // pure lookup helper
+  const mocks = parseIndexMocks(readWebFile("index.html"));
+  const laneByRowId = MCW.state.laneByRowId;
+  assert.equal(typeof laneByRowId, "function", "MCW.state.laneByRowId exists");
+  assert.equal(laneByRowId(mocks.full, "W2-L3").status_parsed, "done");
+  assert.strictEqual(laneByRowId(mocks.full, "W2-L99"), null, "lookup miss -> null");
+  assert.strictEqual(laneByRowId(null, "W2-L3"), null, "null doc degrades");
+
+  const l3 = findByData(pv, "data-row-id", "W2-L3");
+  assert.ok(l3, "verify row carries data-row-id");
+  assert.ok(collectText(l3).indexOf("W2-L3 · secfix") !== -1, "caption row_id · program");
+  assert.ok(collectText(l3).indexOf("signals: done·250000s") !== -1, "signals: <status>·<age>s (banned-word-safe)");
+  assert.ok(collectText(l3).indexOf("master s-master-1") !== -1, "master <hint> when non-empty");
+  const l4 = findByData(pv, "data-row-id", "W2-L4");
+  assert.ok(collectText(l4).indexOf("signals: partial·2400s") !== -1, "status via row_id->lane lookup");
+  const l99 = findByData(pv, "data-row-id", "W2-L99");
+  assert.ok(collectText(l99).indexOf("signals: 600s") !== -1, "lookup miss drops the status word");
+  const mLine = byClass(l99, "verify-master")[0];
+  assert.ok(mLine.classList.contains("dim"), "no-master note is dim");
+  assert.ok(collectText(mLine).indexOf("no master mapped") !== -1, "no master mapped note");
+  const l1om = findByData(pv, "data-row-id", "W3-L1");
+  assert.ok(collectText(l1om).indexOf("signals: done·0s (unknown)") !== -1, "finished_ago_s 0 -> '0s (unknown)'");
+  const copyDisabled = byClass(l1om, "copy-verify-btn")[0];
+  assert.ok("disabled" in copyDisabled.attrs, "COPY VERIFY disabled when verify_cmd === ''");
+  assert.ok(
+    collectText(l1om).indexOf("no verify_cmd (session not parsed)") !== -1,
+    "disabled + note wording"
+  );
+
+  // wired copy: stub clipboard + fake clock; click the enabled COPY VERIFY
+  const copied = [];
+  const clock = fakeClock(FIXED_NOW_MS);
+  const wired = makeQaApp("full", Object.assign({ clipboard: stubClipboard(copied) }, clockDeps(clock)));
+  const pv2 = wired.dom.getElementById("panel-verify");
+  const row = findByData(pv2, "data-row-id", "W2-L3");
+  const btn = byClass(row, "copy-verify-btn")[0];
+  assert.ok(!("disabled" in btn.attrs), "enabled for non-empty verify_cmd");
+  assert.equal(collectText(btn), "COPY VERIFY");
+  btn.click();
+  await flushMicrotasks();
+  assert.deepEqual(copied, ["/mission-control-verify s-103"], "copies the exact verify_cmd");
+  assert.equal(collectText(btn), "copied ✓", "label swaps on success");
+  clock.advance(1499);
+  assert.equal(collectText(btn), "copied ✓", "swap holds ~1.5s");
+  clock.advance(1);
+  assert.equal(collectText(btn), "COPY VERIFY", "label restores");
+  // disabled button click is a no-op
+  byClass(findByData(pv2, "data-row-id", "W3-L1"), "copy-verify-btn")[0].click();
+  await flushMicrotasks();
+  assert.equal(copied.length, 1, "disabled button copies nothing");
+  // empty verify queue -> empty-state note
+  const mini = makeQaApp("minimal");
+  assert.ok(
+    collectText(mini.dom.getElementById("panel-verify")).indexOf("nothing to verify") !== -1,
+    "empty -> 'nothing to verify'"
+  );
+});
+
+test("AC-15: merge cards — one inline row, badges, ready/pipeline states, unknown kind skipped", () => {
+  const { dom } = makeQaApp("full");
+  const ph = dom.getElementById("panel-human");
+  assert.ok(collectText(ph).indexOf("HUMAN ACTIONS OWED") !== -1, "sub-panel header");
+  const c34 = findByData(ph, "data-row-id", "!34");
+  assert.ok(c34, "merge card carries data-row-id=<ref>");
+  assert.equal(
+    collectText(c34),
+    "[cleo] !34 secfix: join hardening — pipeline: green · ready",
+    "exact inline row: [repo] badge title — pipeline · ready"
+  );
+  assert.ok(byClass(c34, "merge-line")[0], "merge-line row element");
+  assert.equal(collectText(byClass(c34, "mr-badge")[0]), "!34", "gitlab ref badge verbatim");
+  const c56 = findByData(ph, "data-row-id", "#56");
+  assert.equal(
+    collectText(c56),
+    "[omniforge] #56 secfix: partial band fix — pipeline: unknown · NOT ready",
+    "ready:false -> NOT ready; empty pipeline -> pipeline: unknown"
+  );
+  assert.equal(collectText(byClass(c56, "mr-badge")[0]), "#56", "github ref badge verbatim");
+  assert.ok(byClass(c56, "pipeline-unknown")[0], "empty-pipeline span");
+  assert.ok(byClass(c56, "not-ready").length >= 1, "NOT ready span");
+  // single visual line is CSS-pinned; pipeline: unknown is stale-styled
+  const css = readWebFile("style.css");
+  const rules = parseCssRules(css);
+  const line = rules.find((r) => r.selector === ".merge-line" && r.media === "");
+  assert.ok(line, ".merge-line rule exists");
+  assert.equal(line.decls["flex-wrap"], "nowrap", "merge row never stacks");
+  const pu = rules.find((r) => r.selector === ".pipeline-unknown" && r.media === "");
+  assert.ok(pu && /var\(--stale\)/.test(pu.decls["color"]), "pipeline: unknown styled stale");
+  // unknown kind skipped + count note (in-test doc)
+  const skip = makeQaApp("minimal");
+  skip.app.setDocument(
+    docWith(
+      [],
+      [
+        { kind: "rebase", ref: "!50", repo: "r", repo_host: "gitlab", title: "t", pipeline: "p", ready: true },
+        { kind: "merge", ref: "!51", repo: "r", repo_host: "gitlab", title: "t2", pipeline: "p", ready: true },
+      ]
+    )
+  );
+  skip.app.render();
+  const ph2 = skip.dom.getElementById("panel-human");
+  assert.ok(!findByData(ph2, "data-row-id", "!50"), "unknown kind row skipped");
+  assert.ok(findByData(ph2, "data-row-id", "!51"), "kind merge renders");
+  assert.ok(collectText(ph2).indexOf("skipped 1 malformed rows") !== -1, "skip count note");
+  // empty -> nothing owed
+  const mini = makeQaApp("minimal");
+  assert.ok(collectText(mini.dom.getElementById("panel-human")).indexOf("nothing owed") !== -1);
+});
+
+test("AC-17: mix counter from fixture lengths (4v·2m); 0v·0m disabled + nothing owed title", () => {
+  const mocks = parseIndexMocks(readWebFile("index.html"));
+  const full = makeQaApp("full");
+  const counter = full.dom.getElementById("nmn-counter");
+  assert.ok(counter, "counter span exists");
+  const want = mocks.full.verify_queue.length + "v·" + mocks.full.human_actions.length + "m";
+  assert.equal(want, "4v·2m", "full fixture lengths");
+  assert.equal(collectText(counter), want, "counter text is <v>v·<m>m (U+00B7)");
+  assert.ok(!("disabled" in full.dom.getElementById("needs-me-now").attrs), "enabled when owed");
+  const mini = makeQaApp("minimal");
+  assert.equal(collectText(mini.dom.getElementById("nmn-counter")), "0v·0m");
+  const mbtn = mini.dom.getElementById("needs-me-now");
+  assert.ok("disabled" in mbtn.attrs, "0 owed -> disabled");
+  assert.equal(mbtn.attrs.title, "nothing owed", "disabled title");
+});
+
+test("AC-18 LIVE: needs-me-now POST shape; ok-jump / action-null / non-2xx / reject / target-miss", async () => {
+  // ok: jump + flash the returned row; the server already copied (page does not)
+  {
+    const s = makeLiveApp([{ status: 200, json: { ok: true, action: { row_id: "W2-L4" } } }]);
+    const r = await s.app.needsMeNow();
+    assert.deepEqual(
+      s.fetchFn.calls,
+      [{ url: "/tok1/needs-me-now", init: { method: "POST", body: "{}" } }],
+      "pinned POST call shape (T6's LIVE n-path depends on this)"
+    );
+    assert.equal(r.jumped, "W2-L4");
+    assert.strictEqual(r.copied, null, "server owns the copy on the LIVE ok path");
+    assert.strictEqual(r.note, null);
+    const target = findByData(s.dom.getElementById("panel-verify"), "data-row-id", "W2-L4");
+    assert.ok(target.classList.contains("flash"), "flash class on the jump target");
+    assert.deepEqual(target.scrollCalls, [{ block: "center" }], "scrollIntoView recorded on the right node");
+    s.clock.advance(1600);
+    assert.ok(!target.classList.contains("flash"), "flash clears after ~1.5s");
+  }
+  // action null: nothing owed note, no jump
+  {
+    const s = makeLiveApp([{ status: 200, json: { ok: true, action: null } }]);
+    const r = await s.app.needsMeNow();
+    assert.deepEqual(r, { jumped: null, copied: null, note: "nothing owed" });
+    assert.equal(byClass(s.dom.getElementById("panel-verify"), "flash").length, 0, "no jump");
+  }
+  // network rejection -> page-side fallback + inline note
+  {
+    const s = makeLiveApp([{ reject: "network" }]);
+    const r = await s.app.needsMeNow();
+    assert.equal(r.jumped, "W2-L3", "fallback head = oldest verify (finished_ago_s DESC)");
+    assert.equal(r.copied, "/mission-control-verify s-103", "page-side copy via the adapter");
+    assert.equal(r.note, "needs-me-now unreachable — page-side fallback");
+    assert.ok(
+      collectText(s.dom.getElementById("topbar")).indexOf("page-side fallback") !== -1,
+      "transient inline note near the button"
+    );
+  }
+  // resolved non-2xx JSON -> fallback + note
+  {
+    const s = makeLiveApp([{ status: 403, json: { ok: false } }]);
+    const r = await s.app.needsMeNow();
+    assert.equal(r.jumped, "W2-L3");
+    assert.equal(r.copied, "/mission-control-verify s-103");
+    assert.equal(r.note, "needs-me-now refused — page-side fallback");
+  }
+  // target-miss (row_id absent from the DOM) -> fallback + note
+  {
+    const s = makeLiveApp([{ status: 200, json: { ok: true, action: { row_id: "ghost" } } }]);
+    const r = await s.app.needsMeNow();
+    assert.equal(r.jumped, "W2-L3");
+    assert.equal(r.copied, "/mission-control-verify s-103");
+    assert.equal(r.note, "returned row not on page — page-side fallback");
+  }
+});
+
+test("AC-18 QA/fallback: pinned ordering, verify-head copy, merge-head jump-only, 0-owed no-op", async () => {
+  const clock = fakeClock(FIXED_NOW_MS);
+  // QA full: oldest verify wins + page-side copy, zero fetch
+  const copied = [];
+  const fetchQa = fakeFetchScript([]);
+  const qa = makeQaApp("full", Object.assign({ fetch: fetchQa, clipboard: stubClipboard(copied) }, clockDeps(clock)));
+  const r = await qa.app.needsMeNow();
+  assert.equal(r.jumped, "W2-L3", "finished_ago_s DESC head");
+  assert.equal(r.copied, "/mission-control-verify s-103");
+  assert.strictEqual(r.note, null, "pure QA fallback needs no note");
+  assert.equal(fetchQa.calls.length, 0, "QA never fetches");
+  const target = findByData(qa.dom.getElementById("panel-verify"), "data-row-id", "W2-L3");
+  assert.deepEqual(target.scrollCalls, [{ block: "center" }]);
+  assert.ok(target.classList.contains("flash"));
+
+  // ordering: older verify head wins
+  const ord = makeQaApp("full", Object.assign({ fetch: fetchQa, clipboard: stubClipboard([]) }, clockDeps(clock)));
+  ord.app.setDocument(
+    docWith(
+      [
+        { row_id: "V-1", program: "p", finished_ago_s: 100, master_hint: "", verify_cmd: "cmd-v1" },
+        { row_id: "V-2", program: "p", finished_ago_s: 900, master_hint: "", verify_cmd: "cmd-v2" },
+      ],
+      []
+    )
+  );
+  ord.app.render();
+  const r2 = await ord.app.needsMeNow();
+  assert.equal(r2.jumped, "V-2", "oldest verify wins");
+  assert.equal(r2.copied, "cmd-v2");
+
+  // no verifies: merges in served order, head wins; jump ONLY — never a URL
+  const mg = makeQaApp("full", Object.assign({ fetch: fetchQa, clipboard: stubClipboard([]) }, clockDeps(clock)));
+  mg.app.setDocument(
+    docWith(
+      [],
+      [
+        { kind: "merge", ref: "!10", repo: "r", repo_host: "gitlab", title: "first", pipeline: "p", ready: true },
+        { kind: "merge", ref: "!11", repo: "r", repo_host: "gitlab", title: "second", pipeline: "p", ready: true },
+      ]
+    )
+  );
+  mg.app.render();
+  const r3 = await mg.app.needsMeNow();
+  assert.equal(r3.jumped, "!10", "merges appended in served order, head wins");
+  assert.strictEqual(r3.copied, null, "merge action never copies");
+  assert.ok(!/https?:|www\./.test(collectText(mg.dom.body)), "no fabricated URL anywhere");
+  const mtarget = findByData(mg.dom.getElementById("panel-human"), "data-row-id", "!10");
+  assert.ok(mtarget.classList.contains("flash"), "merge jump flashes the card");
+  assert.deepEqual(mtarget.scrollCalls, [{ block: "center" }]);
+  assert.equal(fetchQa.calls.length, 0, "merge fallback issues no fetch");
+
+  // 0 owed: disabled + no-op
+  const fetchMini = fakeFetchScript([]);
+  const mini = makeQaApp("minimal", Object.assign({ fetch: fetchMini }, clockDeps(clock)));
+  assert.ok("disabled" in mini.dom.getElementById("needs-me-now").attrs);
+  const r4 = await mini.app.needsMeNow();
+  assert.deepEqual(r4, { jumped: null, copied: null, note: "nothing owed" });
+  assert.equal(fetchMini.calls.length, 0, "0 owed never fetches");
+});
+
+test("AC-18 degrade: clipboard absent in fake DOM — copy degrades with a note, never throws", async () => {
+  const clock = fakeClock(FIXED_NOW_MS);
+  // no clipboard override: the lazy default cannot reach navigator.clipboard under node
+  const { app, dom } = makeQaApp("full", clockDeps(clock));
+  const r = await app.needsMeNow();
+  assert.equal(r.jumped, "W2-L3", "jump still happens");
+  assert.strictEqual(r.copied, null, "copy fails");
+  assert.equal(r.note, "copy failed", "copy failure note");
+  assert.ok(byClass(dom.getElementById("topbar"), "inline-note--error").length >= 1, "inline error note");
+});
+
+test("AC-19: keyboard map pure + dispatch (n/Esc/r; modifiers ignored; r QA re-render, no pollOnce)", async () => {
+  const MCW = loadApp();
+  const hk = MCW.keyboard.handleKeyEvent;
+  assert.equal(typeof hk, "function", "MCW.keyboard.handleKeyEvent exists");
+  assert.equal(hk({ key: "n" }), "needs-me-now");
+  assert.equal(hk({ key: "Escape" }), "close-panel");
+  assert.equal(hk({ key: "Esc" }), "close-panel");
+  assert.equal(hk({ key: "r" }), "refresh");
+  for (const mod of ["ctrlKey", "altKey", "metaKey", "shiftKey"]) {
+    assert.strictEqual(hk({ key: "n", [mod]: true }), null, mod + " ignored");
+    assert.strictEqual(hk({ key: "Escape", [mod]: true }), null, mod + " ignored");
+    assert.strictEqual(hk({ key: "r", [mod]: true }), null, mod + " ignored");
+  }
+  assert.strictEqual(hk({ key: "x" }), null, "unmapped key");
+  assert.strictEqual(hk({}), null, "keyless event");
+  assert.strictEqual(hk(null), null, "null event");
+  const bareApp = MCW.createApp(MCW.createDeps({ document: makeFakeDocument() }));
+  assert.equal(typeof bareApp.dispatchKey, "function", "app.dispatchKey exists (bootstrap keydown target)");
+
+  // dispatch: Esc closes the open panel; n routes to needsMeNow; r QA re-render
+  const clock = fakeClock(FIXED_NOW_MS);
+  const fetchQa = fakeFetchScript([]);
+  const copied = [];
+  const { app, dom } = makeQaApp(
+    "full",
+    Object.assign({ fetch: fetchQa, clipboard: stubClipboard(copied) }, clockDeps(clock))
+  );
+  assert.equal(typeof app.pollOnce, "undefined", "pre-T6: pollOnce must not exist yet");
+  app.openLaunchPanel("W2-L1");
+  assert.ok(dom.getElementById("launch-panel").classList.contains("open"));
+  assert.equal(app.dispatchKey({ key: "Escape" }), "close-panel");
+  assert.ok(!dom.getElementById("launch-panel").classList.contains("open"), "Esc closes the panel");
+
+  const r = await app.dispatchKey({ key: "n" });
+  assert.equal(r.jumped, "W2-L3", "n = NEEDS ME NOW (same code path)");
+  assert.deepEqual(copied, ["/mission-control-verify s-103"]);
+  assert.equal(fetchQa.calls.length, 0);
+
+  const oldRow = findByData(dom.getElementById("panel-verify"), "data-row-id", "W2-L3");
+  assert.equal(app.dispatchKey({ key: "r" }), "refresh");
+  const newRow = findByData(dom.getElementById("panel-verify"), "data-row-id", "W2-L3");
+  assert.notEqual(oldRow, newRow, "r rebuilt the panels (QA re-render)");
+  assert.strictEqual(oldRow.parentNode, null, "old row detached by the re-render");
+  assert.equal(fetchQa.calls.length, 0, "r never fetches pre-T6 (pollOnce guard)");
+  assert.strictEqual(app.dispatchKey({ key: "n", ctrlKey: true }), null, "modifiers never dispatch");
+});
+
+test("AC-8: rejected POSTs (activate-app, needs-me-now) → inline note only, banner strip empty", async () => {
+  const s = makeLiveApp([{ reject: "network" }, { reject: "network" }]);
+  const strip = s.dom.getElementById("banner-strip");
+  assert.ok(strip, "banner strip exists in the shell");
+  // activate-app: click Bring ZCode forward on a verify row
+  const row = findByData(s.dom.getElementById("panel-verify"), "data-row-id", "W2-L3");
+  const az = byClass(row, "activate-btn")[0];
+  assert.ok(az, "Bring ZCode forward button renders");
+  az.click();
+  await flushMicrotasks();
+  assert.equal(s.fetchFn.calls[0].url, "/tok1/activate-app", "pinned activate-app URL");
+  assert.deepEqual(s.fetchFn.calls[0].init, { method: "POST", body: "{}" }, "pinned POST init");
+  assert.ok(
+    byClass(s.dom.getElementById("panel-verify"), "inline-note--error").length >= 1,
+    "inline failure note"
+  );
+  assert.equal(strip.children.length, 0, "a failed POST never writes a banner line");
+  assert.ok("hidden" in strip.attrs, "banner strip stays hidden");
+  // needs-me-now rejection: inline note, still no banner
+  const r = await s.app.needsMeNow();
+  assert.equal(s.fetchFn.calls[1].url, "/tok1/needs-me-now");
+  assert.ok(r.note !== null, "rejection leaves a note");
+  assert.equal(strip.children.length, 0, "still no banner");
+  // QA: the button is a visible no-op, zero fetch
+  const fetchQa = fakeFetchScript([]);
+  const qa = makeQaApp("full", Object.assign({ fetch: fetchQa }, clockDeps(fakeClock(FIXED_NOW_MS))));
+  const rowQ = findByData(qa.dom.getElementById("panel-verify"), "data-row-id", "W2-L3");
+  byClass(rowQ, "activate-btn")[0].click();
+  await flushMicrotasks();
+  assert.ok(
+    collectText(qa.dom.getElementById("panel-verify")).indexOf("(live-only action)") !== -1,
+    "QA transient note"
+  );
+  assert.equal(fetchQa.calls.length, 0, "QA activate issues no fetch");
+});
+
+test("AC-21 full: gitlab !N and github #N verbatim across chips AND merge cards", () => {
+  const { dom } = makeQaApp("full");
+  const chipBadges = byClass(dom.getElementById("col1-programs"), "mr-badge").map((b) => collectText(b).trim());
+  assert.ok(chipBadges.indexOf("!34") !== -1, "chip badge !34 verbatim");
+  assert.ok(chipBadges.indexOf("#56") !== -1, "chip badge #56 verbatim");
+  const mergeBadges = byClass(dom.getElementById("panel-human"), "mr-badge").map((b) => collectText(b).trim());
+  assert.ok(mergeBadges.indexOf("!34") !== -1, "merge badge !34 verbatim");
+  assert.ok(mergeBadges.indexOf("#56") !== -1, "merge badge #56 verbatim");
+});
+
+test("T4-copy: copyText two-arg contract — label swap + restore, null owner, failure note", async () => {
+  const clock = fakeClock(FIXED_NOW_MS);
+  const copied = [];
+  const { app, dom } = makeQaApp("full", Object.assign({ clipboard: stubClipboard(copied) }, clockDeps(clock)));
+  assert.equal(typeof app.copyText, "function", "app.copyText exists");
+  const btn = dom.createElement("button");
+  btn.setText("COPY VERIFY");
+  dom.body.appendChild(btn);
+  assert.equal(await app.copyText("hello world", btn), true, "resolves true on success");
+  assert.deepEqual(copied, ["hello world"]);
+  assert.equal(collectText(btn), "copied ✓", "label swaps on success");
+  clock.advance(1499);
+  assert.equal(collectText(btn), "copied ✓", "swap holds ~1.5s");
+  clock.advance(1);
+  assert.equal(collectText(btn), "COPY VERIFY", "label restores");
+  // labelOwner null = copy-without-label-swap (T5 session rows use this form)
+  await app.copyText("sess-1", null);
+  assert.deepEqual(copied, ["hello world", "sess-1"]);
+  assert.equal(collectText(dom.body).indexOf("copied ✓"), -1, "no label swap when owner is null");
+  // failure: transient inline note + false
+  const clock2 = fakeClock(FIXED_NOW_MS);
+  const fail = makeQaApp("full", Object.assign(
+    { clipboard: { writeText: () => Promise.reject(new Error("denied")) } },
+    clockDeps(clock2)
+  ));
+  const btn2 = fail.dom.createElement("button");
+  btn2.setText("COPY VERIFY");
+  fail.dom.body.appendChild(btn2);
+  assert.equal(await fail.app.copyText("nope", btn2), false, "resolves false on failure");
+  assert.equal(collectText(btn2), "COPY VERIFY", "no swap on failure");
+  const notes = byClass(fail.dom.body, "inline-note--error");
+  assert.ok(notes.length >= 1 && collectText(notes[0]).indexOf("copy failed") !== -1, "copy failed note");
 });
 
 // ---------------- runner ----------------
