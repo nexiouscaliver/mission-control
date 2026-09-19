@@ -10,7 +10,8 @@ import os
 
 from mc_wall.tower import ProgramConfig, RepoConfig, TowerConfig, collect_state
 from mc_wall.tower import contract, notes
-from tests.tower.conftest import mcwallt_make_note, mcwallt_make_session_db
+from tests.tower.conftest import (mcwallt_clock, mcwallt_make_db, mcwallt_make_note,
+                                  mcwallt_make_session_db)
 
 HEADER_A_LINE = "| id | wave | lane | repo/branch | slug | base | session/MR artifacts | status |"
 SEP_LINE = "|---|---|---|---|---|---|---|---|"
@@ -271,4 +272,66 @@ def test_mcwallt_notes_undecodable_note(tmp_path):
                                                "last_active_ago_s": None},
                                     "lanes": []}
     assert state["server"]["degraded"] == ["notes degraded: mcwallt-prog"]
+    contract.assert_shape(state)
+
+
+def test_mcwallt_lane_session_variants(tmp_path):
+    # AC-SESSION-1: the sess_ shorthand PREFIX join. The 1-hit db ids below are
+    # the verified live-evidence ids (read-only queries, 2026-09-19); the note
+    # tokens are the vault shorthands (first 8 hex).
+    NOW = 2_000_000_000.0
+
+    def ms(age):
+        return int((NOW - age) * 1000)
+
+    db = mcwallt_make_db(tmp_path, sessions=[
+        # no title key -> NULL title: title_pending True
+        {"id": "sess_3f3f3f3f-3f3f-43f3-83f3-3f3f3f3f3f3f", "directory": "/mcwallt/l0",
+         "time_updated": ms(30), "time_created": ms(30)},
+        # empty-string title: title_pending True
+        {"id": "sess_9a690ab2-cde8-4e9a-bc4e-177fcc68545f", "title": "",
+         "directory": "/mcwallt/l1", "time_updated": ms(120), "time_created": ms(120)},
+        # set title: title_pending False
+        {"id": "sess_2243e9a1-ef61-4f35-a05a-a4cd422abec6",
+         "title": "MC - Managing multiple mission control sessions workflow",
+         "directory": "/mcwallt/l2", "time_updated": ms(80), "time_created": ms(80)},
+        # the ambiguous pair: one token prefix shared by two ids
+        {"id": "sess_abcabcab-1111-4111-8111-111111111111", "title": "amb-1",
+         "directory": "/mcwallt/l4a", "time_updated": ms(60), "time_created": ms(60)},
+        {"id": "sess_abcabcab-2222-4222-8222-222222222222", "title": "amb-2",
+         "directory": "/mcwallt/l4b", "time_updated": ms(60), "time_created": ms(60)},
+    ])
+    note = mcwallt_make_note(tmp_path, "mcwallt_lane_variants.md", [
+        HEADER_A_LINE, SEP_LINE,
+        "| W3-L0 | W3 | L0 | n/a | n/a | n/a | sess_3f3f3f3f | forged |",  # 1 hit, NULL title
+        "| W3-L1 | W3 | L1 | n/a | n/a | n/a | sess_9a690ab2 | forged |",  # 1 hit, empty title
+        "| W3-L2 | W3 | L2 | n/a | n/a | n/a | sess_2243e9a1 | forged |",  # 1 hit, set title
+        "| W3-L3 | W3 | L3 | n/a | n/a | n/a | sess_00000000 | forged |",  # 0 hits
+        "| W3-L4 | W3 | L4 | n/a | n/a | n/a | sess_abcabcab | forged |",  # 2 hits
+        "| W3-L5 | W3 | L5 | n/a | n/a | n/a | n/a | forged |",            # no token
+    ])
+    cfg = TowerConfig(db_path=db,
+                      programs=(ProgramConfig(program="mcwallt-prog", tag="t",
+                                              note_glob=note),),
+                      now_s=mcwallt_clock(NOW))
+    state = collect_state(cfg)
+    lanes = {l["row_id"]: l for l in state["programs"][0]["lanes"]}
+    # Exactly-1 prefix hits -> full session object, id = FULL db id.
+    assert lanes["W3-L0"]["session"] == {"id": "sess_3f3f3f3f-3f3f-43f3-83f3-3f3f3f3f3f3f",
+                                         "title": None, "title_pending": True,
+                                         "dir": "/mcwallt/l0", "last_active_ago_s": 30}
+    assert lanes["W3-L1"]["session"] == {"id": "sess_9a690ab2-cde8-4e9a-bc4e-177fcc68545f",
+                                         "title": "", "title_pending": True,
+                                         "dir": "/mcwallt/l1", "last_active_ago_s": 120}
+    assert lanes["W3-L2"]["session"] == {"id": "sess_2243e9a1-ef61-4f35-a05a-a4cd422abec6",
+                                         "title": "MC - Managing multiple mission control sessions workflow",
+                                         "title_pending": False,
+                                         "dir": "/mcwallt/l2", "last_active_ago_s": 80}
+    # 0 hits -> session null, NO degraded entry (the row may predate launch).
+    assert lanes["W3-L3"]["session"] is None
+    # 2 hits -> session null + entry 9 for the raw token.
+    assert lanes["W3-L4"]["session"] is None
+    # No token parsed -> session null.
+    assert lanes["W3-L5"]["session"] is None
+    assert state["server"]["degraded"] == ["join ambiguous session: sess_abcabcab"]
     contract.assert_shape(state)

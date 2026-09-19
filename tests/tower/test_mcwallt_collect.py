@@ -1,11 +1,12 @@
-"""T-1/T-2 collect tests: AC-API-1, AC-LAUNCH-1/2, AC-FAIL-4, AC-FAIL-8, DegradedLog ordering."""
+"""T-1/T-2/T-3 collect tests: AC-API-1, AC-LAUNCH-1/2, AC-FAIL-1/4/8, DegradedLog ordering."""
 
 import os
 
 from mc_wall.tower import NetCache, ProgramConfig, RepoConfig, TowerConfig, collect_state
 from mc_wall.tower import contract
 from mc_wall.tower.collect import DegradedLog
-from tests.tower.conftest import mcwallt_make_note, mcwallt_make_session_db
+from tests.tower.conftest import (mcwallt_clock, mcwallt_make_db, mcwallt_make_note,
+                                  mcwallt_make_session_db, mcwallt_tag_input)
 
 
 def test_mcwallt_api_signature_and_defaults(tmp_path):
@@ -176,3 +177,52 @@ def test_mcwallt_degraded_log_order_unit():
         "join ambiguous session: tok",                   # entry 9
         "launch state degraded: pending-launch unreadable",  # entry 8 last
     ]
+
+
+def test_mcwallt_failopen_db_missing(tmp_path):
+    # AC-FAIL-1 (healthy path asserted FIRST per plan F2 — these assertions
+    # fail under always-null sessions, keeping this test genuinely red before
+    # the T-3 reader exists).
+    NOW = 2_000_000_000.0
+
+    def ms(age):
+        return int((NOW - age) * 1000)
+
+    master_id = "sess_11111111-1111-4111-8111-111111111111"
+    lane_id = "sess_9a690ab2-cde8-4e9a-bc4e-177fcc68545f"
+    unmapped_id = "sess_22222222-2222-4222-8222-222222222222"
+    db = mcwallt_make_db(tmp_path, sessions=[
+        {"id": master_id, "title": "mcwallt master", "directory": "/mcwallt/m",
+         "time_updated": ms(100), "time_created": ms(100)},
+        {"id": lane_id, "title": "mcwallt lane", "directory": "/mcwallt/l",
+         "time_updated": ms(200), "time_created": ms(200)},
+        {"id": unmapped_id, "title": "mcwallt unmapped", "directory": "/mcwallt/u",
+         "time_updated": ms(50), "time_created": ms(50)},
+    ], inputs=[mcwallt_tag_input(master_id, ["secfix-master"], ms(100))])
+    note = mcwallt_make_note(tmp_path, "mcwallt_note.md", [
+        "| id | wave | lane | repo/branch | slug | base | session/MR artifacts | status |",
+        "|---|---|---|---|---|---|---|---|",
+        "| W4-L1 | W4 | L1 | n/a | n/a | n/a | sess_9a690ab2 | forged |",
+    ])
+    cfg = TowerConfig(db_path=db,
+                      programs=(ProgramConfig(program="secfix", tag="secfix",
+                                              note_glob=note,
+                                              master_tag="secfix-master"),),
+                      now_s=mcwallt_clock(NOW))
+    # Healthy: the note-joined lane HAS its session, master populated, unmapped
+    # non-empty.
+    state = collect_state(cfg)
+    assert state["programs"][0]["lanes"][0]["session"]["id"] == lane_id
+    assert state["programs"][0]["master"]["session_id"] == master_id
+    assert len(state["sessions_unmapped"]) == 1
+    assert state["server"]["degraded"] == []
+
+    # THEN move the db away and re-collect over the SAME config.
+    os.rename(db, str(tmp_path / "mcwallt_moved_away.db"))
+    state2 = collect_state(cfg)
+    assert all(lane["session"] is None
+               for prog in state2["programs"] for lane in prog["lanes"])
+    assert all(prog["master"] == contract.null_master() for prog in state2["programs"])
+    assert state2["sessions_unmapped"] == []
+    assert state2["server"]["degraded"][0] == "tracking degraded: session store unreadable"
+    contract.assert_shape(state2)  # doc intact, no exception
