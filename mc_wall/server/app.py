@@ -259,15 +259,19 @@ class WallRequestHandler(http.server.BaseHTTPRequestHandler):
         if length < 0 or length > MAX_BODY_BYTES:  # negative would block the read
             self._post_error(413, "payload-too-large", "body exceeds 65536 bytes")
             return
-        # c) Content-Type must be application/json (parameters tolerated).
+        # c) Content-Type media type must be exactly application/json
+        #    (parameters after ";" are tolerated; "application/jsonx" is not).
         content_type = self.headers.get("Content-Type")
-        if content_type is None or not content_type.strip().lower().startswith(
-            "application/json"
-        ):
+        media_type = (
+            content_type.strip().lower().split(";")[0].strip()
+            if content_type is not None
+            else ""
+        )
+        if media_type != "application/json":
             self._post_error(415, "unsupported-media-type", "application/json required")
             return
-        # d) Capped read + JSON-dict check.
-        raw = self.rfile.read(min(length, MAX_BODY_BYTES))
+        # d) Read + JSON-dict check (length is already bounded by the 413 guard).
+        raw = self.rfile.read(length)
         try:
             body = json.loads(raw.decode("utf-8"))
         except ValueError:  # JSONDecodeError / UnicodeDecodeError
@@ -409,7 +413,7 @@ class WallRequestHandler(http.server.BaseHTTPRequestHandler):
                 return rec
             return None
 
-        after = store.update(_promote) or store.snapshot() or rec
+        after = store.update(_promote) or store.snapshot()
         # 6. Audit — summary() triple only; never token/prompt/repo/lane tag.
         if ctx.logger is not None:
             ctx.logger.info(
@@ -423,7 +427,7 @@ class WallRequestHandler(http.server.BaseHTTPRequestHandler):
             json.dumps(
                 {"ok": True, "pending": after.to_dict(), "warnings": warnings}
             ).encode("utf-8"),
-            "application/json",
+            "application/json; charset=utf-8",
         )
 
     def _cancel(self, body: dict) -> None:
@@ -493,11 +497,15 @@ class WallRequestHandler(http.server.BaseHTTPRequestHandler):
             runner.open_url(deep_link(rec.repo_root))
         except Exception as exc:
             warnings.append(f"side-effect-failed:{type(exc).__name__}")
-        # Clear the flag; launch_click_ms and status stay untouched.
+        # Clear the flag; launch_click_ms and status stay untouched. IN-PLACE:
+        # dataclasses.replace would break object identity, so a re-copy racing
+        # launch's side-effect window orphans the record in prompt-armed
+        # (launch's _promote identity guard would never fire again).
         def _unflag(current: typing.Optional[PendingRecord]):
-            if current is None:
-                return None
-            return dataclasses.replace(current, flag=None)
+            if current is None or current.status in TERMINAL_STATUSES:
+                return None  # vanished or terminal (cancel raced us) — never rewrite
+            current.flag = None
+            return current
 
         after = store.update(_unflag) or store.snapshot()
         if ctx.logger is not None:
@@ -540,7 +548,15 @@ class WallRequestHandler(http.server.BaseHTTPRequestHandler):
                 "repo_root": row.get(state_contract.ROW_REPO_ROOT_KEY, ""),
             },
         )
-        ctx.runner.copy(block)
+        # Side effects wrapped: a dead runner must yield a JSON 500, never a
+        # dropped connection (these routes have no warnings contract).
+        try:
+            ctx.runner.copy(block)
+        except Exception as exc:
+            self._post_error(
+                500, "internal-error", f"side-effect-failed:{type(exc).__name__}"
+            )
+            return
         if ctx.logger is not None:
             ctx.logger.info("audit action=copy-goal row_id=%s", row_id)
         self._reply(
@@ -552,7 +568,13 @@ class WallRequestHandler(http.server.BaseHTTPRequestHandler):
     def _activate_app(self, body: dict) -> None:
         ctx = self.server.ctx
         # App activation only — never a URL (the deep link is launch's job).
-        ctx.runner.open_app("ZCode")
+        try:
+            ctx.runner.open_app("ZCode")
+        except Exception as exc:
+            self._post_error(
+                500, "internal-error", f"side-effect-failed:{type(exc).__name__}"
+            )
+            return
         if ctx.logger is not None:
             ctx.logger.info("audit action=activate-app")
         self._reply(
@@ -570,10 +592,19 @@ class WallRequestHandler(http.server.BaseHTTPRequestHandler):
             return
         action = choose_owed_action(state, ctx.logger)
         if action is not None and action.get("copied") is not None:
-            # verify -> copy AND raise the app; merge -> copy only.
-            ctx.runner.copy(action["copied"])
-            if action.get("kind") == "verify":
-                ctx.runner.open_app("ZCode")
+            # verify -> copy AND raise the app; merge -> copy only. Wrapped:
+            # a dead runner yields a JSON 500, never a dropped connection.
+            try:
+                ctx.runner.copy(action["copied"])
+                if action.get("kind") == "verify":
+                    ctx.runner.open_app("ZCode")
+            except Exception as exc:
+                self._post_error(
+                    500,
+                    "internal-error",
+                    f"side-effect-failed:{type(exc).__name__}",
+                )
+                return
         if ctx.logger is not None:
             ctx.logger.info(
                 "audit action=needs-me-now row_id=%s",

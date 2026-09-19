@@ -50,7 +50,7 @@ def _payload_text(payload_json: typing.Any) -> typing.Optional[str]:
     """JSON-text confirmation: payload must be a dict carrying a str "text"."""
     try:
         payload = json.loads(payload_json)
-    except ValueError:
+    except (ValueError, TypeError):  # TypeError: SQL NULL payload (json.loads(None))
         return None
     if not isinstance(payload, dict):
         return None
@@ -93,6 +93,8 @@ class Matcher:
     ) -> typing.List[typing.Dict[str, typing.Any]]:
         """Confirmed matches only: LIKE is a PREFILTER, the JSON-text check is
         the authority (a tag under any other payload key never matches)."""
+        if not tag:
+            return []  # "" would make the LIKE pattern "%%" match every row
         rows = self._query(
             _CANDIDATE_SQL,
             {

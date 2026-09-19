@@ -19,7 +19,8 @@ def load(name: str) -> str:
 def render(template_text: str, mapping: dict) -> str:
     text = template_text
     for key, value in mapping.items():
-        text = text.replace("{" + str(key) + "}", str(value))
+        # None renders as "" — a literal "None" must never reach a clipboard block.
+        text = text.replace("{" + str(key) + "}", "" if value is None else str(value))
     return text
 
 
