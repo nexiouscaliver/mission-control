@@ -1,10 +1,12 @@
-"""T-1 collect tests: AC-API-1, AC-LAUNCH-1/2, AC-FAIL-8, DegradedLog ordering."""
+"""T-1/T-2 collect tests: AC-API-1, AC-LAUNCH-1/2, AC-FAIL-4, AC-FAIL-8, DegradedLog ordering."""
 
+import os
 import sqlite3
 
-from mc_wall.tower import NetCache, TowerConfig, collect_state
+from mc_wall.tower import NetCache, ProgramConfig, RepoConfig, TowerConfig, collect_state
 from mc_wall.tower import contract
 from mc_wall.tower.collect import DegradedLog
+from tests.tower.conftest import mcwallt_make_note
 
 
 def mcwallt_make_session_db(tmp_path, name="mcwallt_sessions.db"):
@@ -91,6 +93,65 @@ def test_mcwallt_failopen_launch_binary(tmp_path):
     assert "internal error: collect_state failed" not in state["server"]["degraded"]
     assert state["server"]["uptime_s"] == 0
     assert state["programs"] == []
+
+
+def test_mcwallt_failopen_notes_missing(tmp_path):
+    db_path = mcwallt_make_session_db(tmp_path)
+
+    # 0 glob matches: program row zeroed per §4.2 + entry 3 exactly.
+    cfg = TowerConfig(db_path=db_path,
+                      programs=(ProgramConfig(program="secfix", tag="secfix",
+                                              note_glob=str(tmp_path / "mcwallt_none_*.md")),))
+    state = collect_state(cfg)
+    assert state["programs"][0] == {"program": "secfix", "note_path": "", "note_mtime": 0,
+                                    "objective": "",
+                                    "master": {"session_id": None, "title": None,
+                                               "last_active_ago_s": None},
+                                    "lanes": []}
+    assert state["server"]["degraded"] == ["notes degraded: secfix"]
+
+    # >1 matches: newest mtime wins (§4.2), no degradation.
+    newest = tmp_path / "mcwallt_newest"
+    newest.mkdir()
+    header = "| id | wave | lane | repo/branch | slug | base | session/MR artifacts | status |"
+    sep = "|---|---|---|---|---|---|---|---|"
+    old_p = mcwallt_make_note(newest, "mcwallt_note_old.md", [
+        header, sep, "| W9-L1 | W9 | L1 | n/a | mcwallt-old | n/a | sess_00000000 | done |"])
+    repo_cell = str(tmp_path / "mcwallt_repo_dir")
+    new_p = mcwallt_make_note(newest, "mcwallt_note_new.md", [
+        "objective: ship the wall", header, sep,
+        f"| W9-L1 | W9 | L1 | {repo_cell} loop/mcwall-tower | mcwallt-new | n/a | merge !5; sess_00000001 | launched |"])
+    os.utime(old_p, (1000.0, 1000.0))
+    os.utime(new_p, (2000.0, 2000.0))
+    cfg2 = TowerConfig(
+        db_path=db_path,
+        programs=(ProgramConfig(program="secfix", tag="secfix",
+                                note_glob=str(newest / "mcwallt_note_*.md")),),
+        repos=(RepoConfig(name="mcwallt-repo", path=repo_cell, host="gitlab"),),
+    )
+    state2 = collect_state(cfg2)
+    prog = state2["programs"][0]
+    assert prog["note_mtime"] == 2000
+    assert prog["note_path"].endswith("mcwallt_note_new.md")
+    assert prog["objective"] == "ship the wall"
+    assert [l["row_id"] for l in prog["lanes"]] == ["W9-L1"]
+    assert prog["lanes"][0]["slug"] == "mcwallt-new"
+    assert prog["lanes"][0]["repo"] == "mcwallt-repo"  # token -> configured repo name
+    assert state2["server"]["degraded"] == []
+
+    # mtime tie: lexicographically smallest path wins.
+    tie = tmp_path / "mcwallt_tie"
+    tie.mkdir()
+    a_p = mcwallt_make_note(tie, "mcwallt_a.md", ["objective: from a", header, sep,
+                                                  "| W9-L1 | W9 | L1 | n/a | a | n/a | n/a | done |"])
+    b_p = mcwallt_make_note(tie, "mcwallt_b.md", ["objective: from b", header, sep,
+                                                  "| W9-L1 | W9 | L1 | n/a | b | n/a | n/a | done |"])
+    os.utime(a_p, (3000.0, 3000.0))
+    os.utime(b_p, (3000.0, 3000.0))
+    cfg3 = TowerConfig(db_path=db_path,
+                       programs=(ProgramConfig(program="secfix", tag="secfix",
+                                               note_glob=str(tie / "mcwallt_*.md")),))
+    assert collect_state(cfg3)["programs"][0]["objective"] == "from a"
 
 
 def test_mcwallt_degraded_log_order_unit():
