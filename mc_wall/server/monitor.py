@@ -6,8 +6,10 @@ FIRST (notification only, the record never auto-clears), then tag matching
 grouped by session with realpath confirmation, the ambiguity flag (an action-
 free holding state), the single-match sequence (linkage -> goal resolve with
 defer-on-ANY-failure -> copy -> notify -> ONE goal-armed patch), and the
-conflict flag. The loop NEVER dies: any tick exception is a single ERROR line
-carrying the exception type name only.
+conflict flag. A goal-armed record then runs the duplicate-paste re-copy, the
+one-shot canary nudge, confirmation (cleared), and always persists the
+last_eval_ms cursor. The loop NEVER dies: any tick exception is a single
+ERROR line carrying the exception type name only.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from mc_wall.server.matcher import Matcher
 from mc_wall.server.pending import (
     FLAG_AMBIGUOUS,
     STATUS_AWAIT_BIRTH,
+    STATUS_CLEARED,
     STATUS_FLAGGED,
     STATUS_GOAL_ARMED,
     TERMINAL_STATUSES,
@@ -33,6 +36,7 @@ from mc_wall.server.pending import (
 from mc_wall.server.runner import Runner
 
 ADVISORY_120S_MS = 120_000
+CANARY_MS = 60_000
 
 
 def _epoch_ms() -> int:
@@ -83,9 +87,70 @@ class HandshakeMonitor(threading.Thread):
             self._goal_armed_tick(rec)
 
     def _goal_armed_tick(self, rec: PendingRecord) -> None:
-        # T10 (duplicate paste / canary / confirmation); a goal-armed record
-        # simply holds until then — its last_eval_ms cursor is already persisted.
-        return
+        """Pinned order per tick, all against the SAME rec snapshot:
+        (1) duplicate paste -> goal re-copy (no status change), (2) one-shot
+        canary nudge, (3) confirmation -> cleared, (4) always persist the
+        last_eval_ms cursor so a restart never re-fires."""
+        now = self.clock()
+        if self.matcher is None:
+            return
+        matched = rec.matched_session_id
+        if matched is None or rec.matched_at_ms is None:
+            # No linkage to evaluate (never produced by the match sequence);
+            # keep the persisted cursor moving anyway.
+            self._patch(STATUS_GOAL_ARMED, last_eval_ms=now)
+            return
+        # 1. Duplicate paste: the prompt (sha-pinned) landed in the matched
+        #    session again after the last evaluation cursor -> re-copy the
+        #    goal. NO status change: the user may still be mid-handshake.
+        if self.matcher.find_duplicate_paste(
+            matched, rec.prompt_sha256, rec.last_eval_ms or 0
+        ):
+            try:
+                row = state_contract.find_row(self.collect_state(), rec.row_id)
+                goal_text = row.get(state_contract.GOAL_TEXT_KEY, "")
+            except Exception as exc:  # UnknownRowError or any tower failure
+                # Defer WITHOUT advancing last_eval_ms: the duplicate must be
+                # re-detected and re-copied once the tower is reachable again
+                # (same defer rule as the match sequence).
+                self.logger.info("goal-recopy-deferred reason=%s", type(exc).__name__)
+                return
+            self.runner.copy(
+                templates.render_file(
+                    "goal_block.txt",
+                    {
+                        "goal_text": goal_text,
+                        "lane_tag": rec.lane_tag,
+                        "repo_root": rec.repo_root,
+                    },
+                )
+            )
+            self.runner.notify(*templates.notification("goal-re-copied", {}))
+        # 2. + 3. share one has_target_since probe: the canary fires only when
+        #    NO target is seen, the confirmation only when one is — the two
+        #    conditions are exclusive against this tick's snapshot.
+        target_seen = self.matcher.has_target_since(matched, rec.matched_at_ms)
+        if target_seen:
+            # Confirmation: the /goal landed in the matched session -> the
+            # slot is freed and the wall indicator drops.
+            self._patch(
+                STATUS_GOAL_ARMED, status=STATUS_CLEARED, reason="goal-confirmed"
+            )
+            self.logger.info(
+                "handshake status=cleared reason=goal-confirmed row_id=%s",
+                rec.row_id,
+            )
+            return
+        patches: typing.Dict[str, typing.Any] = {}
+        if not rec.canary_fired and now - rec.matched_at_ms >= CANARY_MS:
+            # target_seen is False here (the canary's has_target_since guard).
+            self.runner.notify(
+                *templates.notification("canary-nudge", {"lane_tag": rec.lane_tag})
+            )
+            patches["canary_fired"] = True
+        # 4. Always persist the cursor (merged with the canary flag): whatever
+        #    this tick evaluated must never be re-evaluated after a restart.
+        self._patch(STATUS_GOAL_ARMED, last_eval_ms=now, **patches)
 
     def _patch(
         self, status_expected: str, **kw: typing.Any
