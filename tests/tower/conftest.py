@@ -10,6 +10,7 @@ seconds-magnitude values.
 
 import json
 import sqlite3
+import threading
 import time
 
 import pytest
@@ -58,6 +59,39 @@ def mcwallt_clock(start: float, step: float = 0.0):
     t = {"v": start}
     def _now(): t["v"] += step; return t["v"]
     return _now
+
+
+def mcwallt_fake_cmd(handler):
+    """Fake ``netcache._run_cmd`` seam (T-5): handler(argv, cwd) -> (rc, stdout);
+    counts spawns thread-safely so tests can pin single-flight/backoff with
+    ZERO real subprocess/git/glab/gh execution. Returns (fake, calls) where
+    calls = {"n": <spawn count>, "argv": [argv, ...]}."""
+    calls = {"n": 0, "argv": []}
+    lock = threading.Lock()
+
+    def _fake(argv, cwd, timeout_s=10.0):
+        with lock:
+            calls["n"] += 1
+            calls["argv"].append(list(argv))
+        rc, out = handler(argv, cwd)
+        return rc, out, ""
+
+    return _fake, calls
+
+
+def mcwallt_settable_clock(start: float):
+    """(now_s, set_now) — a controllable injected clock for pinning the EXACT
+    TTL/backoff boundaries on both sides (age == ttl is fresh, age > ttl
+    expired; elapsed == wait may attempt, elapsed < wait short-circuits)."""
+    box = {"v": float(start)}
+
+    def _now():
+        return box["v"]
+
+    def _set(v):
+        box["v"] = float(v)
+
+    return _now, _set
 
 
 def mcwallt_make_goal_tree(tmp_path, slug="mcwallt-slug", queue_lines=None, budget=None,
