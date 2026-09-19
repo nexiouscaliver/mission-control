@@ -10,7 +10,7 @@ import os
 import sqlite3
 
 from mc_wall.tower import ProgramConfig, RepoConfig, TowerConfig, collect_state
-from mc_wall.tower import contract
+from mc_wall.tower import contract, notes
 from tests.tower.conftest import mcwallt_make_note
 
 HEADER_A_LINE = "| id | wave | lane | repo/branch | slug | base | session/MR artifacts | status |"
@@ -43,7 +43,6 @@ def mcwallt_min_session_db(tmp_path, name="mcwallt_sessions.db"):
 
 
 def test_mcwallt_notes_status_vocab_all():
-    from mc_wall.tower import notes
     vocab = ["forged", "launched", "done", "partial", "failed", "parked", "in-flight"]
     rows = [f"| W1-V{i} | W1 | L1 | n/a | n/a | n/a | sess_0000000{i} | {s} |"
             for i, s in enumerate(vocab)]
@@ -55,7 +54,6 @@ def test_mcwallt_notes_status_vocab_all():
 
 
 def test_mcwallt_notes_status_unparsed_preserved():
-    from mc_wall.tower import notes
     # Unknown status: raw preserved verbatim incl. spaces, parsed UNPARSED.
     assert notes.parse_status("  done-ish  ") == ("  done-ish  ", "UNPARSED")
     # Empty cell: UNPARSED with the empty raw kept.
@@ -70,7 +68,6 @@ def test_mcwallt_notes_status_unparsed_preserved():
 
 
 def test_mcwallt_notes_corpus_rows(tmp_path):
-    from mc_wall.tower import notes
     va = notes.VARIANT_A
     # The four §4.2-quoted corpus cells, verbatim:
     assert notes.parse_repo_branch("~/.zcode/mc-wall loop/mcwall-tower", va) == \
@@ -120,7 +117,6 @@ def test_mcwallt_notes_corpus_rows(tmp_path):
 
 
 def test_mcwallt_notes_header_variants(tmp_path):
-    from mc_wall.tower import notes
     # Variant A, case/whitespace-varied spelling.
     parsed_a = notes.parse_note("\n".join([
         "| ID | Wave | Lane | Repo/Branch | SLUG | base | Session/MR Artifacts | Status |",
@@ -172,7 +168,6 @@ def test_mcwallt_notes_header_variants(tmp_path):
 
 
 def test_mcwallt_notes_malformed_rows_skipped(tmp_path):
-    from mc_wall.tower import notes
     text = "\n".join([
         HEADER_A_LINE,
         SEP_LINE,
@@ -196,7 +191,6 @@ def test_mcwallt_notes_malformed_rows_skipped(tmp_path):
 
 
 def test_mcwallt_notes_slug_null_rules():
-    from mc_wall.tower import notes
     parsed = notes.parse_note("\n".join([
         HEADER_A_LINE, SEP_LINE,
         "| W1-A | W1 | L | n/a | n/a | n/a | sess_00000000 | done |",

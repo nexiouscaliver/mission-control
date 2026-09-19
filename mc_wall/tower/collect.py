@@ -1,16 +1,17 @@
-"""collect_state orchestration skeleton (T-1).
+"""collect_state orchestration (T-1 skeleton; notes wired in T-2).
 
 Owns the document assembly, the §4 degraded-entry ordering machinery
 (``DegradedLog``), the pending-launch read (§4.5), a minimal session-store
-probe, and the no-escape boundary. The per-source readers (notes, zcode db,
-goals, signals) land in T-2..T-5 and plug into ``_collect``.
+probe, the §4.2 vault-note read, and the no-escape boundary. The remaining
+per-source readers (zcode db, goals, signals) land in T-3..T-5 and plug into
+``_collect``.
 """
 
-import glob
 import json
+import os
 import sqlite3
 
-from . import contract
+from . import contract, notes
 from .config import TowerConfig
 
 
@@ -34,13 +35,13 @@ def _collect(config: TowerConfig) -> dict:
     if not _db_ok(config.db_path):  # T-1 minimal probe; T-3 replaces with the real reader
         log.add((0, 0, 0, ""), "tracking degraded: session store unreadable")
     programs = []
+    # Internal lane stash (plan T-2 Produces, F3): T-3 (session joins), T-5
+    # (signals), and T-6 (derivations) consume these records; the contract lane
+    # dict itself never exposes sess_token.
+    lane_records = []  # (program_idx, lane_dict, sess_token, repo_name_or_None,
+                       #  repo_idx_or_None, branch, status_parsed)
     for i, p in enumerate(config.programs):
-        # T-1: zero rows regardless; T-2 wires the note parser in (find_note +
-        # parse_note populate note_path/mtime/objective/lanes and entry 10).
-        if not glob.glob(p.note_glob):
-            log.add((1, i, 0, ""), f"notes degraded: {p.program}")
-        programs.append({"program": p.program, "note_path": "", "note_mtime": 0,
-                         "objective": "", "master": contract.null_master(), "lanes": []})
+        programs.append(_read_program_notes(config, p, i, log, lane_records))
     return {"schema_version": 1,
             "server": {"uptime_s": int(config.uptime_s_provider()),
                        "generated_ts": int(now),
@@ -51,6 +52,58 @@ def _collect(config: TowerConfig) -> dict:
             "human_actions": [],
             "sessions_unmapped": [],
             "launch_pending": launch}
+
+
+def _read_program_notes(config: TowerConfig, program, idx: int,
+                        log: "DegradedLog", lane_records: list) -> dict:
+    """§4.2 note read for one program: resolve the glob (0 matches -> entry 3 +
+    zero row; >1 -> newest mtime, no degradation), parse, build the program row
+    and its lanes in note order. A present-but-headerless note keeps
+    path/mtime/objective with lanes=[] + entry 3. Entry 10 fires once per
+    program when any row was skipped."""
+    zero = {"program": program.program, "note_path": "", "note_mtime": 0,
+            "objective": "", "master": contract.null_master(), "lanes": []}
+    path = notes.find_note(program.note_glob)
+    if path is None:
+        log.add((1, idx, 0, ""), f"notes degraded: {program.program}")
+        return zero
+    try:
+        with open(path, "rb") as fh:          # bytes + decode: an undecodable
+            text = fh.read().decode("utf-8")  # note is an entry-3 failure, not an escape
+        mtime = int(os.stat(path).st_mtime)
+    except (OSError, UnicodeDecodeError):
+        log.add((1, idx, 0, ""), f"notes degraded: {program.program}")
+        return zero
+    parsed = notes.parse_note(text)
+    if not parsed.header_found:
+        log.add((1, idx, 0, ""), f"notes degraded: {program.program}")
+    lanes = []
+    for row in parsed.rows:
+        repo_name, repo_idx = _map_repo(config.repos, row.repo_token)
+        lane = contract.lane_shell(row.row_id, repo_name, row.branch, row.slug,
+                                   row.status_note, row.status_parsed)
+        lanes.append(lane)
+        lane_records.append((idx, lane, row.sess_token, repo_name, repo_idx,
+                             row.branch, row.status_parsed))
+    if parsed.skipped >= 1:
+        log.add((1, idx, 1, ""), f"note rows skipped: {parsed.skipped}")
+    return {"program": program.program, "note_path": os.path.abspath(path),
+            "note_mtime": mtime, "objective": parsed.objective,
+            "master": contract.null_master(), "lanes": lanes}
+
+
+def _map_repo(repos, repo_token: str | None) -> tuple[str | None, int | None]:
+    """repo token -> (RepoConfig.name, index); (None, None) when no token or no
+    match (the lane then follows the unconfigured-repo rule §4.3). The token is
+    expanded (~) HERE — collect owns config — and matched against RepoConfig.path
+    or RepoConfig.name."""
+    if repo_token is None:
+        return (None, None)
+    expanded = os.path.expanduser(repo_token)
+    for idx, rc in enumerate(repos):
+        if rc.path == expanded or rc.name == expanded:
+            return (rc.name, idx)
+    return (None, None)
 
 
 def _db_ok(path: str) -> bool:
