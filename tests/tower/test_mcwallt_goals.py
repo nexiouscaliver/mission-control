@@ -92,6 +92,20 @@ def test_mcwallt_goal_states(tmp_path):
     assert _lane0(state)["goal"]["state"] == "absent"
     assert state["server"]["degraded"] == []
 
+    # (e) unreadable (permission-denied) INDEX.md -> no archive match ->
+    # absent, never a raise; readable again -> archived (the pair pins that
+    # the chmod, not the content, made the difference).
+    with open(os.path.join(idx, "INDEX.md"), "w", encoding="utf-8") as fh:
+        fh.write("archived: mcwallt-slug\n")
+    os.chmod(os.path.join(idx, "INDEX.md"), 0o000)
+    try:
+        state = _goal_collect(tmp_path, repo, rows=rows)
+        assert _lane0(state)["goal"]["state"] == "absent"
+    finally:
+        os.chmod(os.path.join(idx, "INDEX.md"), 0o644)
+    state = _goal_collect(tmp_path, repo, rows=rows)
+    assert _lane0(state)["goal"]["state"] == "archived"
+
 
 def test_mcwallt_goal_queue_tail(tmp_path):
     # "l1\n\nl2  \n\n": last NON-EMPTY line wins.
@@ -127,6 +141,12 @@ def test_mcwallt_goal_budget_passthrough(tmp_path):
     state = _goal_collect(tmp_path, repo)
     assert _lane0(state)["goal"]["budget"] == {}
     assert state["server"]["degraded"] == []
+
+    # Valid JSON but not a dict -> {} (the budget shape is object-or-empty).
+    with open(os.path.join(gd, "budget.json"), "w", encoding="utf-8") as fh:
+        fh.write("[1]")
+    state = _goal_collect(tmp_path, repo)
+    assert _lane0(state)["goal"]["budget"] == {}
 
 
 def test_mcwallt_goal_manifest_defaults(tmp_path):

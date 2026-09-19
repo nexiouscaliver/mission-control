@@ -36,6 +36,9 @@ def goal_state(root: str, slug: str | None) -> tuple[str, str | None]:
     INDEX.md is simply no archive match."""
     if slug is None:
         return ("absent", None)
+    # v1 trust boundary: slug is trusted vault-note input; an untrusted slug
+    # (e.g. "../escape") could traverse out of the goals root — sanitize here
+    # if the source ever changes.
     gd = os.path.join(root, slug)
     if os.path.isdir(gd):
         return ("active", gd)

@@ -9,6 +9,7 @@ live vault). FX1 is the real 7-cells-under-8-columns skip case.
 import os
 
 from mc_wall.tower import ProgramConfig, RepoConfig, TowerConfig, collect_state
+from mc_wall.tower import collect as collect_module
 from mc_wall.tower import contract, notes
 from tests.tower.conftest import (mcwallt_clock, mcwallt_make_db, mcwallt_make_note,
                                   mcwallt_make_session_db)
@@ -54,7 +55,7 @@ def test_mcwallt_notes_status_unparsed_preserved():
     assert parsed.rows[0].status_parsed == "UNPARSED"
 
 
-def test_mcwallt_notes_corpus_rows(tmp_path):
+def test_mcwallt_notes_corpus_rows(tmp_path, monkeypatch):
     va = notes.VARIANT_A
     # The four §4.2-quoted corpus cells, verbatim:
     assert notes.parse_repo_branch("~/.zcode/mc-wall loop/mcwall-tower", va) == \
@@ -86,6 +87,11 @@ def test_mcwallt_notes_corpus_rows(tmp_path):
         ("~/.zcode/mc-wall", "main", None, "sess_2243e9a1", "done")
 
     # Collect-level: one entry-10 line, repo token mapped to the configured name.
+    # Hermeticity (review B1): the verbatim corpus cell maps these lanes to the
+    # REAL ~/.zcode/mc-wall repo, and T-4's goal wiring would read that repo's
+    # live goal tree. Goal wiring is T-4's subject (covered fixture-only by
+    # test_mcwallt_goals.py); this test owns the note parse — neutralize it.
+    monkeypatch.setattr(collect_module, "_read_goals", lambda *args: None)
     note = mcwallt_make_note(tmp_path, "mcwallt_corpus.md", CORPUS_NOTE.splitlines())
     cfg = TowerConfig(
         db_path=mcwallt_make_session_db(tmp_path),
