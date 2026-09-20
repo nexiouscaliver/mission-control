@@ -149,5 +149,7 @@ def test_mcwallf_joined_needs_me_now_merge(tmp_path, monkeypatch):
         action = r.json()["action"]
         assert action is not None and action["kind"] == "merge"
         assert action["row_id"] == MR_REF
-        assert action["mr_link"] == MR_REF
+        # mr_link == ref is the ADAPTED entry's copy payload (unit-tested in
+        # test_mcwalls_state_contract.py::test_mcwallf_owed_actions_adapts_merge_row);
+        # the UNCHANGED consumer (choose_owed_action) surfaces it as "copied".
         assert action["copied"] == MR_REF
