@@ -994,7 +994,7 @@
       }
       var post;
       try {
-        post = deps.fetch("/" + liveToken() + "/activate-app", { method: "POST", body: "{}" });
+        post = deps.fetch("/" + liveToken() + "/activate-app", { method: "POST", body: "{}", headers: { "Content-Type": "application/json" } });
       } catch (e) {
         transientNote("activate-app failed", anchor, true);
         return Promise.resolve(false);
@@ -1195,7 +1195,7 @@
       }
       var post;
       try {
-        post = deps.fetch("/" + token + "/needs-me-now", { method: "POST", body: "{}" });
+        post = deps.fetch("/" + token + "/needs-me-now", { method: "POST", body: "{}", headers: { "Content-Type": "application/json" } });
       } catch (e) {
         return pageSideFallback("needs-me-now unreachable — page-side fallback");
       }
@@ -1523,7 +1523,7 @@
       }
       var post;
       try {
-        post = deps.fetch("/" + token + "/launch/" + kind, { method: "POST", body: "{}" });
+        post = deps.fetch("/" + token + "/launch/" + kind, { method: "POST", body: "{}", headers: { "Content-Type": "application/json" } });
       } catch (e) {
         transientNote(kind + " failed", anchor, true);
         return Promise.resolve(false);

@@ -1804,7 +1804,7 @@ test("AC-18 LIVE: needs-me-now POST shape; ok-jump / action-null / non-2xx / rej
     const r = await s.app.needsMeNow();
     assert.deepEqual(
       s.fetchFn.calls,
-      [{ url: "/tok1/needs-me-now", init: { method: "POST", body: "{}" } }],
+      [{ url: "/tok1/needs-me-now", init: { method: "POST", body: "{}", headers: { "Content-Type": "application/json" } } }],
       "pinned POST call shape (T6's LIVE n-path depends on this)"
     );
     assert.equal(r.jumped, "W2-L4");
@@ -1987,7 +1987,7 @@ test("AC-8: rejected POSTs (activate-app, needs-me-now) → inline note only, ba
   az.click();
   await flushMicrotasks();
   assert.equal(s.fetchFn.calls[0].url, "/tok1/activate-app", "pinned activate-app URL");
-  assert.deepEqual(s.fetchFn.calls[0].init, { method: "POST", body: "{}" }, "pinned POST init");
+  assert.deepEqual(s.fetchFn.calls[0].init, { method: "POST", body: "{}", headers: { "Content-Type": "application/json" } }, "pinned POST init");
   assert.ok(
     byClass(s.dom.getElementById("panel-verify"), "inline-note--error").length >= 1,
     "inline failure note"
@@ -2490,8 +2490,8 @@ test("AC-33: armed LIVE operator escape — visibility matrix + POST shapes + fa
     assert.deepEqual(
       s.fetchFn.calls,
       [
-        { url: "/tok1/launch/re-copy", init: { method: "POST", body: "{}" } },
-        { url: "/tok1/launch/cancel", init: { method: "POST", body: "{}" } },
+        { url: "/tok1/launch/re-copy", init: { method: "POST", body: "{}", headers: { "Content-Type": "application/json" } } },
+        { url: "/tok1/launch/cancel", init: { method: "POST", body: "{}", headers: { "Content-Type": "application/json" } } },
       ],
       "pinned armed POST shapes (SPEC 4.3)"
     );
