@@ -11,21 +11,14 @@ pinned URL; ``mc-wall install`` owns token creation).
 from __future__ import annotations
 
 import json
-import os
 import pathlib
 
-from mc_wall.server.app import ServerConfig, run_server
+from mc_wall.server.app import ServerConfig, resolve_wall_home, run_server
+from mc_wall.server.tower_boot import tower_config_from_wall
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]  # same resolution as templates_dir()
 
 DEFAULT_PORT = 8765
-
-
-def resolve_wall_home() -> pathlib.Path:
-    env = os.environ.get("MC_WALL_HOME")
-    if env:
-        return pathlib.Path(env)
-    return pathlib.Path.home() / ".zcode" / "mc-wall"
 
 
 def load_config(wall_home: pathlib.Path) -> ServerConfig:
@@ -45,9 +38,10 @@ def load_config(wall_home: pathlib.Path) -> ServerConfig:
         raise ValueError(
             "mc-wall: %s has an invalid port — run `mc-wall install`" % path
         )
-    # MC_WALL_DB exists so tests can pin a nonexistent tmp path; prod targets
-    # the live session db (the monitor is read-only against it).
-    db_env = os.environ.get("MC_WALL_DB")
+    try:
+        tower = tower_config_from_wall(data, pathlib.Path(wall_home))
+    except ValueError:
+        raise  # already ONE clear line naming wall.json
     return ServerConfig(
         token=data["token"],
         port=port,
@@ -55,11 +49,8 @@ def load_config(wall_home: pathlib.Path) -> ServerConfig:
         web_dir=REPO_ROOT / "web",
         state_dir=pathlib.Path(wall_home) / "state",
         log_dir=pathlib.Path(wall_home) / "logs",
-        db_path=(
-            pathlib.Path(db_env)
-            if db_env
-            else pathlib.Path.home() / ".zcode" / "cli" / "db" / "db.sqlite"
-        ),
+        db_path=pathlib.Path(tower.db_path),  # same resolution the tower uses
+        tower_config=tower,
     )
 
 

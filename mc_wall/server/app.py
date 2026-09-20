@@ -45,7 +45,8 @@ ASSET_TYPES = {
 _ASSET_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
-def _default_wall_home() -> pathlib.Path:
+def resolve_wall_home() -> pathlib.Path:
+    """The ONE canonical wall-home resolver: MC_WALL_HOME > ~/.zcode/mc-wall."""
     env = os.environ.get("MC_WALL_HOME")
     if env:
         return pathlib.Path(env)
@@ -60,10 +61,17 @@ def _epoch_ms() -> int:
     return int(time.time() * 1000)
 
 
+_default_tower_config_box: list = []  # F-1: built at most once per process
+
+
 def _default_collect_state() -> dict:
     from mc_wall.tower import collect_state  # LAZY — the only place mc_wall.tower is named in L2
 
-    return collect_state()
+    if not _default_tower_config_box:
+        from mc_wall.server.tower_boot import build_tower_config
+
+        _default_tower_config_box.append(build_tower_config(resolve_wall_home()))
+    return collect_state(_default_tower_config_box[0])
 
 
 def deep_link(repo_root: str) -> str:
@@ -132,6 +140,7 @@ class ServerConfig:
     monitor_interval_s: float = 2.0
     clock: typing.Optional[typing.Callable[[], int]] = None  # epoch-ms
     start_monitor: bool = True
+    tower_config: typing.Any = None  # F-1: built once at boot; run_server injects collect over it
 
 
 @dataclasses.dataclass
@@ -822,7 +831,7 @@ def create_server(
     start_monitor: bool = True,
 ) -> WallServer:
     web_path = pathlib.Path(web_dir) if web_dir is not None else _repo_root() / "web"
-    log_path = pathlib.Path(log_dir) if log_dir is not None else _default_wall_home() / "logs"
+    log_path = pathlib.Path(log_dir) if log_dir is not None else resolve_wall_home() / "logs"
     allowed = (
         frozenset(allow_hosts) if allow_hosts is not None else auth.ALLOWED_HOSTS
     )
@@ -881,11 +890,17 @@ def create_server(
 
 
 def run_server(cfg: ServerConfig) -> int:
-    wall_home = cfg.wall_home if cfg.wall_home is not None else _default_wall_home()
+    wall_home = cfg.wall_home if cfg.wall_home is not None else resolve_wall_home()
     web_dir = cfg.web_dir if cfg.web_dir is not None else _repo_root() / "web"
     log_dir = cfg.log_dir if cfg.log_dir is not None else wall_home / "logs"
     state_dir = cfg.state_dir if cfg.state_dir is not None else wall_home / "state"
     logger = setup_logging(log_dir, cfg.token)
+    collect_state_fn = None
+    if cfg.tower_config is not None:
+        from mc_wall.tower import collect_state as _collect_state  # lazy (L2 discipline)
+
+        _tower_cfg = cfg.tower_config
+        collect_state_fn = lambda: _collect_state(_tower_cfg)  # noqa: E731
     try:
         server = create_server(
             cfg.token,
@@ -893,6 +908,7 @@ def run_server(cfg: ServerConfig) -> int:
             web_dir=web_dir,
             log_dir=log_dir,
             state_dir=state_dir,
+            collect_state=collect_state_fn,
             runner=cfg.runner if cfg.runner is not None else SubprocessRunner(),
             db_path=cfg.db_path,
             monitor_interval_s=cfg.monitor_interval_s,
