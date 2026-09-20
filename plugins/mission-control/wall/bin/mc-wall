@@ -3,7 +3,7 @@
 
 Syntax floor: Python 3.9 (AC-58) — no f-strings, no annotations. Stdlib only
 plus the mc_wall package itself (AC-57). The two roots are separately
-injectable so tests never touch the real ~/.zcode or ~/Library/LaunchAgents:
+injectable so tests never touch the real ~/.mc-wall or ~/Library/LaunchAgents:
 wall_home owns wall.json/state/logs/run.sh/chrome-profile; home owns the
 plist, ALWAYS at <home>/Library/LaunchAgents/ai.zcode.mc-wall.plist.
 """
@@ -31,7 +31,7 @@ def default_wall_home():
     env = os.environ.get("MC_WALL_HOME")
     if env:
         return env
-    return os.path.join(os.path.expanduser("~"), ".zcode", "mc-wall")
+    return os.path.join(os.path.expanduser("~"), ".mc-wall")
 
 
 def _templates():

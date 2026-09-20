@@ -3,7 +3,7 @@
 Invoked ``.venv/bin/python -m scripts.mc_status`` from the repo root. CLI:
 ``--config PATH`` and ``--db PATH``. Resolution order — config: flag >
 $MC_WALL_TOWER_CONFIG > <wall_home>/tower.json where wall_home is
-$MC_WALL_HOME or ~/.zcode/mc-wall; db: flag > $MC_WALL_DB >
+$MC_WALL_HOME or ~/.mc-wall; db: flag > $MC_WALL_DB >
 ~/.zcode/cli/db/db.sqlite (the same default as mc_wall/server/__main__).
 
 Exit matrix: a MISSING config prints one degrade line and still renders the
@@ -33,14 +33,16 @@ def _wall_home():
     env = os.environ.get("MC_WALL_HOME")
     if env:
         return env
-    return os.path.join(os.path.expanduser("~"), ".zcode", "mc-wall")
+    return os.path.join(os.path.expanduser("~"), ".mc-wall")
 
 
 def _default_db():
     env = os.environ.get("MC_WALL_DB")
     if env:
         return env
-    return os.path.join(os.path.expanduser("~"), ".zcode", "cli", "db", "db.sqlite")
+    # The canonical zcode-store default, via the session-store adapter seam.
+    import mc_wall.tower.session_store as session_store
+    return session_store.default_db_path("zcode")
 
 
 def _resolve_config_path(flag):
@@ -63,13 +65,15 @@ def _load_config_body(path):
 
 
 def _build_tower_config(data, db_path):
-    from mc_wall.tower import ProgramConfig, RepoConfig, TowerConfig
+    from mc_wall.tower import ProgramConfig, RepoConfig, TowerConfig, session_store
 
     programs = tuple(ProgramConfig(**p) for p in (data.get("programs") or ()))
     repos = tuple(RepoConfig(**r) for r in (data.get("repos") or ()))
+    store = data.get("store") or "zcode"
+    session_store.resolve(store)  # name check: unknown -> the degrade path
     # Default providers + the dataclass's fresh NetCache: no injection here —
     # this CLI renders the live tower exactly as the wall server would.
-    return TowerConfig(db_path=db_path, programs=programs, repos=repos,
+    return TowerConfig(db_path=db_path, programs=programs, store=store, repos=repos,
                        pending_launch_path=data.get("pending_launch_path"))
 
 

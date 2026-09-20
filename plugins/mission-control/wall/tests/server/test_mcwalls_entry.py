@@ -350,3 +350,16 @@ def test_mcwallf_server_stays_alive_past_10s():
         _stdout, stderr = proc.communicate(timeout=10)
     assert proc.returncode == 0
     assert b"Traceback" not in stderr
+
+
+def test_wall_home_default_is_harness_neutral(monkeypatch, tmp_path):
+    # v1.5.0: resolve_wall_home() defaults to ~/.mc-wall (env override intact).
+    import pathlib
+
+    monkeypatch.delenv("MC_WALL_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    from mc_wall.server.app import resolve_wall_home
+
+    assert resolve_wall_home() == pathlib.Path(tmp_path) / ".mc-wall"
+    monkeypatch.setenv("MC_WALL_HOME", str(tmp_path / "elsewhere"))
+    assert resolve_wall_home() == pathlib.Path(tmp_path / "elsewhere")

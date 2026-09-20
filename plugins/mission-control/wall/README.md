@@ -11,26 +11,49 @@ static page at
 `http://127.0.0.1:8765/<token>/`, where `<token>` is a secret generated at
 install time.
 
+### Session-store adapter (extension point)
+
+The tower reaches the harness session database through ONE seam:
+`mc_wall/tower/session_store.py` (config: `TowerConfig.store`, default
+`"zcode"`, plus the db path). The boot accepts a `"store"` key in wall.json
+and fails loudly on an unknown name; the sole registered adapter today is
+`zcode_db` (read-only sqlite over `~/.zcode/cli/db/db.sqlite`). A **Claude
+Code adapter is an extension point — NOT IMPLEMENTED**: it would be a new
+registry entry plus a module implementing the zcode_db surface
+(`open_db_ro`, `check_schema`, `probe_factor`, `cutoff_stored`,
+`to_seconds`, `scan_tags`, `session_rows`, `lane_join`, `unmapped_rows`,
+`check_drift`, `DEGRADED_*`), with its own canonical default db path. No
+such module exists in this repo; nothing under `mc_wall/` names a Claude
+Code path.
+
 ## 2. Install
 
-From the canonical checkout:
+The Wall lives in this repo (`plugins/mission-control/wall/`) and always runs
+FROM THE CLONE — `bin/mc-wall` resolves the clone root as the parent of its
+own location and bakes it into run.sh's `PYTHONPATH` and the LaunchAgent.
+Its data home is harness-neutral: `~/.mc-wall` (`MC_WALL_HOME` overrides),
+created on first install. From the canonical checkout:
 
-    /Users/shahil/.zcode/mc-wall/bin/mc-wall install
+    /Users/shahil/work/regenai-repo/mission-control/plugins/mission-control/wall/bin/mc-wall install
 
 One run writes everything, then starts the agent:
 
-- `~/.zcode/mc-wall/wall.json` — token + port 8765, chmod 600. The token is
+- `~/.mc-wall/wall.json` — token + port 8765, chmod 600. The token is
   preserved across reinstalls (a silent rotation would break the pinned URL);
   `--regenerate-token` forces a new one.
-- `~/.zcode/mc-wall/state/` and `~/.zcode/mc-wall/logs/` directories.
-- `~/.zcode/mc-wall/run.sh` (chmod 700) — pins
+- `~/.mc-wall/state/` and `~/.mc-wall/logs/` directories.
+- `~/.mc-wall/run.sh` (chmod 700) — pins
   `PATH=/opt/homebrew/bin:/usr/bin:/bin`, pins `PYTHONPATH` to this checkout,
   and execs `python3.14 -m mc_wall.server`.
 - `~/Library/LaunchAgents/ai.zcode.mc-wall.plist` — label `ai.zcode.mc-wall`,
   KeepAlive Crashed-only, RunAtLoad, launchd stdout/stderr under
-  `~/.zcode/mc-wall/logs/`.
+  `~/.mc-wall/logs/`.
 - The mc-status skill, copied to `~/.zcode/skills/mc-status/` — redeployed on
   every install; a failed deploy prints one line and install continues.
+
+**Moving or re-cloning the repo → re-run `mc-wall install`**: run.sh and the
+plist bake absolute paths to the clone, so a new clone location needs one
+install to re-pin them (the token in `~/.mc-wall/wall.json` survives).
 
 Flags: `--dry-run` (prints the rendered plist and run.sh, writes nothing),
 `--regenerate-token`.
@@ -44,7 +67,7 @@ Flags: `--dry-run` (prints the rendered plist and run.sh, writes nothing),
 | `stop`     | `launchctl bootout`; "not loaded" is tolerated, rc 0 |
 | `restart`  | stop, then start |
 | `status`   | `launchctl print` + HTTP GET `/<token>/state`; rc 0 iff both ok (2xx) |
-| `log`      | Tail `~/.zcode/mc-wall/logs/wall.log`; `-n N` (default 50) |
+| `log`      | Tail `~/.mc-wall/logs/wall.log`; `-n N` (default 50) |
 | `open`     | Chrome app-mode window on the wall URL (dedicated chrome-profile); plain `open` fallback |
 
 `status` with no usable wall.json prints `no wall.json — run mc-wall install
@@ -52,12 +75,12 @@ first` and exits 1.
 
 Uninstall is manual (no subcommand):
 
-    /Users/shahil/.zcode/mc-wall/bin/mc-wall stop
+    /Users/shahil/work/regenai-repo/mission-control/plugins/mission-control/wall/bin/mc-wall stop
     rm ~/Library/LaunchAgents/ai.zcode.mc-wall.plist
     # optionally remove the generated artifacts (the checkout lives in the
     # same directory — remove per file, never the directory itself):
-    rm ~/.zcode/mc-wall/wall.json ~/.zcode/mc-wall/run.sh
-    rm -rf ~/.zcode/mc-wall/state ~/.zcode/mc-wall/logs ~/.zcode/mc-wall/chrome-profile
+    rm ~/.mc-wall/wall.json ~/.mc-wall/run.sh
+    rm -rf ~/.mc-wall/state ~/.mc-wall/logs ~/.mc-wall/chrome-profile
     rm -rf ~/.zcode/skills/mc-status
 
 ## 4. Security model
@@ -104,7 +127,7 @@ Launch handshake:
    (`goal-confirmed`), freeing the single launch slot.
 
 Crash recovery: the pending record is persisted fsync'd at
-`~/.zcode/mc-wall/state/pending.json` (atomic write, chmod 600). A corrupt
+`~/.mc-wall/state/pending.json` (atomic write, chmod 600). A corrupt
 file is quarantined (`pending.corrupt-<ts>`) and the server still boots; a
 crash between persist and promote leaves prompt-armed, which boot recovery
 promotes back to await-birth with one audit line.
@@ -113,7 +136,8 @@ promotes back to await-birth with one audit line.
 
 Text-board twin of the wall, rendered by the real tower (read-only):
 
-    cd /Users/shahil/.zcode/mc-wall && .venv/bin/python -m scripts.mc_status
+    cd /Users/shahil/work/regenai-repo/mission-control/plugins/mission-control/wall \
+      && .venv/bin/python -m scripts.mc_status
 
 Shows the generation timestamp and degraded lines, then per program: the
 objective, the master session, the lanes table; then the verify queue, human
@@ -122,9 +146,10 @@ launch record. Flags: `--config PATH`, `--db PATH`.
 
 Environment: `MC_WALL_DB` (default `~/.zcode/cli/db/db.sqlite`),
 `MC_WALL_TOWER_CONFIG` (default `<MC_WALL_HOME>/tower.json`), `MC_WALL_HOME`
-(default `~/.zcode/mc-wall`). tower.json shape:
+(default `~/.mc-wall`). tower.json shape:
 
-    {"programs": [{"program","tag","note_glob","master_tag"}],
+    {"store": "zcode",
+     "programs": [{"program","tag","note_glob","master_tag"}],
      "repos": [{"name","path","host"}],
      "pending_launch_path": null}
 
@@ -149,21 +174,17 @@ Output may contain session titles — treat it as operator-private.
   `open`/`status` print `no wall.json — run mc-wall install first`.
 - `/state` returns **503 degraded** (with the pending record and the exception
   type name) whenever the tower document cannot be built — never a guessed or
-  partial document. Two KNOWN production gaps are pending operator approval:
-
-```
-B2: mc_wall/server/app.py:63-66 — _default_collect_state() calls
-collect_state() with no TowerConfig -> TypeError -> /state 503 in
-production today.
-```
+  partial document. One KNOWN production gap is pending operator approval:
 
 ```
 B3: state_contract.find_row reads a "rows" key no real tower doc produces ->
 every POST /launch 404s unknown-row in production today.
 ```
 
-  Until both are fixed the page shows its degraded banner — that is the
-  honest current state, not a bug in this README.
+  Until it is fixed the page shows its degraded banner — that is the
+  honest current state, not a bug in this README. (B2, the boot-time
+  `_default_collect_state` TypeError, was fixed by F-1's built-once tower
+  config.)
 - Corrupt `pending.json` → quarantined, server boots normally.
 - Agent crash → launchd KeepAlive (Crashed-only) restarts it; armed state is
   rebuilt from disk (prompt-armed promoted on boot).

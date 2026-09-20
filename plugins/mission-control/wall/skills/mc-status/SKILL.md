@@ -22,7 +22,7 @@ program notes. The board shows:
 
 Run from the canonical checkout root:
 
-    cd /Users/shahil/.zcode/mc-wall && .venv/bin/python -m scripts.mc_status
+    cd /Users/shahil/work/regenai-repo/mission-control/plugins/mission-control/wall && .venv/bin/python -m scripts.mc_status
 
 Optional flags: `--config PATH` (tower.json) and `--db PATH` (session db).
 
@@ -32,7 +32,7 @@ Optional flags: `--config PATH` (tower.json) and `--db PATH` (session db).
   `~/.zcode/cli/db/db.sqlite`).
 - `MC_WALL_TOWER_CONFIG` — tower config path (default
   `<MC_WALL_HOME>/tower.json`).
-- `MC_WALL_HOME` — wall home directory (default `~/.zcode/mc-wall`); the
+- `MC_WALL_HOME` — wall home directory (default `~/.mc-wall`); the
   default tower config resolves under it.
 
 ## Notes

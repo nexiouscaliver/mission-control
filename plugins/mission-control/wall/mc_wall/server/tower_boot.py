@@ -1,9 +1,11 @@
 """F-1: build a TowerConfig from wall.json + env (the default boot contract).
 
-Field precedence (spec S4 table, pinned): db_path = MC_WALL_DB >
-wall.json "db_path" > ~/.zcode/cli/db/db.sqlite; programs/repos from the
-wall.json arrays (repos[].path ~-expanded HERE, at build time);
-pending_launch_path = wall.json value > <wall_home>/pending-launch.json;
+Field precedence (spec S4 table, pinned): store = wall.json "store" >
+"zcode" (validated against the session-store registry); db_path = MC_WALL_DB >
+wall.json "db_path" > the store's canonical default (zcode:
+~/.zcode/cli/db/db.sqlite, owned by mc_wall.tower.session_store); programs/
+repos from the wall.json arrays (repos[].path ~-expanded HERE, at build
+time); pending_launch_path = wall.json value > <wall_home>/pending-launch.json;
 every other TowerConfig field keeps its dataclass default. Malformed
 wall.json content raises ValueError with ONE clear line naming wall.json —
 main() prints it and exits 1 (install-time contract; the entry never
@@ -17,6 +19,7 @@ import json
 import os
 import pathlib
 
+from mc_wall.tower import session_store
 from mc_wall.tower.config import ProgramConfig, RepoConfig, TowerConfig
 
 
@@ -24,7 +27,7 @@ def default_db_path() -> pathlib.Path:
     env = os.environ.get("MC_WALL_DB")
     if env:
         return pathlib.Path(env)
-    return pathlib.Path.home() / ".zcode" / "cli" / "db" / "db.sqlite"
+    return pathlib.Path(session_store.default_db_path("zcode"))
 
 
 def _require_str(entry: dict, key: str, where: str) -> str:
@@ -72,6 +75,17 @@ def tower_config_from_wall(data: dict, wall_home: pathlib.Path) -> TowerConfig:
         ))
     db = _optional_str(data, "db_path", "wall.json")
     pending = _optional_str(data, "pending_launch_path", "wall.json")
+    store = _optional_str(data, "store", "wall.json")
+    if store is None:
+        store = "zcode"  # the sole adapter today (session_store seam)
+    else:
+        try:
+            session_store.resolve(store)  # name check only — fail LOUD at boot
+        except ValueError:
+            raise ValueError(
+                'mc-wall: wall.json "store" is "%s" — expected one of: %s'
+                % (store, ", ".join(sorted(session_store.KNOWN_STORES)))
+            )
     db_env = os.environ.get("MC_WALL_DB")
     if db_env:  # spec §4 precedence: MC_WALL_DB > wall.json "db_path" > home default
         db_path = pathlib.Path(db_env)
@@ -82,6 +96,7 @@ def tower_config_from_wall(data: dict, wall_home: pathlib.Path) -> TowerConfig:
     return TowerConfig(
         db_path=str(db_path),
         programs=tuple(programs),
+        store=store,
         repos=tuple(repos),
         pending_launch_path=str(pending) if pending is not None
         else str(wall_home / "pending-launch.json"),

@@ -46,11 +46,11 @@ _ASSET_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
 def resolve_wall_home() -> pathlib.Path:
-    """The ONE canonical wall-home resolver: MC_WALL_HOME > ~/.zcode/mc-wall."""
+    """The ONE canonical wall-home resolver: MC_WALL_HOME > ~/.mc-wall."""
     env = os.environ.get("MC_WALL_HOME")
     if env:
         return pathlib.Path(env)
-    return pathlib.Path.home() / ".zcode" / "mc-wall"
+    return pathlib.Path.home() / ".mc-wall"
 
 
 def _repo_root() -> pathlib.Path:
@@ -146,7 +146,7 @@ def choose_owed_action(
 class ServerConfig:
     token: str
     port: int = DEFAULT_PORT
-    wall_home: pathlib.Path = None  # default resolved in run_server: MC_WALL_HOME or ~/.zcode/mc-wall
+    wall_home: pathlib.Path = None  # default resolved in run_server: MC_WALL_HOME or ~/.mc-wall
     web_dir: pathlib.Path = None  # default repo_root/"web"
     state_dir: pathlib.Path = None  # default wall_home/"state"
     log_dir: pathlib.Path = None  # default wall_home/"logs"

@@ -33,6 +33,7 @@ class ProgramConfig:
 class TowerConfig:
     db_path: str
     programs: tuple[ProgramConfig, ...]
+    store: str = "zcode"           # session-store adapter name (v1.5.0 seam)
     repos: tuple[RepoConfig, ...] = ()
     pending_launch_path: str | None = None
     now_s: Callable[[], float] = time.time

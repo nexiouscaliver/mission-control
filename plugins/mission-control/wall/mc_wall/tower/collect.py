@@ -4,7 +4,8 @@ signals in T-5; the §6 derivations + final assembly in T-6.
 
 Owns the document assembly, the §4 degraded-entry ordering machinery
 (``DegradedLog``), the pending-launch read (§4.5), the §4.2 vault-note read,
-the §4.1 session-store read/join (through ``zcode_db``), the §4.3 goal
+the §4.1 session-store read/join (through the ``session_store`` adapter seam —
+``store="zcode"`` resolves to ``zcode_db``), the §4.3 goal
 state/manifest read (through ``goals``), the §4.4 network signals (through
 ``signals``, all spawns via ``NetCache``/``_run_cmd``), the §6 derivations
 (through ``derive``, with the precondition by-ref lookups and their entry-11
@@ -14,7 +15,7 @@ emissions run HERE — derive stays pure), and the no-escape boundary.
 import json
 import os
 
-from . import contract, derive, goals, notes, signals, zcode_db
+from . import contract, derive, goals, notes, session_store, signals
 from .config import TowerConfig
 
 
@@ -132,18 +133,21 @@ def _read_sessions(config: TowerConfig, now: float, log: "DegradedLog",
     a NULL timestamp never enters the map, and every failure path returns an
     empty map so a degraded db contributes no activity epochs)."""
     try:
-        con = zcode_db.open_db_ro(config.db_path)
+        store = session_store.resolve(config.store)
+        con = store.open_db_ro(config.db_path)
+    except ValueError:
+        raise  # unknown store name: a config error, never degraded-away
     except Exception:
-        log.add((0, 0, 0, ""), zcode_db.DEGRADED_UNREADABLE)
+        log.add((0, 0, 0, ""), store.DEGRADED_UNREADABLE)
         return [], {}
     try:
         cur = con.cursor()
-        if zcode_db.check_schema(cur):
-            log.add((0, 0, 0, ""), zcode_db.DEGRADED_SCHEMA_DRIFT)
+        if store.check_schema(cur):
+            log.add((0, 0, 0, ""), store.DEGRADED_SCHEMA_DRIFT)
             return [], {}
         # Exactly ONE unit probe per collect; all cutoffs derive from it.
-        factor = zcode_db.probe_factor(cur)
-        return _join_sessions(config, cur, now, factor, log, programs, lane_records)
+        factor = store.probe_factor(cur)
+        return _join_sessions(config, store, cur, now, factor, log, programs, lane_records)
     except Exception:
         # Strict fail-open (§4.1 / assumption 19): a failure MID-join must not
         # leak whatever masters/lane sessions were already written — null them
@@ -153,20 +157,20 @@ def _read_sessions(config: TowerConfig, now: float, log: "DegradedLog",
             prog["master"] = contract.null_master()
         for record in lane_records:
             record[1]["session"] = None
-        log.add((0, 0, 0, ""), zcode_db.DEGRADED_UNREADABLE)
+        log.add((0, 0, 0, ""), store.DEGRADED_UNREADABLE)
         return [], {}
     finally:
         con.close()
 
 
-def _join_sessions(config: TowerConfig, cur, now: float, factor: int,
+def _join_sessions(config: TowerConfig, store, cur, now: float, factor: int,
                    log: "DegradedLog", programs: list, lane_records: list) -> tuple[list[dict], dict]:
     """Healthy-path §5 joins: windowed tag scan (entry 7 per ambiguous session,
     ordered by sid via the log key), newest-wins masters, token-prefix lane
     joins (entry 9 on ambiguity), then the §6.5 unmapped enumeration. Returns
     (unmapped rows, lane -> joined-session time_updated epoch in seconds)."""
-    tag_map = zcode_db.scan_tags(
-        cur, zcode_db.cutoff_stored(now, config.tag_scan_window_s, factor))
+    tag_map = store.scan_tags(
+        cur, store.cutoff_stored(now, config.tag_scan_window_s, factor))
     for sid in sorted(tag_map):
         if len(tag_map[sid]) >= 2:
             log.add((4, 0, 0, sid), f"join degraded: ambiguous tags {sid}")
@@ -183,7 +187,7 @@ def _join_sessions(config: TowerConfig, cur, now: float, factor: int,
         if p.master_tag is None:
             continue
         cands = [sid for sid, tags in tag_map.items() if tags == {p.master_tag}]
-        rows = zcode_db.session_rows(cur, cands)
+        rows = store.session_rows(cur, cands)
         cands = [sid for sid in cands if sid in rows]  # orphan inputs can't join
         if not cands:
             continue
@@ -191,7 +195,7 @@ def _join_sessions(config: TowerConfig, cur, now: float, factor: int,
             rows[sid]["time_updated"] is not None, rows[sid]["time_updated"],
             rows[sid]["time_created"] is not None, rows[sid]["time_created"], sid))
         row = rows[best]
-        master_ts = zcode_db.to_seconds(row["time_updated"])
+        master_ts = store.to_seconds(row["time_updated"])
         programs[i]["master"] = {
             "session_id": best,
             "title": row["title"],
@@ -203,7 +207,7 @@ def _join_sessions(config: TowerConfig, cur, now: float, factor: int,
     for _pidx, lane, token, *_rest in lane_records:
         if not token:
             continue
-        obj, ambiguous = zcode_db.lane_join(cur, token)
+        obj, ambiguous = store.lane_join(cur, token)
         if ambiguous:
             log.add((5, 0, 0, token), f"join ambiguous session: {token}")
             continue
@@ -219,8 +223,8 @@ def _join_sessions(config: TowerConfig, cur, now: float, factor: int,
         joined_ids.add(obj["id"])
         if epoch is not None:
             session_epochs[id(lane)] = epoch
-    return (zcode_db.unmapped_rows(cur, now, factor, config.session_window_s,
-                                   joined_ids, tag_map, configured_tags),
+    return (store.unmapped_rows(cur, now, factor, config.session_window_s,
+                                joined_ids, tag_map, configured_tags),
             session_epochs)
 
 

@@ -1,6 +1,6 @@
 """``python -m mc_wall.server`` — the module entry launchd's run.sh execs.
 
-Resolves the wall home (MC_WALL_HOME or ~/.zcode/mc-wall), reads wall.json
+Resolves the wall home (MC_WALL_HOME or ~/.mc-wall), reads wall.json
 into a fully-populated ServerConfig, and hands off to run_server. wall.json is
 the boot contract: if it is missing, unparseable, or tokenless, that is an
 install-time problem and fails LOUDLY with one clear line (rc 1) — the entry

@@ -507,3 +507,19 @@ def test_mcwallt_drift_pure(tmp_path):
     r1, r2 = check_drift(cfg), check_drift(cfg)
     assert r1 == r2 == []
     assert snap(tmp_path) == before  # no side effects anywhere in the fixture tree
+
+
+def test_session_store_seam_pins():
+    # v1.5.0 adapter boundary: "zcode" is the sole registered store, unknown
+    # names fail loudly, and the canonical zcode default db path lives in ONE
+    # place (session_store). String-only — no db is ever opened here.
+    import pytest
+
+    from mc_wall.tower import session_store, zcode_db
+
+    assert session_store.resolve("zcode") is zcode_db
+    assert TowerConfig(db_path="x", programs=()).store == "zcode"
+    assert session_store.default_db_path("zcode") == os.path.join(
+        os.path.expanduser("~"), ".zcode", "cli", "db", "db.sqlite")
+    with pytest.raises(ValueError):
+        session_store.resolve("claude-code")

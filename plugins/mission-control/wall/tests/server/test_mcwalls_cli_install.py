@@ -171,3 +171,17 @@ def test_main_wiring():
         "gui/%d" % os.getuid(),
         str(plist),
     ]
+
+
+def test_default_wall_home_is_harness_neutral(monkeypatch, tmp_path):
+    # v1.5.0: the data home defaults to ~/.mc-wall (harness-neutral), with the
+    # MC_WALL_HOME override intact — no test or code path may regress to the
+    # old ~/.zcode/mc-wall location.
+    from tests.server.mcwalls_harness import load_cli
+
+    cli = load_cli()
+    monkeypatch.delenv("MC_WALL_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert cli.default_wall_home() == os.path.join(str(tmp_path), ".mc-wall")
+    monkeypatch.setenv("MC_WALL_HOME", str(tmp_path / "elsewhere"))
+    assert cli.default_wall_home() == str(tmp_path / "elsewhere")
