@@ -3,10 +3,11 @@
 ## 1. What the Wall is
 
 A deterministic, local status wall — there is no LLM behind the UI. The tower
-(`mc_wall/tower`) joins state from four read-only sources — the ZCode session
-database, the vault program notes (lane rows), goal-dir forge manifests, and
-the regenloop goal directories under each repo — into one JSON document. The
-server (`mc_wall/server`) serves that document plus a static page at
+(`mc_wall/tower`) joins state from read-only sources — the vault program notes
+(lane rows), the ZCode session database, the regenloop goal directories under
+each repo (including their forge manifests), and git/glab MR signals — into
+one JSON document. The server (`mc_wall/server`) serves that document plus a
+static page at
 `http://127.0.0.1:8765/<token>/`, where `<token>` is a secret generated at
 install time.
 
@@ -83,7 +84,10 @@ sqlite db → tower `collect_state` → one JSON document (`schema_version` 1,
 shape pinned by the frozen contract in `mc_wall/tower/contract.py`) → server
 `GET /<token>/state` (the collector runs on every request, no caching) → the
 page polls every 5 s and reloads itself when `schema_version` changes
-(flap-safe: checked against the last applied version only).
+(flap-safe: checked against the last applied version only). The served
+document is the frozen tower doc plus one server-added key, `wall`, carrying
+the pending-launch record (`{"pending": null}` when idle) — so the page's
+root shape is contract.py's shape plus `wall`.
 
 Launch handshake:
 
@@ -126,12 +130,16 @@ Environment: `MC_WALL_DB` (default `~/.zcode/cli/db/db.sqlite`),
 
 Degrade behavior (fail-open by design; the CLI never shows a traceback):
 
-- Missing config → one hint line + a sessions-only board over empty programs,
-  exit 0.
-- Wrong-shape config (exists but unparseable / not a JSON object, resolved via
-  env or default) → one degrade line + empty programs, exit 0.
-- Missing db → the tower's own degraded entries, exit 0.
-- An explicit `--config` that cannot be parsed → one stderr line, exit 2.
+- Missing config → one `tower config not found:` hint line + the db-derived
+  sections over an empty program list, exit 0.
+- Unparseable / not-a-JSON-object config → exit 2 with one stderr line ONLY
+  when the path came from `--config`; resolved via env or default it takes the
+  same degrade-and-render path (`tower config unreadable:`), exit 0.
+- Config that parses as a JSON object but whose program/repo rows have wrong
+  keys → one `tower config invalid: <path>` line + the same degrade-and-render
+  path (empty programs, db-derived sections still render), exit 0 — including
+  for an explicit `--config`.
+- Missing/unreadable db → the tower's own degraded entries, exit 0.
 
 Output may contain session titles — treat it as operator-private.
 

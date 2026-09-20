@@ -75,4 +75,3 @@ def test_token_absent_from_logs_full_exercise(tmp_path, monkeypatch):
         for p in log_files:
             data = p.read_bytes()
             assert token_bytes not in data, f"token leaked into {p.name}"
-            assert b"/" + token_bytes not in data, f"token-bearing path in {p.name}"
