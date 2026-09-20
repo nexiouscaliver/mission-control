@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 New changes accumulate here between releases, above the latest version entry (Keep a Changelog convention; the release gates skip this section when reading the head version).
 
+## [1.5.0] - 2026-09-21
+
+One repo for everything: the MC Wall joins mission-control with its full git history (subtree import at `plugins/mission-control/wall/`).
+
+### Added
+- **The Wall, in-repo and clone-and-run** — the entire mc-wall codebase (tower, server, web page, tests, e2e harness) imports under `plugins/mission-control/wall/` preserving its original commit history; `bin/mc-wall install` resolves the clone root as the parent of its own location and bakes it into the LaunchAgent's run.sh, so the Wall always runs from the clone — moving or re-cloning the repo means one re-run of `mc-wall install` (README §2).
+- **Harness-neutral data home (`~/.mc-wall`)** — the wall's default home moves from `~/.zcode/mc-wall` to `~/.mc-wall` everywhere it is resolved (server resolver, module entry, control CLI, mc-status skill; `MC_WALL_HOME` override unchanged), created on first install.
+- **ZCode session-store adapter seam** — the tower's session-store access goes through one boundary (`mc_wall/tower/session_store.py`; config: `TowerConfig.store`, default `zcode`, plus the db path; wall.json/tower.json accept a `"store"` key, unknown names fail loudly). Pure refactor, zero behavior change for the zcode path; a Claude Code adapter is documented as an extension point in the wall README — NOT IMPLEMENTED.
+- Wall README gains the session-store adapter paragraph (NOT IMPLEMENTED extension point) and the moving/re-cloning note.
+
+### Changed
+- **Forge-artifact home paths in the skill** — SKILL §1/§3 and `references/verify-runbook.md` now write and read forge artifacts under `~/.mc-wall/forge/<program>/<row-id>/` (was `~/.zcode/mc-wall/forge/…`); pre-1.5.0 rows fall back to the runbook's existing "no forge artifacts" ask.
+- Wall README §7 truthing: the B2 production gap (boot-time `_default_collect_state` TypeError) is marked fixed by F-1's built-once tower config; B3 remains open and documented.
+
 ## [1.4.0] - 2026-09-21
 
 Proven in the mc-wall program (2026-09-19/21): every change below ran live as the controller's own skill during a full three-wave build.

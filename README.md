@@ -51,6 +51,18 @@ The full craft lives in the skill's references: `prompt-anatomy.md` (the forge g
 
 Updates: `/plugin marketplace update mission-control` (or `git pull` the local clone), then reinstall/refresh the plugin. Note there are **two** installed surfaces: the marketplace synced copy (`~/.zcode/cli/plugins/marketplaces/mission-control/`) and the versioned plugin cache (`~/.zcode/cli/plugins/cache/mission-control/mission-control/<version>/`) — a refresh that touches only one leaves stale registrations behind (an early program opened on a deleted 1.1.0 cache path). Every release is a lightweight tag + GitHub Release gated by `scripts/verify_packaging.sh` + `tests/run_smoke.sh`; `plugins/mission-control/.claude-plugin/plugin.json` and the SKILL frontmatter carry the version.
 
+## The Wall (in-repo, clone-and-run)
+
+The MC Wall — the deterministic local status board the controller's programs project onto — lives in this repo at `plugins/mission-control/wall/` (imported with its full git history). It always **runs from the clone**, never from the installed plugin cache:
+
+```
+git clone <this repo> && cd mission-control/plugins/mission-control/wall
+bin/mc-wall install        # writes ~/.mc-wall (harness-neutral home) + LaunchAgent, starts the server
+bin/mc-wall open           # opens the Wall in an app-mode Chrome (pinned-token URL)
+```
+
+`install` resolves the clone root as the parent of its own location and bakes it into the agent's run.sh — so moving or re-cloning the repo means re-running `mc-wall install` (the token in `~/.mc-wall/wall.json` survives). The marketplace plugin copy ships these files unchanged; only the clone can run them. Full reference: the wall's own [`README.md`](plugins/mission-control/wall/README.md) (install, security model, state flow, failure modes, the ZCode session-store adapter with its documented Claude Code extension point — NOT IMPLEMENTED).
+
 ## Shakedown (first use)
 
 Give it one small real objective, run `plan → prompts`, paste one prompt into a fresh session, then `verify` — and tune against wherever it drifts before trusting it with a full program.

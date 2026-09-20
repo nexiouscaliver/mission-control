@@ -1,0 +1,31 @@
+never_touch = []
+
+[[gate]]
+name = "python-test"
+when = ["**/*.py"]
+check = ".venv/bin/pytest -q"
+autofix = ""
+
+[[gate]]
+name = "web-selftest"
+when = ["web/**", "regenloop/gates.toml"]
+check = "test ! -f web/selftest.mjs || node web/selftest.mjs"
+autofix = ""
+
+[[gate]]
+name = "bin-py-compile"
+when = ["bin/**"]
+check = ".venv/bin/python3 -m py_compile bin/mc-wall"
+autofix = ""
+
+[[gate]]
+name = "templates-check"
+when = ["templates/**"]
+check = "bash -n templates/run_sh.template"
+autofix = ""
+
+[[gate]]
+name = "docs-check"
+when = ["**/*.md", ".gitignore", "skills/**"]
+check = "test -s README.md && test -s skills/mc-status/SKILL.md"
+autofix = ""

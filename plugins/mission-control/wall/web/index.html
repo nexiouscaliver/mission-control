@@ -1,0 +1,444 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MC WALL</title>
+<link rel="icon" href="data:,"><!-- suppress headless favicon net-error -->
+<link rel="stylesheet" href="assets/style.css">
+</head><body>
+<header id="topbar">
+  <span id="wordmark">MC WALL</span><span id="live-dot"></span><span id="mode-badge"></span>
+  <button id="needs-me-now" type="button">NEEDS ME NOW <span id="nmn-counter"></span></button>
+  <span id="armed-indicator-slot"></span><span id="degraded-badges"></span>
+  <span id="state-age-caption"></span>
+</header>
+<div id="banner-strip" role="alert" hidden></div>
+<main id="grid">
+  <section id="col1-programs" class="col"></section>
+  <section id="col2" class="col">
+    <section id="panel-verify" class="subpanel"></section>
+    <section id="panel-human" class="subpanel"></section>
+  </section>
+  <section id="col3-sessions" class="col"></section>
+</main>
+<div id="launch-panel" hidden></div>
+<script type="application/json" id="mock-full">{
+  "schema_version": 1,
+  "server": {
+    "uptime_s": 43200,
+    "generated_ts": 1789862400,
+    "degraded": ["network degraded: git cleo", "note rows skipped: 2"],
+    "banner": "QA fixture: embeds the literal '<\/script>' sequence to prove JSON block containment"
+  },
+  "programs": [
+    {
+      "program": "secfix",
+      "note_path": "vault/secfix/note.md",
+      "note_mtime": 1789861800,
+      "objective": "harden session join against tag drift",
+      "master": {"session_id": "s-master-1", "title": "mission-control tower", "last_active_ago_s": 412},
+      "lanes": [
+        {
+          "row_id": "W2-L1",
+          "repo": "cleo",
+          "branch": "secfix/w2-l1",
+          "slug": "secfix-w2-l1",
+          "status_note": "forged",
+          "status_parsed": "forged",
+          "manifest": {"path": "ops/secfix/W2-L1.md", "prompt_md": "ops/secfix/W2-L1-prompt.md", "goal_md": "ops/secfix/W2-L1-goal.md", "precondition_mrs": [], "stall_t_hours": 24},
+          "session": {"id": "s-101", "title": "secfix: join hardening", "title_pending": false, "dir": "~/.zcode/s-101", "last_active_ago_s": 900},
+          "goal": {"state": "active", "queue_tail": "next: patch join tiebreak", "budget": {"slug": "secfix-w2-l1", "whole_run": 5, "gates": ["gate-1", "gate-2"]}},
+          "signals": {"pushed": {"value": true, "age_s": 900}, "mr": {"ref": "!34", "repo_host": "gitlab", "state": "open", "title": "secfix: join hardening", "pipeline": "green", "age_s": 3600}},
+          "suggest_verify": null,
+          "stalled": null
+        },
+        {
+          "row_id": "W2-L2",
+          "repo": "cleo",
+          "branch": "secfix/w2-l2",
+          "slug": "secfix-w2-l2",
+          "status_note": "launched",
+          "status_parsed": "launched",
+          "manifest": null,
+          "session": null,
+          "goal": {"state": "archived", "queue_tail": "", "budget": {}},
+          "signals": {"pushed": {"value": false, "age_s": 7200}, "mr": null},
+          "suggest_verify": null,
+          "stalled": null
+        },
+        {
+          "row_id": "W2-L3",
+          "repo": "cleo",
+          "branch": "secfix/w2-l3",
+          "slug": "secfix-w2-l3",
+          "status_note": "done",
+          "status_parsed": "done",
+          "manifest": {"path": "ops/secfix/W2-L3.md", "prompt_md": "ops/secfix/W2-L3-prompt.md", "goal_md": "ops/secfix/W2-L3-goal.md", "precondition_mrs": ["!12"], "stall_t_hours": 24},
+          "session": {"id": "s-103", "title": "", "title_pending": true, "dir": "~/.zcode/s-103", "last_active_ago_s": 250000},
+          "goal": {"state": "absent", "queue_tail": "", "budget": {}},
+          "signals": {"pushed": null, "mr": null},
+          "suggest_verify": null,
+          "stalled": null
+        },
+        {
+          "row_id": "W2-L4",
+          "repo": "cleo",
+          "branch": "secfix/w2-l4",
+          "slug": "secfix-w2-l4",
+          "status_note": "partial",
+          "status_parsed": "partial",
+          "manifest": {"path": "ops/secfix/W2-L4.md", "prompt_md": "ops/secfix/W2-L4-prompt.md", "goal_md": "ops/secfix/W2-L4-goal.md", "precondition_mrs": [], "stall_t_hours": 0},
+          "session": null,
+          "goal": null,
+          "signals": {"pushed": {"value": true, "age_s": 120}, "mr": {"ref": "#56", "repo_host": "github", "state": "open", "title": "secfix: partial band fix", "pipeline": "", "age_s": 600}},
+          "suggest_verify": {"because": ["status=partial", "finished_ago_s=2400"]},
+          "stalled": null
+        },
+        {
+          "row_id": "W2-L5",
+          "repo": "cleo",
+          "branch": "secfix/w2-l5",
+          "slug": "secfix-w2-l5",
+          "status_note": "failed",
+          "status_parsed": "failed",
+          "manifest": null,
+          "session": {"id": "s-105", "title": "secfix: retry flaky join", "title_pending": false, "dir": "~/.zcode/s-105", "last_active_ago_s": 95},
+          "goal": null,
+          "signals": {"pushed": null, "mr": null},
+          "suggest_verify": null,
+          "stalled": null
+        },
+        {
+          "row_id": "W2-L6",
+          "repo": "cleo",
+          "branch": "secfix/w2-l6",
+          "slug": "secfix-w2-l6",
+          "status_note": "parked",
+          "status_parsed": "parked",
+          "manifest": null,
+          "session": null,
+          "goal": null,
+          "signals": {"pushed": null, "mr": null},
+          "suggest_verify": null,
+          "stalled": null
+        },
+        {
+          "row_id": "W2-L7",
+          "repo": "cleo",
+          "branch": "secfix/w2-l7",
+          "slug": "secfix-w2-l7",
+          "status_note": "in-flight",
+          "status_parsed": "in-flight",
+          "manifest": {"path": "ops/secfix/W2-L7.md", "prompt_md": "ops/secfix/W2-L7-prompt.md", "goal_md": "ops/secfix/W2-L7-goal.md", "precondition_mrs": [], "stall_t_hours": 24},
+          "session": {"id": "s-107", "title": "secfix: w2-l7 in flight", "title_pending": false, "dir": "~/.zcode/s-107", "last_active_ago_s": 1800},
+          "goal": {"state": "active", "queue_tail": "next: arm launch gate", "budget": {"slug": "secfix-w2-l7", "whole_run": 3, "gates": ["gate-1"]}},
+          "signals": {"pushed": {"value": false, "age_s": 30}, "mr": null},
+          "suggest_verify": null,
+          "stalled": null
+        },
+        {
+          "row_id": "W2-L8",
+          "repo": "cleo",
+          "branch": "secfix/w2-l8",
+          "slug": "secfix-w2-l8",
+          "status_note": "Waiting on CI!!",
+          "status_parsed": "UNPARSED",
+          "manifest": null,
+          "session": null,
+          "goal": null,
+          "signals": {"pushed": null, "mr": null},
+          "suggest_verify": null,
+          "stalled": null
+        },
+        {
+          "row_id": "W2-L9",
+          "repo": "cleo",
+          "branch": "secfix/w2-l9",
+          "slug": "secfix-w2-l9",
+          "status_note": "in-flight",
+          "status_parsed": "in-flight",
+          "manifest": {"path": "ops/secfix/W2-L9.md", "prompt_md": "ops/secfix/W2-L9-prompt.md", "goal_md": "ops/secfix/W2-L9-goal.md", "precondition_mrs": [], "stall_t_hours": 6},
+          "session": null,
+          "goal": null,
+          "signals": {"pushed": null, "mr": null},
+          "suggest_verify": null,
+          "stalled": {"because": "inactive for 21600s > stall_t 6h", "last_event": "queue.md mtime at 21600s ago"}
+        },
+        {
+          "row_id": "W2-L10",
+          "repo": "cleo",
+          "branch": "secfix/w2-l10",
+          "slug": "secfix-w2-l10",
+          "status_note": "",
+          "status_parsed": "UNPARSED",
+          "manifest": null,
+          "session": null,
+          "goal": null,
+          "signals": {"pushed": null, "mr": null},
+          "suggest_verify": null,
+          "stalled": null
+        }
+      ]
+    },
+    {
+      "program": "omniforge",
+      "note_path": "",
+      "note_mtime": 0,
+      "objective": "",
+      "master": {"session_id": null, "title": null, "last_active_ago_s": null},
+      "lanes": [
+        {
+          "row_id": "W3-L1",
+          "repo": null,
+          "branch": null,
+          "slug": null,
+          "status_note": "done",
+          "status_parsed": "done",
+          "manifest": null,
+          "session": null,
+          "goal": null,
+          "signals": {"pushed": null, "mr": null},
+          "suggest_verify": null,
+          "stalled": null
+        }
+      ]
+    }
+  ],
+  "verify_queue": [
+    {"row_id": "W2-L3", "program": "secfix", "finished_ago_s": 250000, "master_hint": "s-master-1", "verify_cmd": "/mission-control-verify s-103"},
+    {"row_id": "W2-L4", "program": "secfix", "finished_ago_s": 2400, "master_hint": "s-master-1", "verify_cmd": "/mission-control-verify sess_w2l4"},
+    {"row_id": "W2-L99", "program": "secfix", "finished_ago_s": 600, "master_hint": "", "verify_cmd": "/mission-control-verify raw-token-xyz"},
+    {"row_id": "W3-L1", "program": "omniforge", "finished_ago_s": 0, "master_hint": "", "verify_cmd": ""}
+  ],
+  "human_actions": [
+    {"kind": "merge", "ref": "!34", "repo": "cleo", "repo_host": "gitlab", "title": "secfix: join hardening", "pipeline": "green", "ready": true},
+    {"kind": "merge", "ref": "#56", "repo": "omniforge", "repo_host": "github", "title": "secfix: partial band fix", "pipeline": "", "ready": false}
+  ],
+  "sessions_unmapped": [
+    {"id": "s-unmapped-1", "title": "scratch: rebase experiment", "dir": "~/.zcode/s-unmapped-1", "last_active_ago_s": 172800},
+    {"id": "s-unmapped-2", "title": "", "dir": "~/.zcode/s-unmapped-2", "last_active_ago_s": 300}
+  ],
+  "launch_pending": null,
+  "wall": {
+    "pending": {
+      "version": 2,
+      "status": "prompt-armed",
+      "flag": null,
+      "reason": null,
+      "row_id": "W2-L7",
+      "lane_tag": "[secfix W2-L7]",
+      "repo_root": "/Users/shahil/work/cleo",
+      "prompt_sha256": "b6c4f2a9d8e13f7a0c5e2b19d4a8f6c3e71b09d5a2c48f7e6b1d93a5c8e0f421",
+      "launch_click_ms": 1789861800000,
+      "matched_session_id": null,
+      "matched_at_ms": null,
+      "last_eval_ms": 1789862400000,
+      "advisory_120s_fired": false,
+      "canary_fired": false,
+      "updated_at_ms": 1789862400000
+    }
+  }
+}</script>
+<script type="application/json" id="mock-minimal">{
+  "schema_version": 1,
+  "server": {"uptime_s": 0, "generated_ts": 0, "degraded": [], "banner": null},
+  "programs": [],
+  "verify_queue": [],
+  "human_actions": [],
+  "sessions_unmapped": [],
+  "launch_pending": null,
+  "wall": {"pending": null}
+}</script>
+<script type="application/json" id="mock-null-program">{
+  "schema_version": 1,
+  "server": {"uptime_s": 120, "generated_ts": 1789862400, "degraded": [], "banner": null},
+  "programs": [
+    null,
+    {
+      "program": "secfix",
+      "note_path": "",
+      "note_mtime": 0,
+      "objective": "",
+      "master": {"session_id": null, "title": null, "last_active_ago_s": null},
+      "lanes": [
+        {
+          "row_id": "W2-L5",
+          "repo": "cleo",
+          "branch": null,
+          "slug": null,
+          "status_note": "launched",
+          "status_parsed": "launched",
+          "manifest": null,
+          "session": null,
+          "goal": null,
+          "signals": {"pushed": null, "mr": null},
+          "suggest_verify": null,
+          "stalled": null
+        }
+      ]
+    }
+  ],
+  "verify_queue": [],
+  "human_actions": [],
+  "sessions_unmapped": [],
+  "launch_pending": null,
+  "wall": {"pending": null}
+}</script>
+<script type="application/json" id="mock-unparsed">{
+  "schema_version": 1,
+  "server": {"uptime_s": 60, "generated_ts": 1789862400, "degraded": [], "banner": null},
+  "programs": [
+    {
+      "program": "secfix",
+      "note_path": "",
+      "note_mtime": 0,
+      "objective": "",
+      "master": {"session_id": null, "title": null, "last_active_ago_s": null},
+      "lanes": [
+        {
+          "row_id": "W2-L8",
+          "repo": "cleo",
+          "branch": null,
+          "slug": null,
+          "status_note": "Waiting on CI!!",
+          "status_parsed": "UNPARSED",
+          "manifest": null,
+          "session": null,
+          "goal": null,
+          "signals": {"pushed": null, "mr": null},
+          "suggest_verify": null,
+          "stalled": null
+        }
+      ]
+    }
+  ],
+  "verify_queue": [],
+  "human_actions": [],
+  "sessions_unmapped": [],
+  "launch_pending": null,
+  "wall": {"pending": null}
+}</script>
+<script type="application/json" id="mock-no-schema-version">{
+  "server": {"uptime_s": 60, "generated_ts": 1789862400, "degraded": [], "banner": null},
+  "programs": [
+    {
+      "program": "secfix",
+      "note_path": "",
+      "note_mtime": 0,
+      "objective": "",
+      "master": {"session_id": null, "title": null, "last_active_ago_s": null},
+      "lanes": [
+        {
+          "row_id": "W2-L2",
+          "repo": "cleo",
+          "branch": null,
+          "slug": null,
+          "status_note": "launched",
+          "status_parsed": "launched",
+          "manifest": null,
+          "session": null,
+          "goal": null,
+          "signals": {"pushed": null, "mr": null},
+          "suggest_verify": null,
+          "stalled": null
+        }
+      ]
+    }
+  ],
+  "verify_queue": [],
+  "human_actions": [],
+  "sessions_unmapped": [],
+  "launch_pending": null,
+  "wall": {"pending": null}
+}</script>
+<script type="application/json" id="mock-empty-lanes">{
+  "schema_version": 1,
+  "server": {"uptime_s": 240, "generated_ts": 1789862400, "degraded": [], "banner": null},
+  "programs": [
+    {
+      "program": "secfix",
+      "note_path": "vault/secfix/note.md",
+      "note_mtime": 1789860000,
+      "objective": "sweep stale queue entries",
+      "master": {"session_id": null, "title": null, "last_active_ago_s": null},
+      "lanes": []
+    }
+  ],
+  "verify_queue": [],
+  "human_actions": [],
+  "sessions_unmapped": [],
+  "launch_pending": null,
+  "wall": {"pending": null}
+}</script>
+<script type="application/json" id="mock-freeze">{
+  "schema_version": 1,
+  "server": {"uptime_s": 600, "generated_ts": 1789862400, "degraded": ["tracking degraded: session store unreadable"], "banner": null},
+  "programs": [],
+  "verify_queue": [],
+  "human_actions": [],
+  "sessions_unmapped": [],
+  "launch_pending": null,
+  "wall": {"pending": null}
+}</script>
+<script type="application/json" id="mock-pending-null">{
+  "schema_version": 1,
+  "server": {"uptime_s": 300, "generated_ts": 1789862400, "degraded": [], "banner": null},
+  "programs": [
+    {
+      "program": "secfix",
+      "note_path": "",
+      "note_mtime": 0,
+      "objective": "",
+      "master": {"session_id": null, "title": null, "last_active_ago_s": null},
+      "lanes": [
+        {
+          "row_id": "W2-L1",
+          "repo": "cleo",
+          "branch": null,
+          "slug": null,
+          "status_note": "forged",
+          "status_parsed": "forged",
+          "manifest": null,
+          "session": null,
+          "goal": null,
+          "signals": {"pushed": null, "mr": null},
+          "suggest_verify": null,
+          "stalled": null
+        }
+      ]
+    }
+  ],
+  "verify_queue": [],
+  "human_actions": [],
+  "sessions_unmapped": [],
+  "launch_pending": null,
+  "wall": {"pending": null}
+}</script>
+<script type="application/json" id="mock-pending-flagged">{
+  "schema_version": 1,
+  "server": {"uptime_s": 900, "generated_ts": 1789862400, "degraded": [], "banner": null},
+  "programs": [],
+  "verify_queue": [],
+  "human_actions": [],
+  "sessions_unmapped": [],
+  "launch_pending": null,
+  "wall": {
+    "pending": {
+      "version": 5,
+      "status": "flagged",
+      "flag": "ambiguous",
+      "reason": "ambiguous tags",
+      "row_id": "W2-L3",
+      "lane_tag": "[secfix W2-L3]",
+      "repo_root": "/Users/shahil/work/cleo",
+      "prompt_sha256": "3e7a1c9b5d204f8e6a3c7b9d1e5f4a2c8b7d6e5f4a3c2b1d0e9f8a7b6c5d4e3f",
+      "launch_click_ms": 1789850000000,
+      "matched_session_id": "s-103",
+      "matched_at_ms": 1789850100000,
+      "last_eval_ms": 1789850100000,
+      "advisory_120s_fired": true,
+      "canary_fired": false,
+      "updated_at_ms": 1789850100000
+    }
+  }
+}</script>
+<script src="assets/app.js"></script>
+</body></html>
