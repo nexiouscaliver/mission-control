@@ -394,7 +394,9 @@
           noteSpan.classList.add("dim");
           noteSpan.setText("(empty status)");
         } else {
+          noteSpan.classList.add("chip-unparsed-note"); // F-5: clamp; full text on title
           noteSpan.setText(noteText);
+          noteSpan.setAttribute("title", noteText);
         }
         chipEl.appendChild(noteSpan);
       } else {

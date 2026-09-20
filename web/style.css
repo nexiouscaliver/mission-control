@@ -287,6 +287,16 @@ button:disabled {
   font-weight: 600;
 }
 
+/* F-5: UNPARSED notes can be arbitrarily long — clamp the note span; the
+ * full text stays available on the title tooltip. No new colors. */
+.chip-unparsed-note {
+  max-width: 280px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* STALLED is a treatment ON a chip, not a fourth trust level (SPEC 5) */
 .chip.stalled {
   border-color: var(--attention);
