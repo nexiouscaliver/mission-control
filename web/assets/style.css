@@ -1,0 +1,821 @@
+/* MC Wall — style.css (canonical). The copy at assets/style.css must stay
+ * byte-identical (AC-32). The :root token set below is the design contract
+ * of record (SPEC section 10) — dark, dense-but-scannable, information-first. */
+
+:root {
+  --bg: #0b0e14;
+  --panel: #11151d;
+  --panel-2: #161b26;
+  --border: #232b3a;
+  --ink: #e8eef5;
+  --ink-dim: #9aa4b1;
+  --note: #3fd47f;
+  --derived: #e3b341;
+  --stale: #f16a60;
+  --attention: #f0883e;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+/* ---- top bar shell ---- */
+
+#topbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+#wordmark {
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+#live-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--stale);
+}
+
+#mode-badge,
+#state-age-caption {
+  color: var(--ink-dim);
+}
+
+/* ---- generic interactive states (every control the page introduces) ---- */
+
+button {
+  font: inherit;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  min-height: 26px;
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--note);
+}
+
+button:focus-visible {
+  outline: 2px solid var(--note);
+  outline-offset: 2px;
+}
+
+button:active {
+  background: var(--panel);
+  border-color: var(--note);
+}
+
+button:disabled {
+  color: var(--ink-dim);
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ---- three-column grid (SPEC section 6) ---- */
+
+#grid {
+  display: grid;
+  grid-template-columns: minmax(340px, 1fr) minmax(420px, 1.25fr) minmax(340px, 1fr);
+  gap: 12px;
+  padding: 16px;
+}
+
+.col {
+  min-width: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+}
+
+#col2 {
+  display: flex;
+  flex-direction: column;
+}
+
+.subpanel {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+}
+
+#col2 .subpanel + .subpanel {
+  margin-top: 12px;
+}
+
+/* dim empty-state note rendered by app.renderBlank */
+
+.panel-note {
+  color: var(--ink-dim);
+  font-size: 14px;
+}
+
+/* ---- Col 1: program cards (SPEC 6.1) ---- */
+
+.program-card {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.program-card + .program-card {
+  margin-top: 12px;
+}
+
+.card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+}
+
+.card-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.card-objective {
+  color: var(--ink-dim);
+  font-size: 14px;
+}
+
+.card-stamp {
+  margin-left: auto;
+  color: var(--ink-dim);
+  font-size: 14px;
+}
+
+.dim {
+  color: var(--ink-dim);
+}
+
+/* ---- trust chip grammar (SPEC 5): line style AND dot shape encode the level ---- */
+
+.lane {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.lane--launchable {
+  cursor: pointer;
+}
+
+.lane--launchable:hover .chip,
+.lane--launchable:active .chip {
+  border-color: var(--attention);
+}
+
+.lane--launchable:focus-visible {
+  outline: 2px solid var(--note);
+  outline-offset: 2px;
+}
+
+.lane .stalled-note,
+.lane .session-line,
+.lane .goal-line {
+  flex-basis: 100%;
+  font-size: 14px;
+  color: var(--ink-dim);
+}
+
+.stalled-note {
+  color: var(--attention);
+  font-weight: 600;
+}
+
+.chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 2px 16px 2px 10px; /* right padding leaves room for the corner dot */
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  background: var(--panel);
+}
+
+/* Note status: SOLID 2px border + FILLED disk corner dot */
+.chip--note {
+  border: 2px solid var(--note);
+  color: var(--note);
+}
+
+.chip--note::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--note);
+}
+
+/* Derived signal: DASHED 2px border + thin OPEN outline dot */
+.chip--derived {
+  border: 2px dashed var(--derived);
+  color: var(--derived);
+}
+
+.chip--derived::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid var(--derived);
+  background: transparent;
+}
+
+/* Stale / unknown: HATCHED stripes (stale ~30% alpha over transparent) + HOLLOW donut dot */
+.chip--stale {
+  border: 2px solid var(--stale);
+  color: var(--stale);
+  background-image: repeating-linear-gradient(45deg, color-mix(in srgb, var(--stale) 30%, transparent) 0 2px, transparent 2px 6px);
+}
+
+.chip--stale::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 3px solid var(--stale);
+  background: transparent;
+}
+
+.chip-stamp {
+  color: var(--ink-dim);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* STALLED is a treatment ON a chip, not a fourth trust level (SPEC 5) */
+.chip.stalled {
+  border-color: var(--attention);
+  box-shadow: 0 0 0 1px var(--attention);
+}
+
+.padlock {
+  color: var(--attention);
+  font-size: 14px;
+}
+
+.legacy-badge,
+.mr-badge,
+.verify-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.legacy-badge {
+  border: 1px solid var(--border);
+  color: var(--ink-dim);
+}
+
+.mr-badge {
+  margin-left: 6px;
+  border: 1px solid var(--derived);
+  color: var(--derived);
+  background: var(--panel);
+}
+
+/* T7 (D): per-host hues on top of the !/# glyph prefix (the primary
+ * encoding) — gitlab reads note-green, github keeps derived-amber; the two
+ * hosts are impossible to confuse at a distance. Existing tokens only. */
+.mr-badge--gitlab {
+  border-color: var(--note);
+  color: var(--note);
+}
+
+.mr-badge--github {
+  border-color: var(--derived);
+  color: var(--derived);
+}
+
+.verify-tag {
+  border: 1px dashed var(--derived);
+  color: var(--derived);
+}
+
+/* ---- Col 2: VERIFY QUEUE + HUMAN ACTIONS OWED (SPEC 6.2) ---- */
+
+.subpanel-head {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.verify-row {
+  margin-top: 8px;
+  padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.verify-caption {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.verify-signals,
+.verify-master,
+.verify-cmd-note {
+  font-size: 14px;
+}
+
+.verify-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.merge-card {
+  margin-top: 8px;
+  padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+/* MR title + pipeline + repo badge share ONE visual line (SPEC 3.2 human row) */
+.merge-line {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.merge-repo,
+.merge-pipeline {
+  color: var(--ink-dim);
+  font-weight: 600;
+}
+
+.pipeline-unknown {
+  color: var(--stale);
+  font-weight: 600;
+}
+
+.not-ready {
+  color: var(--stale);
+  font-weight: 600;
+}
+
+.ready-flag {
+  color: var(--note);
+  font-weight: 600;
+}
+
+/* transient inline notes (copy failures, fail-soft POST notes — never banners) */
+.inline-note {
+  color: var(--ink-dim);
+  font-size: 14px;
+}
+
+.inline-note--error {
+  color: var(--stale);
+  font-weight: 600;
+}
+
+#nmn-counter {
+  font-weight: 700;
+}
+
+/* jump flash primitive: outline pulse ~1.5 s (class added/removed by the jump) */
+.flash {
+  outline: 2px solid var(--attention);
+  outline-offset: 2px;
+  animation: flash-pulse 1.5s ease-out 1;
+}
+
+@keyframes flash-pulse {
+  0%,
+  100% {
+    outline-offset: 2px;
+  }
+
+  50% {
+    outline-offset: 6px;
+  }
+}
+
+/* ---- launch side panel (SPEC 6.1, fixed-right overlay) ---- */
+
+#launch-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(420px, 92vw);
+  padding: 12px 16px 24px;
+  overflow-y: auto;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  z-index: 20;
+}
+
+/* The hidden attribute ships in index.html; the open class outranks it —
+ * among author !important rules id+class specificity beats [hidden]. */
+#launch-panel.open {
+  display: block !important;
+}
+
+.launch-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.launch-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.launch-close {
+  min-width: 34px;
+}
+
+.launch-line {
+  margin: 4px 0;
+  font-size: 14px;
+}
+
+.launch-k {
+  margin-right: 6px;
+  color: var(--ink-dim);
+}
+
+.launch-placeholder {
+  margin-top: 10px;
+}
+
+.launch-btn {
+  width: 100%;
+  margin-top: 12px;
+  padding: 8px;
+}
+
+.launch-note {
+  margin-top: 6px;
+  color: var(--ink-dim);
+  font-size: 14px;
+}
+
+/* ---- T5: top-bar chrome — dot states, case note, degraded badges ---- */
+
+#live-dot.live {
+  background: var(--note);
+}
+
+#live-dot.stale {
+  background: var(--stale);
+}
+
+#live-dot.frozen {
+  background: var(--stale);
+  background-image: repeating-linear-gradient(45deg, color-mix(in srgb, var(--stale) 30%, transparent) 0 2px, transparent 2px 5px);
+}
+
+/* T7 (C): QA mounts run no poll cycle — the dot renders neutral-dim there,
+ * never the LIVE green (live/stale/frozen stay the LIVE semantics above). */
+#live-dot.qa {
+  background: var(--ink-dim);
+}
+
+.case-note {
+  margin-left: 8px;
+  color: var(--derived);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+#degraded-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-dim);
+}
+
+.badge--advisory {
+  border-color: var(--derived);
+  color: var(--derived);
+}
+
+.badge--freeze {
+  border-color: var(--stale);
+  color: var(--stale);
+}
+
+/* ---- T5: banner strip (SPEC 8) ---- */
+
+#banner-strip {
+  padding: 8px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.banner-line {
+  margin: 2px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.banner--freeze {
+  color: var(--stale);
+}
+
+.banner--advisory {
+  color: var(--derived);
+}
+
+.banner--bad-doc {
+  color: var(--stale);
+}
+
+.banner--operator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* T6: the debounced LIVE poll-failure banner (SPEC 4.3) — stale tone, and it
+ * rides the operator layout so its dismiss button aligns. NOT a freeze. */
+.banner--degraded {
+  color: var(--stale);
+}
+
+.banner-dismiss {
+  min-width: 28px;
+}
+
+/* ---- T5: armed indicator (SPEC 7.3) ---- */
+
+.armed-indicator {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.armed--armed {
+  border: 2px solid var(--attention);
+  color: var(--attention);
+}
+
+.armed--flagged,
+.armed--unknown {
+  border: 2px solid var(--stale);
+  color: var(--stale);
+}
+
+.armed--cleared {
+  color: var(--ink-dim);
+}
+
+.armed-note--server-only {
+  color: var(--ink-dim);
+  font-size: 14px;
+}
+
+.armed-dismiss {
+  min-width: 28px;
+}
+
+/* ---- T5: freeze reactions (SPEC 8) — derived chips hatched, page locked ---- */
+
+body.frozen {
+  pointer-events: none;
+}
+
+body.frozen #grid {
+  filter: saturate(0.5) brightness(0.85);
+}
+
+body.frozen::after {
+  content: "";
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 40;
+  pointer-events: none;
+  /* T7 (B): hatch alpha roughly halved (30% -> 15%) — still unmistakable with
+   * the lock + banner + hatched derived chips, but it no longer drowns the
+   * frozen page content underneath. */
+  background-image: repeating-linear-gradient(45deg, color-mix(in srgb, var(--stale) 15%, transparent) 0 2px, transparent 2px 8px);
+}
+
+body.frozen .chip--derived {
+  background-image: repeating-linear-gradient(45deg, color-mix(in srgb, var(--stale) 30%, transparent) 0 2px, transparent 2px 6px);
+}
+
+/* notes degraded: {program} — the named card hatches + carries the caption */
+
+.program-card.degraded-notes {
+  background-image: repeating-linear-gradient(45deg, color-mix(in srgb, var(--stale) 30%, transparent) 0 2px, transparent 2px 6px);
+}
+
+.notes-degraded-caption {
+  margin-top: 4px;
+  color: var(--stale);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* goals degraded: {repo} — that repo's goal lines go stale */
+
+.goal-line.stale {
+  color: var(--stale);
+}
+
+/* ---- T5: Col 3 SESSIONS (SPEC 6.3) ---- */
+
+.session-group {
+  margin-top: 10px;
+}
+
+.session-group-head {
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--border);
+  color: var(--ink-dim);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.session-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  margin-top: 6px;
+  padding: 4px 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.session-row:hover {
+  border-color: var(--note);
+}
+
+.session-title {
+  font-weight: 600;
+}
+
+.session-master-tag {
+  color: var(--ink-dim);
+}
+
+.session-idle {
+  color: var(--ink-dim);
+}
+
+.session-idle.stale {
+  color: var(--stale);
+  font-weight: 600;
+}
+
+.idle-sub {
+  margin-top: 6px;
+}
+
+.idle-sub.collapsed .session-row {
+  display: none;
+}
+
+.idle-sub-head {
+  min-height: 26px;
+  padding: 2px 8px;
+  color: var(--ink-dim);
+}
+
+.idle-sub-head:hover {
+  border-color: var(--note);
+  color: var(--ink);
+}
+
+.idle-sub-head[aria-expanded="true"]::before {
+  content: "▾ ";
+}
+
+.idle-sub-head[aria-expanded="false"]::before {
+  content: "▸ ";
+}
+
+/* bottom strip: unmapped sessions; scrolls internally past 8 rows */
+
+.unmapped-strip {
+  margin-top: 14px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.unmapped-head {
+  color: var(--ink-dim);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.unmapped-rows {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.unmapped-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  margin-top: 6px;
+  padding: 4px 6px;
+  background: var(--panel-2);
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  font-size: 14px;
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+
+.unmapped-row:hover {
+  border-color: var(--note);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
