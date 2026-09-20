@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 New changes accumulate here between releases, above the latest version entry (Keep a Changelog convention; the release gates skip this section when reading the head version).
 
+## [1.4.0] - 2026-09-21
+
+Proven in the mc-wall program (2026-09-19/21): every change below ran live as the controller's own skill during a full three-wave build.
+
+### Added
+- **Persona gate** (`references/persona-gate.md`) — design-time operator-fit review: grounded brief built only from project facts + vault user-notes (persona specifics labeled assumptions), fixed output contract (per-phase scores, ranked frictions, 9pm-confusion list, dealmakers/breakers, fork rulings with rationale, explicit verdict), two-round same-agent protocol with a lazier adversarial round 2, and hard epistemics — ADVISORY only, gates operator review never build, operator veto always wins, max 2 rounds, operator-facing artifacts only. Plan may pre-answer genuine forks with a persona ruling (SKILL §2); the red-team gate gains check 11 "Operator fit" (prompt-anatomy).
+- **Forge artifacts** — `prompts` mode now writes write-once `prompt.md` / `goal.md` / `manifest.json` per forged row under `~/.zcode/mc-wall/forge/<program>/<row-id>/` and records the manifest path in the prompt-log row; content, never status — the note remains the single status authority (SKILL §1/§3).
+- **Session-title line + goal block** (prompt-anatomy) — every forged prompt ends with `Session title: [<program> <W-L>] <name>` (the bracket tag is the program↔session join key, scanned read-only from the session store); the launch block gains the ready-to-paste `/goal` block that regenerates the title through the app's own generator.
+
+### Changed
+- **Verify runs the overlay-diff first** (SKILL §4, runbook commands 1–2): the session's actual pasted prompt and `/goal` text are extracted read-only from the session store's `session_input` and diffed against the forge artifacts — machine overlay detection instead of operator self-report; rows forged before artifacts existed fall back to the manual ask.
+
 ## [1.3.0] - 2026-09-17
 
 Revised from the det-filter program (2026-09-15 → 09-17) — the skill's first full run; evaluation evidence retained locally (not published).
