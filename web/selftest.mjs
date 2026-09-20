@@ -2586,6 +2586,30 @@ test("F-4 mcwallf: degraded entries render exactly once (badges only, zero banne
   assert.ok(fz.dom.getElementById("live-dot").classList.contains("frozen"), "dot frozen");
 });
 
+test("F-5 mcwallf: UNPARSED note clamp rule + full-text title", () => {
+  const rules = parseCssRules(readWebFile("style.css"));
+  const clamp = rules.find((r) => r.selector === ".chip-unparsed-note" && r.media === "");
+  assert.ok(clamp, ".chip-unparsed-note rule exists");
+  assert.equal(clamp.decls["max-width"], "280px");
+  assert.equal(clamp.decls["overflow"], "hidden");
+  assert.equal(clamp.decls["text-overflow"], "ellipsis");
+  assert.equal(clamp.decls["white-space"], "nowrap");
+  assert.ok("min-width" in clamp.decls, "min-width declared for the flex layout");
+  const mocks = parseIndexMocks(readWebFile("index.html"));
+  const doc = JSON.parse(JSON.stringify(mocks.unparsed));
+  const longNote = "mcwallf very long unparsed status note ".repeat(6).trim();
+  doc.programs[0].lanes[0].status_note = longNote;
+  const t = makeQaApp("unparsed");
+  t.app.setDocument(doc);
+  t.app.render();
+  const lane = findByData(t.dom.getElementById("col1-programs"), "data-row-id", "W2-L8");
+  const chip = byClass(lane, "chip")[0];
+  const noteSpan = chip.children.find((c) => c.tag === "span" && c.text === longNote);
+  assert.ok(noteSpan, "the raw note renders verbatim");
+  assert.ok(noteSpan.classList.contains("chip-unparsed-note"), "clamp class on the note span");
+  assert.equal(noteSpan.attrs.title, longNote, "title carries the full note");
+});
+
 test("AC-29: degraded prefix reactions — notes/goals hatch, advisory badges, unknown verbatim-only", () => {
   const mocks = parseIndexMocks(readWebFile("index.html"));
   const ADVISORIES = [
