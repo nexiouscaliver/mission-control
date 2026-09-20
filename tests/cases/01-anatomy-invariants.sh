@@ -3,7 +3,7 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$ROOT" || exit 1
 ANAT="plugins/mission-control/skills/mission-control/references/prompt-anatomy.md"
-SKELETON_N=14   # v1.3.0 truth (T4 14-item skeleton). Deliberate changes update this constant.
+SKELETON_N=16   # v1.4.0 truth (14 + standing-goal line + session-title line). Deliberate changes update this constant.
 FAIL=0
 fail() { echo "  01: $*" >&2; FAIL=1; }
 

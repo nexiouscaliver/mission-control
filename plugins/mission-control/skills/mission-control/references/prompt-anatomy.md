@@ -10,7 +10,8 @@ A forged regenloop-lane prompt contains ONLY:
 - program facts — the things only the controller knows: frozen contracts, scope fences and owned files, baseline evidence pasted verbatim, kill switches, expected artifacts;
 - the records contract (where this session's evidence lands, and where it must not);
 - human gates (pause points);
-- a wall-clock bound.
+- a wall-clock bound;
+- a standing-goal line, and the session-title line as the final line.
 
 And NOTHING that restates regenloop mechanics: no base-capture semantics, no goal/stall/clarify behavior, no caps arithmetic, no ship internals, no host prose unchecked against `git remote -v`.
 
@@ -38,6 +39,8 @@ Deleted outright by §0 (all were present in the program's real prompts): goal g
 12. **Pause points (human gates).** "When Ready and green, PAUSE — surface the MR/PR for human merge; STOP cleanly if the operator is absent." MR vs PR per the launch block's host fact. One classified guard beats three absolute STOPs: a STOP-grade rule with no benign-delta path trains rule-breaking.
 13. **Kill switches** (if production-adjacent): named, one line, "kill switch first, always." Program facts, not tool mechanics — they stay.
 14. **Ship step per lane policy.** The invocation's `--ship|--no-ship` matches the launch block's host policy (field 6), decided from `git remote -v` this turn: `--ship` on a GitLab remote hands off to the ship flow (merge-ready MR, human merges); `--no-ship` on GitHub ends at a pushed branch + the explicit human/`gh` PR path. The never-merge boundary holds regardless (items 2 and 12); no host prose unchecked against the remote.
+15. **Standing goal.** One compact line near the end — `Standing goal: <the lane's success criterion in one sentence>` — the goal statement echoed in the session's own terms, so a context-compacted or resumed session re-anchors without re-reading anything. Program facts, not mechanics; one line, never a section.
+16. **Session title line — the final line.** The prompt ends with exactly `Session title: [<program> <W-L>] <short front-loaded name>` — the bracket tag (program slug + wave/lane) is the program↔session join key, scanned read-only from the message table; the name is short and front-loaded because the tail may be trimmed. The launch block's goal block appends the same line, so title steering rides both surfaces.
 
 ## The launch block
 
@@ -51,6 +54,18 @@ The companion that lives OUTSIDE the pasted prompt, shown to the operator alongs
 **Host/ship policy** — decided from `git remote -v` this turn. GitLab remote: `--ship`. GitHub remote: `--no-ship` + an explicit human/`gh` PR path (the ship handoff requires `glab auth` + a GitLab remote; on GitHub it degrades to surfacing a bare push — an unreviewed branch, no PR). Record which bots actually listen on that host; never write host-specific prose without the remote check.
 **Operator launch gate** — the precondition that must hold before pasting ("only after goal X closes", "only after MR !N merges"). Operator: paste any `/goal` overlay you add into the controller chat as well — overlays supersede the prompt; verify judges the overlay-adjusted prompt.
 **Goal statement** — the one-line essence printed above the prompt so the operator can sanity-check intent before pasting (the v1.2.0 standalone "Goal statements" section is dropped; this field is its one home): *"Make throttling fair, visible, and overridable: … — deployed and proven live."*
+**Goal block (paste as /goal after kickoff)** — the ready-to-paste `/goal` text emitted beside the prompt for deep lanes: the operator's standing deep-run boilerplate (verbatim, below) with the lane's goal statement and the same `Session title:` line (skeleton item 16) appended. `/goal` regenerates the session title through the app itself — a sanctioned surface, no external writes — and riding both prompt and goal makes the steering generator-proof. Lanes that do not run the full deep + ship loop carry a slim block: goal statement + title line only. Prompt first; goal block seconds later at kickoff.
+
+```
+/goal I want you to completely finish the check, planning loop, implementation loop,
+review loop, regenloop-ship loop(open draft MR and then start regenloop-ship loop), and
+then mark the MR ready, wait for about 30-45 mins for the automated omniforge reviewer to
+send the review comments in the MR, fix the issues flagged properly and push, finally run
+the omnicheck bot by posting a comment '/omnicheck' and then check after about 30 mins
+what is the outcome and make changes if needed be, the final status should be completely
+ready MR for merge. Do not set any tags in the MR yourself, only read them - the
+omniforge bot will set them as needed.
+```
 
 ## Situational modules
 
@@ -66,7 +81,7 @@ The companion that lives OUTSIDE the pasted prompt, shown to the operator alongs
 
 ## The red-team gate (before emitting any prompt)
 
-This gate is the single red-team checklist — SKILL §3 points here and does not restate it. The ten checks, run before emitting any prompt:
+This gate is the single red-team checklist — SKILL §3 points here and does not restate it. The eleven checks, run before emitting any prompt:
 
 1. **Exists now** — every SHA / flag / path / knob name exists right now, verified this turn — and the launch block carries the operator recheck line: forge-time verification expires at launch.
 2. **Owned-file collision** — any collision with an in-flight session?
@@ -78,5 +93,6 @@ This gate is the single red-team checklist — SKILL §3 points here and does no
 8. **Negative scope** — does any line of this prompt explain regenloop internals — base capture, goal/clarify/stall behavior, caps arithmetic, ship mechanics? Delete it. If the operator needs it, it belongs in the launch block; if the session needs it, the loaded manual already has it.
 9. **Pin freshness** — does every pinned fact carry its verification timestamp, and is any pin older than 4 h — or older than the last merge event on the base branch — re-derived at forge and re-checked via the launch block? A pin with no timestamp fails this check.
 10. **Authority declared** — does the prompt state where it stands relative to operator /goal overlays (precedence + the `decision:` recording duty), and do its pause points match the tool's own never-merge enforcement without renaming it?
+11. **Operator fit** — when the artifact is operator-facing (a UI, a flow, a runbook, this prompt as a pasted operator surface, a daily-mechanics fork), the persona gate applies per `references/persona-gate.md`: any persona rulings it consumes are recorded ADVISORY in the program note, and unruled operator-facing choices are surfaced as forks, not defaulted. Internal-code artifacts skip this check by design.
 
 A prompt that fails any check is reforged. The operator should never be the one to find a stale SHA — and the session should never be the one to discover the prompt was wrong about itself. Print the red-team record with every forge: one line per check with its evidence — the checklist form, never a narrative "all variables pinned" summary.
