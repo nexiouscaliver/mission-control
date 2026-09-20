@@ -785,8 +785,12 @@ class WallServer(http.server.ThreadingHTTPServer):
         return True
 
     def wait_shutdown(self) -> None:
+        """F-2: block until the serve loop has ACTUALLY exited — join() with no
+        timeout (serve_forever returns only after shutdown()), so the process
+        serves indefinitely under launchd. An unrequested loop death also
+        returns here; run_server turns that into a nonzero exit."""
         if self._serve_thread is not None:
-            self._serve_thread.join(timeout=10)
+            self._serve_thread.join()
 
 
 def _self_test(server: "WallServer") -> bool:
@@ -939,11 +943,19 @@ def run_server(cfg: ServerConfig) -> int:
         return 1
     if not server.ready:
         return 3
+    shutdown_requested = {"v": False}
+
+    def _request_shutdown(*_args) -> None:
+        shutdown_requested["v"] = True  # synchronous: set before the thread spawns
+        threading.Thread(target=server.shutdown, daemon=True).start()
+
     for sig in (signal.SIGTERM, signal.SIGINT):
-        signal.signal(
-            sig,
-            lambda *_: threading.Thread(target=server.shutdown, daemon=True).start(),
-        )
+        signal.signal(sig, _request_shutdown)
     server.wait_shutdown()
     server.server_close()
+    if not shutdown_requested["v"]:
+        # F-2 silent-death hole: launchd KeepAlive CrashedOnly restarts
+        # nonzero exits — ONE line, no token/prompt/repo.
+        logger.error("serve loop exited without a shutdown request")
+        return 4
     return 0
