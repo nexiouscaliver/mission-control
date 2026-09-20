@@ -348,6 +348,21 @@ button:disabled {
 .verify-tag {
   border: 1px dashed var(--derived);
   color: var(--derived);
+  position: relative;    /* F-6: the corner dot anchors to the tag */
+  padding-right: 16px;   /* F-6: dot-reserving, mirroring .chip's L223 treatment */
+}
+
+/* F-6: the verify? tag gets the dashed-chip corner-dot grammar. */
+.verify-tag::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid var(--derived);
+  background: transparent;
 }
 
 /* ---- Col 2: VERIFY QUEUE + HUMAN ACTIONS OWED (SPEC 6.2) ---- */
