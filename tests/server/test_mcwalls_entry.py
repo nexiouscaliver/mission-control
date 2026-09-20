@@ -284,6 +284,33 @@ def test_mcwallf_malformed_programs_type_one_line(capsys, monkeypatch, tmp_path)
         assert "wall.json" in lines[0]
 
 
+def test_mcwallf_db_path_precedence_env_first(monkeypatch, tmp_path):
+    monkeypatch.delenv("MC_WALL_DB", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))  # the home default stays hermetic
+    from mc_wall.server.tower_boot import (
+        default_db_path,
+        tower_config_from_wall,
+    )
+
+    wall_db = str(tmp_path / "wall-db.sqlite")
+    env_db = str(tmp_path / "env-db.sqlite")
+    home_default = str(tmp_path / ".zcode" / "cli" / "db" / "db.sqlite")
+    with_wall = {"token": "t", "db_path": wall_db}
+    without_wall = {"token": "t"}
+
+    def build(doc):
+        return tower_config_from_wall(doc, tmp_path).db_path
+
+    # spec §4: MC_WALL_DB > wall.json "db_path" > ~/.zcode/cli/db/db.sqlite
+    monkeypatch.setenv("MC_WALL_DB", env_db)
+    assert build(with_wall) == env_db  # both set: env wins
+    assert build(without_wall) == env_db  # env only
+    monkeypatch.delenv("MC_WALL_DB")
+    assert build(with_wall) == wall_db  # wall.json only
+    assert build(without_wall) == home_default  # neither -> home default
+    assert str(default_db_path()) == home_default  # helper: env > home default
+
+
 def test_mcwallf_server_stays_alive_past_10s():
     """F-2 (deterministic): the legacy wait_shutdown join(timeout=10) made
     run_server exit 0 ~10 s after boot, killing the daemon serve loop; launchd

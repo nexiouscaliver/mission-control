@@ -72,8 +72,15 @@ def tower_config_from_wall(data: dict, wall_home: pathlib.Path) -> TowerConfig:
         ))
     db = _optional_str(data, "db_path", "wall.json")
     pending = _optional_str(data, "pending_launch_path", "wall.json")
+    db_env = os.environ.get("MC_WALL_DB")
+    if db_env:  # spec §4 precedence: MC_WALL_DB > wall.json "db_path" > home default
+        db_path = pathlib.Path(db_env)
+    elif db is not None:
+        db_path = pathlib.Path(db)
+    else:
+        db_path = default_db_path()
     return TowerConfig(
-        db_path=str(default_db_path() if db is None else pathlib.Path(db)),
+        db_path=str(db_path),
         programs=tuple(programs),
         repos=tuple(repos),
         pending_launch_path=str(pending) if pending is not None
