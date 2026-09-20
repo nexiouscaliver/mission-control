@@ -2564,6 +2564,30 @@ test("AC-24 render: freeze — frozen body class, verbatim non-dismissable banne
   assert.ok("hidden" in fz.dom.getElementById("banner-strip").attrs, "strip re-hidden");
 });
 
+test("F-4 mcwallf: degraded entries render exactly once (badges only, zero banner lines)", () => {
+  const { dom } = makeQaApp("full");
+  const badges = byClass(dom.getElementById("degraded-badges"), "badge");
+  assert.equal(badges.length, 2, "one badge per degraded entry");
+  const stripText = collectText(dom.getElementById("banner-strip"));
+  for (const e of ["network degraded: git cleo", "note rows skipped: 2"]) {
+    assert.equal(badges.filter((b) => collectText(b) === e).length, 1,
+      "exactly one badge for: " + e);
+    assert.ok(stripText.indexOf(e) === -1,
+      "ZERO banner lines may carry the degraded entry: " + e);
+  }
+  assert.ok(stripText.indexOf("QA fixture: embeds the literal") !== -1,
+    "the strip keeps its non-degraded operator line");
+  assert.ok(
+    ["status", "alert"].indexOf(dom.getElementById("degraded-badges").attrs.role) !== -1,
+    "#degraded-badges must carry a live-region role"
+  );
+  const fz = makeQaApp("freeze");
+  assert.ok(fz.dom.body.classList.contains("frozen"), "freeze still freezes the body");
+  assert.equal(byClass(fz.dom.getElementById("degraded-badges"), "badge--freeze").length, 1,
+    "exactly one badge--freeze for the tracking entry");
+  assert.ok(fz.dom.getElementById("live-dot").classList.contains("frozen"), "dot frozen");
+});
+
 test("AC-29: degraded prefix reactions — notes/goals hatch, advisory badges, unknown verbatim-only", () => {
   const mocks = parseIndexMocks(readWebFile("index.html"));
   const ADVISORIES = [
