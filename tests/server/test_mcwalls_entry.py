@@ -282,3 +282,44 @@ def test_mcwallf_malformed_programs_type_one_line(capsys, monkeypatch, tmp_path)
         lines = captured.out.splitlines()
         assert len(lines) == 1  # ONE clear line
         assert "wall.json" in lines[0]
+
+
+def test_mcwallf_server_stays_alive_past_10s():
+    """F-2 (deterministic): the legacy wait_shutdown join(timeout=10) made
+    run_server exit 0 ~10 s after boot, killing the daemon serve loop; launchd
+    KeepAlive=CrashedOnly does not restart clean exit-0. Legacy death lands at
+    ~ boot + interpreter import + self-test + 10 s; the anchor is t=15 s from
+    boot (widened from the spec's 12 s — on a loaded runner startup alone can
+    eat 1.5-2 s, which would let a 12 s poll already see exit at HEAD,
+    silently invalidating the RED). The fixed process must still be alive."""
+    from tests.server import mcwalls_harness as H
+
+    port = _free_port()
+    wall_home = H.make_tmp_root("mcwallf-life-")
+    (wall_home / "wall.json").write_text(
+        json.dumps({"token": "entrytok", "port": port}), encoding="utf-8"
+    )
+    env = {**os.environ, "PYTHONPATH": str(H.REPO_ROOT),
+           "MC_WALL_HOME": str(wall_home),
+           "MC_WALL_DB": str(wall_home / "no-db.sqlite")}
+    start = time.monotonic()
+    proc = subprocess.Popen([sys.executable, "-m", "mc_wall.server"],
+                            cwd=str(H.REPO_ROOT), env=env,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        got = {}
+        assert H.wait_for(_mcwallf_probe_state(port, "entrytok", got), timeout=10.0), \
+            "server never answered /state"
+        remain = 15.0 - (time.monotonic() - start)  # anchor at BOOT: the legacy
+        if remain > 0:                              # 10 s join started at boot
+            time.sleep(remain)
+        assert proc.poll() is None, (
+            f"server exited rc={proc.returncode} "
+            f"~{time.monotonic() - start:.1f}s after boot — wall must serve indefinitely"
+        )
+        time.sleep(0.3)  # handlers installed past the serve-start window
+    finally:
+        proc.terminate()
+        _stdout, stderr = proc.communicate(timeout=10)
+    assert proc.returncode == 0
+    assert b"Traceback" not in stderr

@@ -909,6 +909,8 @@ def create_server(
 
 
 def run_server(cfg: ServerConfig) -> int:
+    """launchd-facing exit contract: 0=signal shutdown, 1=port busy,
+    3=never ready, 4=serve loop died unrequested."""
     wall_home = cfg.wall_home if cfg.wall_home is not None else resolve_wall_home()
     web_dir = cfg.web_dir if cfg.web_dir is not None else _repo_root() / "web"
     log_dir = cfg.log_dir if cfg.log_dir is not None else wall_home / "logs"
