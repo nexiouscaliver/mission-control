@@ -23,3 +23,9 @@ name = "templates-check"
 when = ["templates/**"]
 check = "bash -n templates/run_sh.template"
 autofix = ""
+
+[[gate]]
+name = "docs-check"
+when = ["**/*.md", ".gitignore", "skills/**"]
+check = "test -s README.md && test -s skills/mc-status/SKILL.md"
+autofix = ""

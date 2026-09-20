@@ -189,7 +189,9 @@
         needsMeNow.appendChild(el("span", "nmn-counter"));
         bar.appendChild(needsMeNow);
         bar.appendChild(el("span", "armed-indicator-slot"));
-        bar.appendChild(el("span", "degraded-badges"));
+        var badges = el("span", "degraded-badges");
+        badges.setAttribute("role", "status"); // F-4: the a11y announce survives on the badge row
+        bar.appendChild(badges);
         bar.appendChild(el("span", "state-age-caption"));
         body.appendChild(bar);
       }
@@ -392,7 +394,9 @@
           noteSpan.classList.add("dim");
           noteSpan.setText("(empty status)");
         } else {
+          noteSpan.classList.add("chip-unparsed-note"); // F-5: clamp; full text on title
           noteSpan.setText(noteText);
+          noteSpan.setAttribute("title", noteText);
         }
         chipEl.appendChild(noteSpan);
       } else {
@@ -994,7 +998,7 @@
       }
       var post;
       try {
-        post = deps.fetch("/" + liveToken() + "/activate-app", { method: "POST", body: "{}" });
+        post = deps.fetch("/" + liveToken() + "/activate-app", { method: "POST", body: "{}", headers: { "Content-Type": "application/json" } });
       } catch (e) {
         transientNote("activate-app failed", anchor, true);
         return Promise.resolve(false);
@@ -1195,7 +1199,7 @@
       }
       var post;
       try {
-        post = deps.fetch("/" + token + "/needs-me-now", { method: "POST", body: "{}" });
+        post = deps.fetch("/" + token + "/needs-me-now", { method: "POST", body: "{}", headers: { "Content-Type": "application/json" } });
       } catch (e) {
         return pageSideFallback("needs-me-now unreachable — page-side fallback");
       }
@@ -1301,8 +1305,9 @@
       return out;
     }
 
-    // ---- banner strip (SPEC 8): degraded lines verbatim, freeze headline,
-    //      dismissable operator line, page-generated bad-doc line ----
+    // ---- banner strip (SPEC 8): dismissable operator line, page-generated
+    //      bad-doc line, missing-token line, poll-failure DEGRADED banner.
+    //      F-4: degraded ENTRIES render once, as top-bar badges — never here. ----
 
     function renderBanners(docEl, pollDriven) {
       var strip = byId("banner-strip");
@@ -1322,25 +1327,16 @@
           dismissedOperatorBanner = null;
         }
       }
+      // F-4: freeze derives OUTSIDE the build callback — renderContainer skips
+      // identical poll renders, and a skip must never leave a stale freeze.
+      if (valid) {
+        var entriesNow = degradedEntriesOf(docEl);
+        for (var f = 0; f < entriesNow.length; f += 1) {
+          if (degradedKind(entriesNow[f]) === "freeze") freezeActive = true;
+        }
+      }
       renderContainer(strip, "banner-strip", pollDriven, function (scratch) {
         if (valid) {
-          var entries = degradedEntriesOf(docEl);
-          for (var i = 0; i < entries.length; i += 1) {
-            var line = el("div");
-            line.classList.add("banner-line");
-            var kind = degradedKind(entries[i]);
-            if (kind === "freeze") {
-              freezeActive = true; // L1: freeze while ANY tracking-degraded entry exists
-              // T7 (A): the verbatim entry ONCE, styled as freeze — the banner
-              // must not repeat the entry's own prefix as an extra headline.
-              line.classList.add("banner--freeze");
-              line.setText(entries[i]);
-            } else {
-              line.setText(entries[i]);
-              if (kind === "advisory") line.classList.add("banner--advisory");
-            }
-            scratch.appendChild(line);
-          }
           if (banner !== null && banner !== dismissedOperatorBanner) {
             var op = el("div");
             op.classList.add("banner-line");
@@ -1523,7 +1519,7 @@
       }
       var post;
       try {
-        post = deps.fetch("/" + token + "/launch/" + kind, { method: "POST", body: "{}" });
+        post = deps.fetch("/" + token + "/launch/" + kind, { method: "POST", body: "{}", headers: { "Content-Type": "application/json" } });
       } catch (e) {
         transientNote(kind + " failed", anchor, true);
         return Promise.resolve(false);

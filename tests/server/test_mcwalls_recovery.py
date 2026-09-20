@@ -250,6 +250,7 @@ def test_concurrent_launch_and_monitor_never_corrupt():
         make_fixture_db,
         make_tmp_root,
         serve,
+        write_pending,
     )
 
     repo = make_tmp_root("mcwalls-repo-")
@@ -259,11 +260,25 @@ def test_concurrent_launch_and_monitor_never_corrupt():
     clock = FakeClock(1_000_000)
     base = clock()
     # A pre-created matchable session, dated after every launch_click_ms (the
-    # frozen clock never moves the cursor past it): each launch can match.
+    # frozen clock never moves the cursor past it): each launch can match —
+    # the launch x monitor x cancel race surface stays wired.
     _add_rows(
         db,
         sessions=[("s1", str(repo), base + 500)],
         inputs=[(1, "s1", {"text": "churn [secfix W2-L7]"}, base + 510)],
+    )
+    # Pre-seed a live pending record (prompt-armed, non-terminal; boot
+    # recovery promotes it to await-birth — still occupied).
+    write_pending(
+        state_dir,
+        {
+            "status": "prompt-armed",
+            "row_id": ROW["row_id"],
+            "lane_tag": ROW["lane_tag"],
+            "repo_root": str(repo),
+            "prompt_sha256": "0" * 64,
+            "launch_click_ms": base - 1000,
+        },
     )
     with serve(
         collect_state=StubTower(STATE),
@@ -273,27 +288,51 @@ def test_concurrent_launch_and_monitor_never_corrupt():
         monitor_interval_s=0.02,
         clock=clock,
     ) as h:
-        stop = threading.Event()
         statuses = []
         parse_failures = []
+        cancels = []
+        samples = []
 
+        # 1. Occupied slot -> deterministic 409 (the both-outcomes requirement
+        #    is satisfied HERE, never by the churn window). Both deterministic
+        #    responses are recorded as OBSERVED statuses — never hand-inserted
+        #    literals — so the sample-count assert below covers them too.
+        occupied = h.http(
+            "POST", f"/{h.token}/launch",
+            {"row_id": ROW["row_id"], "repo_root": str(repo)},
+        )
+        assert occupied.status == 409
+        statuses.append(occupied.status)
+        # 2. Cancel frees the slot -> deterministic 200.
+        assert h.http("POST", f"/{h.token}/launch/cancel", {}).status == 200
+        ok = h.http(
+            "POST", f"/{h.token}/launch",
+            {"row_id": ROW["row_id"], "repo_root": str(repo)},
+        )
+        assert ok.status == 200
+        statuses.append(ok.status)
+
+        # 3. Churn: FIXED iteration counts (no time window, no outcome depends
+        #    on any sleep); threads asserted dead within bounded joins.
         def writer():
-            while not stop.is_set():
+            for _ in range(20):
                 r = h.http(
-                    "POST",
-                    f"/{h.token}/launch",
+                    "POST", f"/{h.token}/launch",
                     {"row_id": ROW["row_id"], "repo_root": str(repo)},
                 )
                 statuses.append(r.status)
-                time.sleep(0.005)
 
         def canceller():
-            while not stop.is_set():
+            for _ in range(20):
                 h.http("POST", f"/{h.token}/launch/cancel", {})
-                time.sleep(0.005)
+                cancels.append(True)
 
         def reader():
-            while not stop.is_set():
+            for _ in range(40):
+                # Recorded per ITERATION (top of body): the OSError-continue
+                # below is a completed sample too, so only an end-of-loop
+                # record would undercount it.
+                samples.append(True)
                 try:
                     raw = (state_dir / "pending.json").read_text(encoding="utf-8")
                 except OSError:
@@ -303,14 +342,10 @@ def test_concurrent_launch_and_monitor_never_corrupt():
                 except ValueError:
                     parse_failures.append(raw)
                     continue
-                if isinstance(parsed, dict) and not {
-                    "version",
-                    "status",
-                    "row_id",
-                    "updated_at_ms",
+                if not isinstance(parsed, dict) or not {
+                    "version", "status", "row_id", "updated_at_ms",
                 } <= set(parsed):
                     parse_failures.append(raw)
-                time.sleep(0.01)
 
         threads = [
             threading.Thread(target=writer),
@@ -319,20 +354,21 @@ def test_concurrent_launch_and_monitor_never_corrupt():
         ]
         for t in threads:
             t.start()
-        time.sleep(1.5)  # let them interleave
-        stop.set()
         for t in threads:
-            t.join(timeout=5)
-        assert not any(t.is_alive() for t in threads)
+            t.join(timeout=10)
+            assert not t.is_alive(), "churn thread failed to finish its fixed count"
+
+        # 4. Deterministic invariants. The exact sample counts close the
+        #    silent-death gap: a churn thread that died on an unhandled
+        #    exception fails its count loudly instead of quietly shrinking
+        #    the sample set.
+        assert len(statuses) == 22  # 2 deterministic calls + 20 writer posts
+        assert len(cancels) == 20
+        assert len(samples) == 40
         assert parse_failures == []
         assert set(statuses) <= {200, 409}
-        assert 200 in statuses and 409 in statuses
-        # The file still parses with the full record shape...
-        final = json.loads(
-            (state_dir / "pending.json").read_text(encoding="utf-8")
-        )
+        final = json.loads((state_dir / "pending.json").read_text(encoding="utf-8"))
         assert {"version", "status", "row_id", "updated_at_ms"} <= set(final)
-        # ...and the server still answers.
         assert h.http("GET", f"/{h.token}/state").status == 200
 
 

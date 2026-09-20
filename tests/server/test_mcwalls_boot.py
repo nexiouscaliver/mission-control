@@ -154,3 +154,146 @@ def test_run_server_returns_3_when_never_ready(monkeypatch, tmp_path):
         assert app.run_server(cfg) == 3
     finally:
         _drop_wall_log_handlers(logs)
+
+
+def test_mcwallf_tower_config_built_once_across_requests(monkeypatch, tmp_path):
+    import http.client as _hc
+
+    import mc_wall.server.app as app
+    import mc_wall.server.tower_boot as tower_boot
+    from tests.server.mcwalls_harness import make_web_dir
+
+    (tmp_path / "wall.json").write_text('{"token": "t"}', encoding="utf-8")
+    monkeypatch.setenv("MC_WALL_HOME", str(tmp_path))  # hermetic: resolve_wall_home()
+    # must NOT read the operator's real ~/.zcode/mc-wall/wall.json (a live
+    # TowerConfig would run real git/glab spawns inside pytest; and on machines
+    # without that file the test would be a permanent RED)
+    monkeypatch.setenv("MC_WALL_DB", str(tmp_path / "no-db.sqlite"))  # never the real db
+    calls = {"n": 0}
+    real = tower_boot.build_tower_config
+
+    def counting(wall_home):
+        calls["n"] += 1
+        return real(wall_home)
+
+    monkeypatch.setattr(tower_boot, "build_tower_config", counting)
+    monkeypatch.setattr(app, "_default_tower_config_box", [])
+    logs = tmp_path / "logs"
+    from mc_wall.server.app import create_server
+
+    srv = create_server("t", port=0, web_dir=make_web_dir(), log_dir=logs)
+    try:
+        for _ in range(4):
+            conn = _hc.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=5)
+            conn.request("GET", "/t/state", headers={"Host": "127.0.0.1"})
+            r = conn.getresponse()
+            r.read()
+            conn.close()
+            assert r.status == 200
+        assert calls["n"] == 1, "tower config must be built at most once per process"
+    finally:
+        srv.shutdown()
+        srv.server_close()
+        _drop_wall_log_handlers(logs)
+
+
+def test_mcwallf_wait_shutdown_blocks_until_shutdown_requested():
+    import threading
+
+    from mc_wall.server.app import create_server
+    from tests.server.mcwalls_harness import StubTower, make_tmp_root, make_web_dir
+
+    logs = make_tmp_root("mcwallf-ws-") / "logs"
+    srv = create_server("t", port=0, web_dir=make_web_dir(), log_dir=logs,
+                        collect_state=StubTower({}))
+    try:
+        done = threading.Event()
+
+        def _waiter():
+            srv.wait_shutdown()
+            done.set()
+
+        waiter = threading.Thread(target=_waiter)
+        waiter.start()
+        assert not done.wait(0.2), "wait_shutdown must block while serving (no request)"
+        srv.shutdown()
+        assert done.wait(2.0), "wait_shutdown must return promptly after shutdown()"
+        waiter.join(timeout=5)
+        assert not waiter.is_alive()
+    finally:
+        srv.shutdown()
+        srv.server_close()
+        _drop_wall_log_handlers(logs)
+
+
+def test_mcwallf_run_server_nonzero_when_loop_dies_unrequested(monkeypatch, tmp_path):
+    import mc_wall.server.app as app
+
+    monkeypatch.setattr(app.signal, "signal", lambda sig, h: None)  # never touch real handlers
+
+    class DeadLoopServer:
+        ready = True
+
+        def wait_shutdown(self):
+            pass
+
+        def server_close(self):
+            pass
+
+    monkeypatch.setattr(app, "create_server", lambda *a, **k: DeadLoopServer())
+    logs = tmp_path / "logs"
+    try:
+        # token "zz": RedactToken replaces EVERY substring occurrence of the
+        # token — the plan's token "t" would mangle the expected message
+        # ("exited" -> "exi<redacted>ed"). "zz" never occurs in the log line.
+        cfg = app.ServerConfig(token="zz", wall_home=tmp_path, web_dir=tmp_path / "web",
+                               state_dir=tmp_path / "state", log_dir=logs)
+        assert app.run_server(cfg) == 4
+        err = [ln for ln in (logs / "wall.log").read_text(encoding="utf-8").splitlines()
+               if "ERROR" in ln]
+        assert len(err) == 1 and "without a shutdown request" in err[0]
+    finally:
+        _drop_wall_log_handlers(logs)
+
+
+def test_mcwallf_run_server_zero_after_signal_driven_shutdown(monkeypatch, tmp_path):
+    import signal as signal_mod
+    import threading
+    import time
+
+    import mc_wall.server.app as app
+
+    installed = {}
+    monkeypatch.setattr(app.signal, "signal", lambda sig, h: installed.__setitem__(sig, h))
+
+    class ServingServer:
+        def __init__(self):
+            self.ready = True
+            self.shutdown_called = threading.Event()
+
+        def shutdown(self):
+            self.shutdown_called.set()
+
+        def wait_shutdown(self):
+            assert self.shutdown_called.wait(2.0), \
+                "wait_shutdown must not return before a shutdown is requested"
+
+        def server_close(self):
+            pass
+
+    srv = ServingServer()
+    monkeypatch.setattr(app, "create_server", lambda *a, **k: srv)
+
+    def _fire():
+        time.sleep(0.05)
+        installed[signal_mod.SIGTERM](None, None)
+
+    threading.Thread(target=_fire, daemon=True).start()
+    logs = tmp_path / "logs"
+    try:
+        cfg = app.ServerConfig(token="t", wall_home=tmp_path, web_dir=tmp_path / "web",
+                               state_dir=tmp_path / "state", log_dir=logs)
+        assert app.run_server(cfg) == 0
+        assert signal_mod.SIGTERM in installed and signal_mod.SIGINT in installed
+    finally:
+        _drop_wall_log_handlers(logs)

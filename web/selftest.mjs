@@ -1804,7 +1804,7 @@ test("AC-18 LIVE: needs-me-now POST shape; ok-jump / action-null / non-2xx / rej
     const r = await s.app.needsMeNow();
     assert.deepEqual(
       s.fetchFn.calls,
-      [{ url: "/tok1/needs-me-now", init: { method: "POST", body: "{}" } }],
+      [{ url: "/tok1/needs-me-now", init: { method: "POST", body: "{}", headers: { "Content-Type": "application/json" } } }],
       "pinned POST call shape (T6's LIVE n-path depends on this)"
     );
     assert.equal(r.jumped, "W2-L4");
@@ -1987,7 +1987,7 @@ test("AC-8: rejected POSTs (activate-app, needs-me-now) → inline note only, ba
   az.click();
   await flushMicrotasks();
   assert.equal(s.fetchFn.calls[0].url, "/tok1/activate-app", "pinned activate-app URL");
-  assert.deepEqual(s.fetchFn.calls[0].init, { method: "POST", body: "{}" }, "pinned POST init");
+  assert.deepEqual(s.fetchFn.calls[0].init, { method: "POST", body: "{}", headers: { "Content-Type": "application/json" } }, "pinned POST init");
   assert.ok(
     byClass(s.dom.getElementById("panel-verify"), "inline-note--error").length >= 1,
     "inline failure note"
@@ -2011,6 +2011,51 @@ test("AC-8: rejected POSTs (activate-app, needs-me-now) → inline note only, ba
     "QA transient note"
   );
   assert.equal(fetchQa.calls.length, 0, "QA activate issues no fetch");
+});
+
+test("F-3 mcwallf: all three POST sites send Content-Type application/json", async () => {
+  // needs-me-now (LIVE)
+  {
+    const s = makeLiveApp([{ status: 200, json: { ok: true, action: null } }]);
+    await s.app.needsMeNow();
+    assert.equal(s.fetchFn.calls.length, 1);
+    assert.equal(
+      s.fetchFn.calls[0].init.headers["Content-Type"], "application/json",
+      "needs-me-now must send Content-Type: application/json"
+    );
+  }
+  // activate-app (LIVE): click Bring ZCode forward on a verify row
+  {
+    const s = makeLiveApp([{ reject: "network" }]);
+    const row = findByData(s.dom.getElementById("panel-verify"), "data-row-id", "W2-L3");
+    byClass(row, "activate-btn")[0].click();
+    await flushMicrotasks();
+    assert.equal(s.fetchFn.calls[0].url, "/tok1/activate-app");
+    assert.equal(
+      s.fetchFn.calls[0].init.headers["Content-Type"], "application/json",
+      "activate-app must send Content-Type: application/json"
+    );
+  }
+  // armedPost re-copy + cancel (LIVE)
+  {
+    const s = makeLiveApp([{ status: 200, json: { ok: true } }, { status: 200, json: { ok: true } }]);
+    const slot = s.dom.getElementById("armed-indicator-slot");
+    byClass(slot, "armed-recopy")[0].click();
+    await flushMicrotasks();
+    byClass(slot, "armed-cancel")[0].click();
+    await flushMicrotasks();
+    assert.deepEqual(
+      s.fetchFn.calls.map((c) => c.url),
+      ["/tok1/launch/re-copy", "/tok1/launch/cancel"],
+      "both armed posts fired"
+    );
+    for (const c of s.fetchFn.calls) {
+      assert.equal(
+        c.init.headers["Content-Type"], "application/json",
+        c.url + " must send Content-Type: application/json"
+      );
+    }
+  }
 });
 
 test("AC-21 full: gitlab !N and github #N verbatim across chips AND merge cards", () => {
@@ -2302,19 +2347,18 @@ test("AC-1[S]: full QA render populates four panel roots + the whole top bar", (
   const badges = byClass(dom.getElementById("degraded-badges"), "badge");
   assert.equal(badges.length, 2, "one badge per degraded entry");
   assert.equal(collectText(badges[0]), "network degraded: git cleo", "badge text verbatim");
-  // banner strip: every entry verbatim + dismissable operator line
+  // banner strip: operator line only — F-4 moved degraded entries to badges
   const strip = dom.getElementById("banner-strip");
   assert.ok(!("hidden" in strip.attrs), "strip visible while lines exist");
   const stripText = collectText(strip);
-  for (const e of ["network degraded: git cleo", "note rows skipped: 2"]) {
-    assert.ok(stripText.indexOf(e) !== -1, "degraded entry verbatim: " + e);
-  }
+  assert.ok(stripText.indexOf("network degraded: git cleo") === -1,
+    "degraded entries render as badges, never strip lines");
   assert.ok(stripText.indexOf("QA fixture: embeds the literal") !== -1, "server.banner verbatim");
   const dis = byClass(strip, "banner-dismiss")[0];
   assert.ok(dis, "operator line dismissable");
   dis.click();
   assert.ok(collectText(strip).indexOf("QA fixture") === -1, "dismiss removes the operator line");
-  assert.ok(!("hidden" in strip.attrs), "degraded lines keep the strip visible");
+  assert.ok("hidden" in strip.attrs, "no non-degraded lines left -> strip hidden");
 });
 
 test("AC-3: unknown case falls back to full with the note badge in the top bar", () => {
@@ -2445,8 +2489,8 @@ test("AC-33: armed LIVE operator escape — visibility matrix + POST shapes + fa
     assert.deepEqual(
       s.fetchFn.calls,
       [
-        { url: "/tok1/launch/re-copy", init: { method: "POST", body: "{}" } },
-        { url: "/tok1/launch/cancel", init: { method: "POST", body: "{}" } },
+        { url: "/tok1/launch/re-copy", init: { method: "POST", body: "{}", headers: { "Content-Type": "application/json" } } },
+        { url: "/tok1/launch/cancel", init: { method: "POST", body: "{}", headers: { "Content-Type": "application/json" } } },
       ],
       "pinned armed POST shapes (SPEC 4.3)"
     );
@@ -2493,16 +2537,15 @@ test("AC-33: armed LIVE operator escape — visibility matrix + POST shapes + fa
   }
 });
 
-test("AC-24 render: freeze — frozen body class, verbatim non-dismissable banner, dot frozen, later doc clears", () => {
+test("AC-24 render: freeze — frozen body class, verbatim non-dismissable freeze badge, dot frozen, later doc clears", () => {
   const fz = makeQaApp("freeze");
   assert.ok(fz.dom.body.classList.contains("frozen"), "tracking degraded: -> body frozen");
-  const strip = fz.dom.getElementById("banner-strip");
-  assert.ok(!("hidden" in strip.attrs), "banner visible");
-  const text = collectText(strip);
-  assert.ok(text.indexOf("tracking degraded") !== -1, "freeze headline");
-  assert.ok(text.indexOf("tracking degraded: session store unreadable") !== -1, "entry verbatim");
-  assert.ok(byClass(strip, "banner--freeze").length >= 1, "freeze line class");
-  assert.equal(byClass(strip, "banner-dismiss").length, 0, "freeze banner is NOT dismissable");
+  const badgesEl = fz.dom.getElementById("degraded-badges");
+  const fzBadges = byClass(badgesEl, "badge--freeze");
+  assert.equal(fzBadges.length, 1, "exactly one freeze badge");
+  assert.equal(collectText(fzBadges[0]), "tracking degraded: session store unreadable",
+    "entry verbatim in the badge");
+  assert.equal(byClass(badgesEl, "banner-dismiss").length, 0, "freeze badge is NOT dismissable");
   assert.ok(fz.dom.getElementById("live-dot").classList.contains("frozen"), "dot frozen while frozen");
   // freeze CSS machinery exists (page lock + hatched derived chips)
   const rules = parseCssRules(readWebFile("style.css"));
@@ -2517,6 +2560,73 @@ test("AC-24 render: freeze — frozen body class, verbatim non-dismissable banne
   fz.app.mountQA("minimal");
   assert.ok(!fz.dom.body.classList.contains("frozen"), "later doc clears freeze");
   assert.ok("hidden" in fz.dom.getElementById("banner-strip").attrs, "strip re-hidden");
+});
+
+test("F-4 mcwallf: degraded entries render exactly once (badges only, zero banner lines)", () => {
+  const { dom } = makeQaApp("full");
+  const badges = byClass(dom.getElementById("degraded-badges"), "badge");
+  assert.equal(badges.length, 2, "one badge per degraded entry");
+  const stripText = collectText(dom.getElementById("banner-strip"));
+  for (const e of ["network degraded: git cleo", "note rows skipped: 2"]) {
+    assert.equal(badges.filter((b) => collectText(b) === e).length, 1,
+      "exactly one badge for: " + e);
+    assert.ok(stripText.indexOf(e) === -1,
+      "ZERO banner lines may carry the degraded entry: " + e);
+  }
+  assert.ok(stripText.indexOf("QA fixture: embeds the literal") !== -1,
+    "the strip keeps its non-degraded operator line");
+  assert.ok(
+    ["status", "alert"].indexOf(dom.getElementById("degraded-badges").attrs.role) !== -1,
+    "#degraded-badges must carry a live-region role"
+  );
+  const fz = makeQaApp("freeze");
+  assert.ok(fz.dom.body.classList.contains("frozen"), "freeze still freezes the body");
+  assert.equal(byClass(fz.dom.getElementById("degraded-badges"), "badge--freeze").length, 1,
+    "exactly one badge--freeze for the tracking entry");
+  assert.ok(fz.dom.getElementById("live-dot").classList.contains("frozen"), "dot frozen");
+});
+
+test("F-5 mcwallf: UNPARSED note clamp rule + full-text title", () => {
+  const rules = parseCssRules(readWebFile("style.css"));
+  const clamp = rules.find((r) => r.selector === ".chip-unparsed-note" && r.media === "");
+  assert.ok(clamp, ".chip-unparsed-note rule exists");
+  assert.equal(clamp.decls["max-width"], "280px");
+  assert.equal(clamp.decls["overflow"], "hidden");
+  assert.equal(clamp.decls["text-overflow"], "ellipsis");
+  assert.equal(clamp.decls["white-space"], "nowrap");
+  assert.ok("min-width" in clamp.decls, "min-width declared for the flex layout");
+  const mocks = parseIndexMocks(readWebFile("index.html"));
+  const doc = JSON.parse(JSON.stringify(mocks.unparsed));
+  const longNote = "mcwallf very long unparsed status note ".repeat(6).trim();
+  doc.programs[0].lanes[0].status_note = longNote;
+  const t = makeQaApp("unparsed");
+  t.app.setDocument(doc);
+  t.app.render();
+  const lane = findByData(t.dom.getElementById("col1-programs"), "data-row-id", "W2-L8");
+  const chip = byClass(lane, "chip")[0];
+  const noteSpan = chip.children.find((c) => c.tag === "span" && c.text === longNote);
+  assert.ok(noteSpan, "the raw note renders verbatim");
+  assert.ok(noteSpan.classList.contains("chip-unparsed-note"), "clamp class on the note span");
+  assert.equal(noteSpan.attrs.title, longNote, "title carries the full note");
+});
+
+test("F-6 mcwallf: verify-tag corner dot grammar + padding accommodation", () => {
+  const rules = parseCssRules(readWebFile("style.css"));
+  const base = rules.find((r) => r.selector === ".verify-tag" && r.media === "");
+  assert.ok(base, "standalone .verify-tag rule exists");
+  assert.equal(base.decls["position"], "relative", "the dot anchors to the tag");
+  assert.equal(base.decls["padding-right"], "16px", "right padding reserves the dot");
+  const dot = rules.find((r) => r.selector === ".verify-tag::after" && r.media === "");
+  assert.ok(dot, ".verify-tag::after rule exists");
+  assert.equal(dot.decls["content"], "\"\"");
+  assert.equal(dot.decls["position"], "absolute");
+  assert.equal(dot.decls["top"], "-4px");
+  assert.equal(dot.decls["right"], "-4px");
+  assert.equal(dot.decls["width"], "10px");
+  assert.equal(dot.decls["height"], "10px");
+  assert.equal(dot.decls["border-radius"], "50%");
+  assert.equal(dot.decls["border"], "1.5px solid var(--derived)");
+  assert.equal(dot.decls["background"], "transparent");
 });
 
 test("AC-29: degraded prefix reactions — notes/goals hatch, advisory badges, unknown verbatim-only", () => {
@@ -2540,14 +2650,10 @@ test("AC-29: degraded prefix reactions — notes/goals hatch, advisory badges, u
   t.app.render();
   const dom = t.dom;
   assert.ok(!dom.body.classList.contains("frozen"), "no freeze prefix present");
-  // every entry renders verbatim in the strip, one line each
+  // F-4: degraded entries render as badges — the strip carries none of them
   const strip = dom.getElementById("banner-strip");
-  const lines = byClass(strip, "banner-line");
-  assert.equal(lines.length, ADVISORIES.length + REACTIONS.length + UNKNOWNS.length, "one line per entry");
-  const stripText = collectText(strip);
-  for (const e of ADVISORIES.concat(REACTIONS, UNKNOWNS)) {
-    assert.ok(stripText.indexOf(e) !== -1, "verbatim line: " + e);
-  }
+  assert.equal(byClass(strip, "banner-line").length, 0,
+    "degraded entries render as badges, never strip lines");
   // top-bar badges: advisory class exactly for the advisory prefixes
   const badges = byClass(dom.getElementById("degraded-badges"), "badge");
   assert.equal(badges.length, 11, "one badge per entry");
@@ -3125,18 +3231,30 @@ test("T6-carry(c)+(d): unmapped rows carry a dim id span; session/unmapped rows 
 // lane/session/unmapped wiring assertions staying green.
 // =====================================================================
 
-test("T7-A: freeze banner renders the verbatim entry exactly once (no duplicated headline)", () => {
+test("T7-A: freeze renders the verbatim entry exactly once (badge surface, no duplicated headline)", () => {
   const fz = makeQaApp("freeze");
-  const strip = fz.dom.getElementById("banner-strip");
-  const line = byClass(strip, "banner--freeze")[0];
-  assert.ok(line, "freeze banner line renders");
+  const badgesEl = fz.dom.getElementById("degraded-badges");
+  const badge = byClass(badgesEl, "badge--freeze")[0];
+  assert.ok(badge, "freeze badge renders");
   assert.equal(
-    collectText(line),
+    collectText(badge),
     "tracking degraded: session store unreadable",
-    "the freeze banner IS the verbatim entry styled as freeze — no extra headline"
+    "the freeze badge IS the verbatim entry styled as freeze — no extra headline"
   );
-  const occurrences = collectText(strip).split("tracking degraded").length - 1;
-  assert.equal(occurrences, 1, "exactly one occurrence of the tracking-degraded wording in the strip");
+  // the rendered page = every body surface EXCEPT the embedded mock-fixture
+  // script blocks (buildMockDom parks the raw JSON in the body as data)
+  function renderedText(node) {
+    let text = node.text || "";
+    for (const child of node.children) {
+      if (child.tag === "script") continue;
+      text += renderedText(child);
+    }
+    return text;
+  }
+  const occurrences = renderedText(fz.dom.body).split("tracking degraded").length - 1;
+  assert.equal(occurrences, 1,
+    "exactly one occurrence of the tracking-degraded wording anywhere on the page");
+  assert.ok(fz.dom.body.classList.contains("frozen"), "freeze still freezes the body");
 });
 
 test("T7-B: freeze full-page hatch toned to roughly half intensity, still --stale-derived", () => {
