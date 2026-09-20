@@ -1,0 +1,7 @@
+## GOAL — {lane_tag}
+
+{goal_text}
+
+---
+Repo: {repo_root}
+Paste note: this block replaces the standing prompt. Work the goal to done, then run your verify step.

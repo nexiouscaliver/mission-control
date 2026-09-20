@@ -1,0 +1,4 @@
+#!/bin/bash
+export PATH=/opt/homebrew/bin:/usr/bin:/bin
+export PYTHONPATH="{repo_root}"
+exec /opt/homebrew/bin/python3.14 -m mc_wall.server
