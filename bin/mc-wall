@@ -143,7 +143,27 @@ class Cli:
         os.makedirs(os.path.dirname(plist), exist_ok=True)
         with open(plist, "w", encoding="utf-8") as f:
             f.write(self._render_plist())
+        self._deploy_skill()
         return self.start()
+
+    def _deploy_skill(self):
+        # Auxiliary: any failure prints one line and install CONTINUES. In-process
+        # import ONLY — never self.executor, never a subprocess (the not-owned
+        # executor.argvs assertion must hold). Source repo root injectable for
+        # tests. importlib (not a static from-import) keeps this file's AC-57
+        # stdlib-only import surface intact while scripts/ stays the deploy owner.
+        try:
+            root = repo_root()
+            if root not in sys.path:
+                sys.path.insert(0, root)
+            import importlib
+
+            deploy = importlib.import_module("scripts.deploy_mc_status").deploy
+            src = getattr(self, "skill_repo_root", None) or root
+            target = deploy(src, os.path.join(self.home, ".zcode", "skills", "mc-status"))
+            self._print("skill deployed: %s" % target)
+        except Exception as exc:
+            self._print("skill deploy failed: %s" % type(exc).__name__)
 
     def start(self):
         rc, _ = self.executor.run(
