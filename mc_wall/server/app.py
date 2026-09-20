@@ -61,17 +61,32 @@ def _epoch_ms() -> int:
     return int(time.time() * 1000)
 
 
-_default_tower_config_box: list = []  # F-1: built at most once per process
+_default_tower_config_box: list = []  # F-1: built at most once per process (test seam)
+_default_tower_config_lock = threading.Lock()
+
+
+def _default_tower_config() -> typing.Any:
+    """The default boot's TowerConfig, built AT MOST once per process.
+
+    Double-checked locking, NOT functools.lru_cache: a bounded lru_cache does
+    not serialize user-function evaluation (verified on this interpreter —
+    concurrent cold-start callers each run the miss), so it cannot pin
+    at-most-once; the lock does. The box stays the built-once test seam."""
+    if not _default_tower_config_box:
+        with _default_tower_config_lock:
+            if not _default_tower_config_box:
+                from mc_wall.server.tower_boot import build_tower_config
+
+                _default_tower_config_box.append(
+                    build_tower_config(resolve_wall_home())
+                )
+    return _default_tower_config_box[0]
 
 
 def _default_collect_state() -> dict:
     from mc_wall.tower import collect_state  # LAZY — the only place mc_wall.tower is named in L2
 
-    if not _default_tower_config_box:
-        from mc_wall.server.tower_boot import build_tower_config
-
-        _default_tower_config_box.append(build_tower_config(resolve_wall_home()))
-    return collect_state(_default_tower_config_box[0])
+    return collect_state(_default_tower_config())
 
 
 def deep_link(repo_root: str) -> str:

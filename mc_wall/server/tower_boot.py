@@ -43,8 +43,11 @@ def _optional_str(entry: dict, key: str, where: str):
 
 def tower_config_from_wall(data: dict, wall_home: pathlib.Path) -> TowerConfig:
     wall_home = pathlib.Path(wall_home)
+    raw_programs = data.get("programs", [])  # .get default never fires on null
+    if not isinstance(raw_programs, list):
+        raise ValueError('mc-wall: wall.json "programs" must be a list — fix wall.json')
     programs = []
-    for i, p in enumerate(data.get("programs", [])):
+    for i, p in enumerate(raw_programs):
         where = f"wall.json programs[{i}]"
         if not isinstance(p, dict):
             raise ValueError(f"mc-wall: {where} must be an object — fix wall.json")
@@ -54,8 +57,11 @@ def tower_config_from_wall(data: dict, wall_home: pathlib.Path) -> TowerConfig:
             note_glob=_require_str(p, "note_glob", where),
             master_tag=_optional_str(p, "master_tag", where),
         ))
+    raw_repos = data.get("repos", [])
+    if not isinstance(raw_repos, list):
+        raise ValueError('mc-wall: wall.json "repos" must be a list — fix wall.json')
     repos = []
-    for i, r in enumerate(data.get("repos", [])):
+    for i, r in enumerate(raw_repos):
         where = f"wall.json repos[{i}]"
         if not isinstance(r, dict):
             raise ValueError(f"mc-wall: {where} must be an object — fix wall.json")

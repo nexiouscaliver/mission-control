@@ -38,10 +38,7 @@ def load_config(wall_home: pathlib.Path) -> ServerConfig:
         raise ValueError(
             "mc-wall: %s has an invalid port — run `mc-wall install`" % path
         )
-    try:
-        tower = tower_config_from_wall(data, pathlib.Path(wall_home))
-    except ValueError:
-        raise  # already ONE clear line naming wall.json
+    tower = tower_config_from_wall(data, pathlib.Path(wall_home))
     return ServerConfig(
         token=data["token"],
         port=port,

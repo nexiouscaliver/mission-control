@@ -252,3 +252,33 @@ def test_mcwallf_malformed_programs_entry_one_line(capsys, monkeypatch, tmp_path
     lines = capsys.readouterr().out.splitlines()
     assert len(lines) == 1  # ONE clear line
     assert "wall.json" in lines[0]
+
+
+def test_mcwallf_malformed_programs_type_one_line(capsys, monkeypatch, tmp_path):
+    monkeypatch.setenv("MC_WALL_HOME", str(tmp_path))
+    monkeypatch.setenv("MC_WALL_DB", str(tmp_path / "no-db.sqlite"))
+    from mc_wall.server import __main__ as entry
+
+    reached = []
+
+    def _stub_run_server(cfg):
+        reached.append(cfg)
+        return 0
+
+    monkeypatch.setattr(entry, "run_server", _stub_run_server)
+    # A non-list container (int, or JSON null — the .get default never fires on
+    # a present key) must fail the boot LOUDLY: one line, rc 1, never a
+    # TypeError traceback escaping main()'s ValueError contract.
+    for extra in ({"programs": 5}, {"programs": None}, {"repos": 5}):
+        port = _free_port()  # never a hardcoded port in wall.json
+        (tmp_path / "wall.json").write_text(json.dumps({
+            "token": "t", "port": port, **extra,
+        }), encoding="utf-8")
+        capsys.readouterr()  # isolate each case's captures
+        assert entry.main() == 1
+        assert reached == []  # the malformed config must stop the boot BEFORE serving
+        captured = capsys.readouterr()
+        assert captured.err == ""  # no traceback
+        lines = captured.out.splitlines()
+        assert len(lines) == 1  # ONE clear line
+        assert "wall.json" in lines[0]
