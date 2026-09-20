@@ -6,3 +6,6 @@ logs/
 state/
 chrome-profile/
 wall.json
+forge/
+skill-edits-backup/
+/run.sh
