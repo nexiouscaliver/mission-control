@@ -290,13 +290,19 @@ def test_concurrent_launch_and_monitor_never_corrupt():
     ) as h:
         statuses = []
         parse_failures = []
+        cancels = []
+        samples = []
 
         # 1. Occupied slot -> deterministic 409 (the both-outcomes requirement
-        #    is satisfied HERE, never by the churn window).
-        assert h.http(
+        #    is satisfied HERE, never by the churn window). Both deterministic
+        #    responses are recorded as OBSERVED statuses — never hand-inserted
+        #    literals — so the sample-count assert below covers them too.
+        occupied = h.http(
             "POST", f"/{h.token}/launch",
             {"row_id": ROW["row_id"], "repo_root": str(repo)},
-        ).status == 409
+        )
+        assert occupied.status == 409
+        statuses.append(occupied.status)
         # 2. Cancel frees the slot -> deterministic 200.
         assert h.http("POST", f"/{h.token}/launch/cancel", {}).status == 200
         ok = h.http(
@@ -304,7 +310,7 @@ def test_concurrent_launch_and_monitor_never_corrupt():
             {"row_id": ROW["row_id"], "repo_root": str(repo)},
         )
         assert ok.status == 200
-        statuses.extend([409, 200])
+        statuses.append(ok.status)
 
         # 3. Churn: FIXED iteration counts (no time window, no outcome depends
         #    on any sleep); threads asserted dead within bounded joins.
@@ -319,9 +325,14 @@ def test_concurrent_launch_and_monitor_never_corrupt():
         def canceller():
             for _ in range(20):
                 h.http("POST", f"/{h.token}/launch/cancel", {})
+                cancels.append(True)
 
         def reader():
             for _ in range(40):
+                # Recorded per ITERATION (top of body): the OSError-continue
+                # below is a completed sample too, so only an end-of-loop
+                # record would undercount it.
+                samples.append(True)
                 try:
                     raw = (state_dir / "pending.json").read_text(encoding="utf-8")
                 except OSError:
@@ -331,7 +342,7 @@ def test_concurrent_launch_and_monitor_never_corrupt():
                 except ValueError:
                     parse_failures.append(raw)
                     continue
-                if isinstance(parsed, dict) and not {
+                if not isinstance(parsed, dict) or not {
                     "version", "status", "row_id", "updated_at_ms",
                 } <= set(parsed):
                     parse_failures.append(raw)
@@ -347,7 +358,13 @@ def test_concurrent_launch_and_monitor_never_corrupt():
             t.join(timeout=10)
             assert not t.is_alive(), "churn thread failed to finish its fixed count"
 
-        # 4. Deterministic invariants.
+        # 4. Deterministic invariants. The exact sample counts close the
+        #    silent-death gap: a churn thread that died on an unhandled
+        #    exception fails its count loudly instead of quietly shrinking
+        #    the sample set.
+        assert len(statuses) == 22  # 2 deterministic calls + 20 writer posts
+        assert len(cancels) == 20
+        assert len(samples) == 40
         assert parse_failures == []
         assert set(statuses) <= {200, 409}
         final = json.loads((state_dir / "pending.json").read_text(encoding="utf-8"))
