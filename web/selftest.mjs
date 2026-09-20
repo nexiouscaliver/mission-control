@@ -2013,6 +2013,51 @@ test("AC-8: rejected POSTs (activate-app, needs-me-now) → inline note only, ba
   assert.equal(fetchQa.calls.length, 0, "QA activate issues no fetch");
 });
 
+test("F-3 mcwallf: all three POST sites send Content-Type application/json", async () => {
+  // needs-me-now (LIVE)
+  {
+    const s = makeLiveApp([{ status: 200, json: { ok: true, action: null } }]);
+    await s.app.needsMeNow();
+    assert.equal(s.fetchFn.calls.length, 1);
+    assert.equal(
+      s.fetchFn.calls[0].init.headers["Content-Type"], "application/json",
+      "needs-me-now must send Content-Type: application/json"
+    );
+  }
+  // activate-app (LIVE): click Bring ZCode forward on a verify row
+  {
+    const s = makeLiveApp([{ reject: "network" }]);
+    const row = findByData(s.dom.getElementById("panel-verify"), "data-row-id", "W2-L3");
+    byClass(row, "activate-btn")[0].click();
+    await flushMicrotasks();
+    assert.equal(s.fetchFn.calls[0].url, "/tok1/activate-app");
+    assert.equal(
+      s.fetchFn.calls[0].init.headers["Content-Type"], "application/json",
+      "activate-app must send Content-Type: application/json"
+    );
+  }
+  // armedPost re-copy + cancel (LIVE)
+  {
+    const s = makeLiveApp([{ status: 200, json: { ok: true } }, { status: 200, json: { ok: true } }]);
+    const slot = s.dom.getElementById("armed-indicator-slot");
+    byClass(slot, "armed-recopy")[0].click();
+    await flushMicrotasks();
+    byClass(slot, "armed-cancel")[0].click();
+    await flushMicrotasks();
+    assert.deepEqual(
+      s.fetchFn.calls.map((c) => c.url),
+      ["/tok1/launch/re-copy", "/tok1/launch/cancel"],
+      "both armed posts fired"
+    );
+    for (const c of s.fetchFn.calls) {
+      assert.equal(
+        c.init.headers["Content-Type"], "application/json",
+        c.url + " must send Content-Type: application/json"
+      );
+    }
+  }
+});
+
 test("AC-21 full: gitlab !N and github #N verbatim across chips AND merge cards", () => {
   const { dom } = makeQaApp("full");
   const chipBadges = byClass(dom.getElementById("col1-programs"), "mr-badge").map((b) => collectText(b).trim());
