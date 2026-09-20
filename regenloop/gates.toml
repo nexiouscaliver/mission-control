@@ -5,3 +5,21 @@ name = "python-test"
 when = ["**/*.py"]
 check = ".venv/bin/pytest -q"
 autofix = ""
+
+[[gate]]
+name = "web-selftest"
+when = ["web/**"]
+check = "node web/selftest.mjs"
+autofix = ""
+
+[[gate]]
+name = "bin-py-compile"
+when = ["bin/**"]
+check = ".venv/bin/python3 -m py_compile bin/mc-wall"
+autofix = ""
+
+[[gate]]
+name = "templates-check"
+when = ["templates/**"]
+check = "bash -n templates/run_sh.template"
+autofix = ""
