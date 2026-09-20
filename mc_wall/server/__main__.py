@@ -39,12 +39,18 @@ def load_config(wall_home: pathlib.Path) -> ServerConfig:
         )
     if not isinstance(data, dict) or not data.get("token"):
         raise ValueError("mc-wall: %s has no token — run `mc-wall install`" % path)
+    try:
+        port = int(data.get("port", DEFAULT_PORT))
+    except (TypeError, ValueError):  # null / non-numeric — one clear line, not a traceback
+        raise ValueError(
+            "mc-wall: %s has an invalid port — run `mc-wall install`" % path
+        )
     # MC_WALL_DB exists so tests can pin a nonexistent tmp path; prod targets
     # the live session db (the monitor is read-only against it).
     db_env = os.environ.get("MC_WALL_DB")
     return ServerConfig(
         token=data["token"],
-        port=int(data.get("port", DEFAULT_PORT)),
+        port=port,
         wall_home=pathlib.Path(wall_home),
         web_dir=REPO_ROOT / "web",
         state_dir=pathlib.Path(wall_home) / "state",

@@ -19,6 +19,7 @@ import urllib.request
 MIN_PYTHON = (3, 9)
 PLIST_LABEL = "ai.zcode.mc-wall"
 DEFAULT_PORT = 8765
+NO_WALL_JSON = "no wall.json — run mc-wall install first"
 
 
 def repo_root():
@@ -76,25 +77,28 @@ class Cli:
         return os.path.join(self.wall_home, "wall.json")
 
     def _read_wall_json(self):
+        # Tolerant by design: ANY unusable file (missing / corrupt / non-UTF-8
+        # / non-dict / bad port) yields token None — the "not installed" flag
+        # open_wall/status/install all check. A usable token is never guessed.
         path = self._wall_json_path()
         if not os.path.exists(path):
-            return {}
+            return {"token": None, "port": DEFAULT_PORT}
         try:
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
-        except ValueError:
-            return {}
+        except ValueError:  # JSONDecodeError + UnicodeDecodeError (non-UTF-8)
+            return {"token": None, "port": DEFAULT_PORT}
         if not isinstance(data, dict):
-            return {}
+            return {"token": None, "port": DEFAULT_PORT}
         try:
             port = int(data.get("port", DEFAULT_PORT))
         except (TypeError, ValueError):
             port = DEFAULT_PORT
         return {"token": data.get("token"), "port": port}
 
-    def _render_plist(self, token):
-        # token is not interpolated: the plist template carries no
-        # token-bearing path (the server reads wall.json itself at boot).
+    def _render_plist(self):
+        # The plist template carries no token-bearing path (the server reads
+        # wall.json itself at boot), so there is nothing to pass in.
         return _templates().render_file(
             "plist.template", {"label": PLIST_LABEL, "wall_home": self.wall_home}
         )
@@ -112,18 +116,21 @@ class Cli:
                 "# mc-wall install --dry-run (token: DRYRUN-TOKEN "
                 "— nothing is written, nothing is started)"
             )
-            self._print(self._render_plist(token))
+            self._print(self._render_plist())
             self._print(self._render_run_sh())
             return 0  # writes NOTHING, generates NO token, starts NOTHING
+        # Token read goes through the tolerant _read_wall_json: a corrupt or
+        # missing file means "no token" (fresh one generated, file rewritten)
+        # — install is the recovery command, it must never crash on bad input.
+        existing = self._read_wall_json()
         token = None
-        if not regenerate_token and os.path.exists(wall_json):
-            with open(wall_json) as f:
-                token = json.load(f).get("token")  # PRESERVE (silent rotation breaks the pinned URL)
+        if not regenerate_token:
+            token = existing["token"]  # PRESERVE (silent rotation breaks the pinned URL)
         if not token:
             token = secrets.token_urlsafe(32)
         os.makedirs(os.path.join(self.wall_home, "state"), exist_ok=True)
         os.makedirs(os.path.join(self.wall_home, "logs"), exist_ok=True)
-        if regenerate_token or not os.path.exists(wall_json):
+        if regenerate_token or not existing["token"]:
             with open(wall_json, "w", encoding="utf-8") as f:
                 json.dump({"token": token, "port": DEFAULT_PORT}, f, indent=2)
                 f.write("\n")
@@ -135,7 +142,7 @@ class Cli:
         plist = self._plist_path()
         os.makedirs(os.path.dirname(plist), exist_ok=True)
         with open(plist, "w", encoding="utf-8") as f:
-            f.write(self._render_plist(token))
+            f.write(self._render_plist())
         return self.start()
 
     def start(self):
@@ -169,6 +176,13 @@ class Cli:
         )
         launchctl_ok = rc == 0
         cfg = self._read_wall_json()
+        if cfg["token"] is None:
+            # Not installed (or wall.json unusable): no URL to probe, so the
+            # http half is failed by construction — never a traceback.
+            self._print(NO_WALL_JSON)
+            self._print("launchctl: %s" % ("ok" if launchctl_ok else "failed"))
+            self._print("http: failed")
+            return 1
         http_ok = False
         try:
             resp = urllib.request.urlopen(
@@ -198,9 +212,13 @@ class Cli:
         return 0
 
     def open_wall(self):
+        cfg = self._read_wall_json()
+        if cfg["token"] is None:
+            # Not installed: one clear line, no profile dir, nothing opened.
+            self._print(NO_WALL_JSON)
+            return 1
         profile = os.path.join(self.wall_home, "chrome-profile")
         os.makedirs(profile, exist_ok=True)
-        cfg = self._read_wall_json()
         url = "http://127.0.0.1:%d/%s/" % (cfg["port"], cfg["token"])
         rc, _ = self.executor.run(
             [

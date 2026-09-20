@@ -74,7 +74,7 @@ class PendingStore:
         with self._lock:
             path = self.state_dir / PENDING_FILENAME
             try:
-                raw = path.read_text(encoding="utf-8")
+                data = path.read_bytes()
             except FileNotFoundError:
                 self._record = None
                 return None
@@ -83,8 +83,11 @@ class PendingStore:
                 self.quarantine(type(exc).__name__)
                 return None
             try:
-                parsed = json.loads(raw)
-            except json.JSONDecodeError as exc:
+                # Decode + parse under ONE net: UnicodeDecodeError (non-UTF-8
+                # bytes) is a ValueError alongside JSONDecodeError, so both
+                # quarantine instead of crashing boot (launchd restart loop).
+                parsed = json.loads(data.decode("utf-8"))
+            except ValueError as exc:
                 self._record = None
                 self.quarantine(type(exc).__name__)
                 return None
