@@ -2537,7 +2537,7 @@ test("AC-33: armed LIVE operator escape — visibility matrix + POST shapes + fa
   }
 });
 
-test("AC-24 render: freeze — frozen body class, verbatim non-dismissable banner, dot frozen, later doc clears", () => {
+test("AC-24 render: freeze — frozen body class, verbatim non-dismissable freeze badge, dot frozen, later doc clears", () => {
   const fz = makeQaApp("freeze");
   assert.ok(fz.dom.body.classList.contains("frozen"), "tracking degraded: -> body frozen");
   const badgesEl = fz.dom.getElementById("degraded-badges");
