@@ -319,3 +319,39 @@ def test_seed_pending_cli_protocol(tmp_path, capsys):
     assert again["status"] == "prompt-armed"
     out = capsys.readouterr().out
     assert out.splitlines() == ["E2E-SEED prompt-armed %s" % path]
+
+
+# ------------------------------------------------ QA mock-doc extraction (pure)
+
+
+def test_extract_mock_case_fixture_html():
+    """Fixture-string HTML only — the real web/index.html is never read."""
+    html = "\n".join(
+        [
+            "<!doctype html><html><body>",
+            '<script type="application/json" id="mock-full">'
+            '{"schema_version": 1, "programs": [{"program": "secfix"}]}</script>',
+            '<script id="mock-pending-null" type="application/json">'
+            '{"programs": []}</script>',
+            '<script type="text/javascript">window.not_a_mock = 1;</script>',
+            "</body></html>",
+        ]
+    )
+    full = e2e_common.extract_mock_case(html, "full")
+    assert full == {"schema_version": 1, "programs": [{"program": "secfix"}]}
+    # Attribute order (id first vs type first) must not matter.
+    assert e2e_common.extract_mock_case(html, "pending-null") == {"programs": []}
+
+
+def test_extract_mock_case_unknown_lists_valid_cases():
+    html = '<script type="application/json" id="mock-full">{}</script>'
+    with pytest.raises(ValueError) as exc:
+        e2e_common.extract_mock_case(html, "nope")
+    msg = str(exc.value)
+    assert "nope" in msg and "full" in msg, "error names the bad case + valid ones"
+
+
+def test_extract_mock_case_rejects_bad_json_body():
+    html = '<script type="application/json" id="mock-full">{not json}</script>'
+    with pytest.raises(ValueError):  # json.JSONDecodeError is a ValueError
+        e2e_common.extract_mock_case(html, "full")

@@ -49,7 +49,7 @@ def _cleanup_logging(log_dir) -> None:
         h.close()
 
 
-def _make_home(args) -> pathlib.Path:
+def _make_home(args, port: int = None) -> pathlib.Path:
     if args.reuse and args.home is None:
         _die(2, "--reuse requires --home (the restart reuses one temp home)")
     if args.home is not None:
@@ -72,19 +72,21 @@ def _make_home(args) -> pathlib.Path:
         home = pathlib.Path(tempfile.mkdtemp(prefix="mcwall-e2e-"))
     token = secrets.token_urlsafe(24)
     (home / e2e_common.WALL_JSON_FILENAME).write_text(
-        json.dumps({"token": token, "port": e2e_common.E2E_PORT}), encoding="utf-8"
+        json.dumps({"token": token, "port": port or e2e_common.E2E_PORT}),
+        encoding="utf-8",
     )
     return home
 
 
-def _probe_state(port: int, token: str):
+def _probe_state(port: int, token: str, require_schema: bool = True):
     try:
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
         try:
             conn.request("GET", "/%s/state" % token, headers={"Host": "127.0.0.1"})
             resp = conn.getresponse()
             body = resp.read()
-            return resp.status == 200 and b"schema_version" in body, str(resp.status)
+            ok = resp.status == 200 and (not require_schema or b"schema_version" in body)
+            return ok, str(resp.status)
         finally:
             conn.close()
     except OSError:
@@ -177,7 +179,9 @@ def main(argv=None) -> int:
             sig,
             lambda *_: threading.Thread(target=server.shutdown, daemon=True).start(),
         )
-    server.wait_shutdown()
+    # Product wait_shutdown's 10s join cap returns early — F-2; the harness
+    # blocks until shutdown() completes.
+    server._serve_thread.join()
     server.server_close()
     _cleanup_logging(cfg.log_dir)
     print("E2E-SERVE STOPPED")

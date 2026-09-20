@@ -8,6 +8,7 @@ temp MC_WALL_HOME chosen by serve.py.
 from __future__ import annotations
 
 import pathlib
+import re
 import sys
 
 WORKTREE_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -35,6 +36,32 @@ REPO_SPECS = (
 )
 
 SEED_STATUSES = ("prompt-armed", "goal-armed", "flagged")
+
+# web/index.html embeds each QA mock doc as <script type="application/json"
+# id="mock-<case>">…</script> — the same fixtures the page itself reads
+# (app.js mock-case lookup). Attribute order is tolerated either way.
+_MOCK_SCRIPT_RE = re.compile(
+    r'<script\b[^>]*\bid="mock-([a-z0-9-]+)"[^>]*>(.*?)</script>', re.DOTALL
+)
+
+
+def extract_mock_case(index_html_text: str, case: str) -> dict:
+    """Parse one embedded QA mock doc out of web/index.html's TEXT (pure).
+
+    Single source of truth: the page's own fixtures, extracted at runtime —
+    no duplication in the harness. Returns the parsed JSON object for `case`.
+    Raises ValueError (listing the cases actually present) for an unknown
+    case, and ValueError for a script body that is not valid JSON.
+    """
+    import json
+
+    docs = {m.group(1): m.group(2) for m in _MOCK_SCRIPT_RE.finditer(index_html_text)}
+    if case not in docs:
+        raise ValueError(
+            "unknown mock case %r — valid: %s"
+            % (case, ", ".join(sorted(docs)) or "(none found)")
+        )
+    return json.loads(docs[case])
 
 
 def build_tower_config():
