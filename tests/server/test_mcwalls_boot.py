@@ -154,3 +154,44 @@ def test_run_server_returns_3_when_never_ready(monkeypatch, tmp_path):
         assert app.run_server(cfg) == 3
     finally:
         _drop_wall_log_handlers(logs)
+
+
+def test_mcwallf_tower_config_built_once_across_requests(monkeypatch, tmp_path):
+    import http.client as _hc
+
+    import mc_wall.server.app as app
+    import mc_wall.server.tower_boot as tower_boot
+    from tests.server.mcwalls_harness import make_web_dir
+
+    (tmp_path / "wall.json").write_text('{"token": "t"}', encoding="utf-8")
+    monkeypatch.setenv("MC_WALL_HOME", str(tmp_path))  # hermetic: resolve_wall_home()
+    # must NOT read the operator's real ~/.zcode/mc-wall/wall.json (a live
+    # TowerConfig would run real git/glab spawns inside pytest; and on machines
+    # without that file the test would be a permanent RED)
+    monkeypatch.setenv("MC_WALL_DB", str(tmp_path / "no-db.sqlite"))  # never the real db
+    calls = {"n": 0}
+    real = tower_boot.build_tower_config
+
+    def counting(wall_home):
+        calls["n"] += 1
+        return real(wall_home)
+
+    monkeypatch.setattr(tower_boot, "build_tower_config", counting)
+    monkeypatch.setattr(app, "_default_tower_config_box", [])
+    logs = tmp_path / "logs"
+    from mc_wall.server.app import create_server
+
+    srv = create_server("t", port=0, web_dir=make_web_dir(), log_dir=logs)
+    try:
+        for _ in range(4):
+            conn = _hc.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=5)
+            conn.request("GET", "/t/state", headers={"Host": "127.0.0.1"})
+            r = conn.getresponse()
+            r.read()
+            conn.close()
+            assert r.status == 200
+        assert calls["n"] == 1, "tower config must be built at most once per process"
+    finally:
+        srv.shutdown()
+        srv.server_close()
+        _drop_wall_log_handlers(logs)
