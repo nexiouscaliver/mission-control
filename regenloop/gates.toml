@@ -20,6 +20,6 @@ autofix = ""
 
 [[gate]]
 name = "templates-check"
-when = ["templates/**"]
+when = ["templates/**", "regenloop/gates.toml"]
 check = "bash -n templates/run_sh.template"
 autofix = ""
