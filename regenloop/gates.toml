@@ -8,7 +8,7 @@ autofix = ""
 
 [[gate]]
 name = "web-selftest"
-when = ["web/**"]
+when = ["web/**", "regenloop/gates.toml"]
 check = "node web/selftest.mjs"
 autofix = ""
 
@@ -20,6 +20,6 @@ autofix = ""
 
 [[gate]]
 name = "templates-check"
-when = ["templates/**", "regenloop/gates.toml"]
+when = ["templates/**"]
 check = "bash -n templates/run_sh.template"
 autofix = ""
