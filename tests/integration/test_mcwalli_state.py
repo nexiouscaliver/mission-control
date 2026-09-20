@@ -12,7 +12,7 @@ instead of erroring at collection (exit 2).
 def test_state_serves_frozen_contract(tmp_path, monkeypatch):
     from mc_wall.tower import collect_state
     from mc_wall.tower import contract
-    from tests.integration.mcwalli_fixtures import MASTER_ID, mcwalli_world
+    from tests.integration.mcwalli_fixtures import MASTER_ID, UNMAPPED_ID, mcwalli_world
     from tests.server.mcwalls_harness import serve
 
     world = mcwalli_world(tmp_path, monkeypatch)
@@ -35,7 +35,7 @@ def test_state_serves_frozen_contract(tmp_path, monkeypatch):
         assert lane["slug"] == "mcwalli-slug"
         unmapped = body["sessions_unmapped"]
         assert len(unmapped) == 1
-        assert unmapped[0]["id"].startswith("sess_7777")
+        assert unmapped[0]["id"] == UNMAPPED_ID
 
 
 def test_wrong_host_403(tmp_path, monkeypatch):

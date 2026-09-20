@@ -24,6 +24,8 @@ def _goal_armed(h, session_id):
 
 
 def test_restart_resumes_await_birth(tmp_path, monkeypatch):
+    import json
+
     from mc_wall.tower import collect_state
     from tests.integration.mcwalli_fixtures import (
         BIRTH_ID,
@@ -43,20 +45,24 @@ def test_restart_resumes_await_birth(tmp_path, monkeypatch):
     # Server A: the launch persists await-birth, then A dies.
     with serve("mcwalli-token", collect_state=collect, runner=FakeRunner(),
                state_dir=state_dir, log_dir=log_dir, db_path=world.db_path,
-               monitor_interval_s=0.05, clock=clock) as a:
+               clock=clock) as a:
         first = a.http("GET", f"/{a.token}/state").json()
         assert first["server"]["degraded"] == []  # non-degraded precondition
         r = a.http("POST", f"/{a.token}/launch",
                    {"row_id": "W1-L1", "repo_root": world.repo})
         assert r.status == 200
         assert r.json()["pending"]["status"] == "await-birth"
-    # A is down; only now is the birth session born.
+    # A is down: pin the persisted pre-B state ON DISK, not over HTTP — B's
+    # monitor starts inside create_server and, with the birth row in place,
+    # can complete the whole match before a GET lands.
+    persisted = json.loads((state_dir / "pending.json").read_text(encoding="utf-8"))
+    assert persisted["status"] == "await-birth"
+    # Only now is the birth session born.
     mcwalli_insert_birth(world.db_path, world.repo)
     # Server B: same state_dir/log_dir/db_path — recovery from disk alone.
     with serve("mcwalli-token", collect_state=collect, runner=FakeRunner(),
                state_dir=state_dir, log_dir=log_dir, db_path=world.db_path,
-               monitor_interval_s=0.05, clock=clock) as b:
-        assert _state_pending(b)["status"] == "await-birth"  # resumed, pre-match
+               clock=clock) as b:
         assert wait_for(lambda: _goal_armed(b, BIRTH_ID), timeout=5.0)
 
 
@@ -91,7 +97,7 @@ def test_boot_promotes_prompt_armed(tmp_path, monkeypatch):
     with serve("mcwalli-token",
                collect_state=lambda: {**tower_doc, "rows": [mcwalli_row(world.repo)]},
                runner=FakeRunner(), state_dir=state_dir, log_dir=log_dir,
-               db_path=world.db_path, monitor_interval_s=0.05,
+               db_path=world.db_path,
                clock=FakeClock(start_ms=CLICK_MS)) as h:
         first = h.http("GET", f"/{h.token}/state").json()
         assert first["server"]["degraded"] == []  # non-degraded precondition
