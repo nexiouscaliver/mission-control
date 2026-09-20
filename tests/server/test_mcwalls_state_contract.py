@@ -65,3 +65,67 @@ def test_missing_optional_fields_never_keyerror():
     assert find_row(state, "r1") is bare_row
     assert schema_version(state) == 2
     assert schema_version({}) is None
+
+
+def test_mcwallf_owed_actions_adapts_verify_row():
+    from mc_wall.server import state_contract as sc
+
+    state = {"server": {"generated_ts": 2000},
+             "verify_queue": [{"row_id": "r1", "program": "p", "finished_ago_s": 400,
+                               "master_hint": "", "verify_cmd": "/mission-control-verify sess_x"}],
+             "human_actions": []}
+    assert sc.owed_actions(state) == [
+        {"row_id": "r1", "kind": "verify", "finished_signal_ms": (2000 - 400) * 1000,
+         "verify_cmd": "/mission-control-verify sess_x", "parked": False}]
+
+
+def test_mcwallf_owed_actions_verify_row_empty_cmd_omits_payload():
+    from mc_wall.server import state_contract as sc
+
+    state = {"server": {"generated_ts": 2000},
+             "verify_queue": [{"row_id": "r2", "program": "p", "finished_ago_s": 400,
+                               "master_hint": "", "verify_cmd": ""}],
+             "human_actions": []}
+    assert sc.owed_actions(state) == [
+        {"row_id": "r2", "kind": "verify", "finished_signal_ms": 1_600_000,
+         "parked": False}]
+    # choose_owed_action must yield copied=None (jump only, no clipboard write)
+    import logging
+
+    from mc_wall.server.app import choose_owed_action
+
+    action = choose_owed_action(state, logging.getLogger("mcwallf-test"))
+    assert action is not None and action["copied"] is None and action["row_id"] == "r2"
+
+
+def test_mcwallf_owed_actions_adapts_merge_row():
+    from mc_wall.server import state_contract as sc
+
+    state = {"server": {"generated_ts": 2000}, "verify_queue": [],
+             "human_actions": [{"kind": "merge", "ref": "!5", "repo": "r",
+                                "repo_host": "gitlab", "title": "t",
+                                "pipeline": "green", "ready": True}]}
+    assert sc.owed_actions(state) == [
+        {"row_id": "!5", "kind": "merge", "finished_signal_ms": 2000 * 1000,
+         "mr_link": "!5", "parked": False}]
+
+
+def test_mcwallf_owed_actions_missing_generated_ts_omits_signal():
+    from mc_wall.server import state_contract as sc
+
+    state = {"server": {"degraded": []},
+             "verify_queue": [{"row_id": "r1", "program": "p", "finished_ago_s": 400,
+                               "master_hint": "", "verify_cmd": "/x"}],
+             "human_actions": [{"kind": "merge", "ref": "!5", "repo": "r",
+                                "repo_host": "gitlab", "title": "t",
+                                "pipeline": "green", "ready": True}]}
+    out = sc.owed_actions(state)
+    assert out and all("finished_signal_ms" not in a for a in out)
+
+
+def test_mcwallf_owed_actions_legacy_key_passthrough():
+    from mc_wall.server import state_contract as sc
+
+    legacy = [{"row_id": "L1", "kind": "verify", "finished_signal_ms": 5,
+               "verify_cmd": "c", "parked": False}]
+    assert sc.owed_actions({"owed_actions": legacy, "verify_queue": []}) == legacy
