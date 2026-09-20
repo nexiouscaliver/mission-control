@@ -2347,19 +2347,18 @@ test("AC-1[S]: full QA render populates four panel roots + the whole top bar", (
   const badges = byClass(dom.getElementById("degraded-badges"), "badge");
   assert.equal(badges.length, 2, "one badge per degraded entry");
   assert.equal(collectText(badges[0]), "network degraded: git cleo", "badge text verbatim");
-  // banner strip: every entry verbatim + dismissable operator line
+  // banner strip: operator line only — F-4 moved degraded entries to badges
   const strip = dom.getElementById("banner-strip");
   assert.ok(!("hidden" in strip.attrs), "strip visible while lines exist");
   const stripText = collectText(strip);
-  for (const e of ["network degraded: git cleo", "note rows skipped: 2"]) {
-    assert.ok(stripText.indexOf(e) !== -1, "degraded entry verbatim: " + e);
-  }
+  assert.ok(stripText.indexOf("network degraded: git cleo") === -1,
+    "degraded entries render as badges, never strip lines");
   assert.ok(stripText.indexOf("QA fixture: embeds the literal") !== -1, "server.banner verbatim");
   const dis = byClass(strip, "banner-dismiss")[0];
   assert.ok(dis, "operator line dismissable");
   dis.click();
   assert.ok(collectText(strip).indexOf("QA fixture") === -1, "dismiss removes the operator line");
-  assert.ok(!("hidden" in strip.attrs), "degraded lines keep the strip visible");
+  assert.ok("hidden" in strip.attrs, "no non-degraded lines left -> strip hidden");
 });
 
 test("AC-3: unknown case falls back to full with the note badge in the top bar", () => {
@@ -2541,13 +2540,12 @@ test("AC-33: armed LIVE operator escape — visibility matrix + POST shapes + fa
 test("AC-24 render: freeze — frozen body class, verbatim non-dismissable banner, dot frozen, later doc clears", () => {
   const fz = makeQaApp("freeze");
   assert.ok(fz.dom.body.classList.contains("frozen"), "tracking degraded: -> body frozen");
-  const strip = fz.dom.getElementById("banner-strip");
-  assert.ok(!("hidden" in strip.attrs), "banner visible");
-  const text = collectText(strip);
-  assert.ok(text.indexOf("tracking degraded") !== -1, "freeze headline");
-  assert.ok(text.indexOf("tracking degraded: session store unreadable") !== -1, "entry verbatim");
-  assert.ok(byClass(strip, "banner--freeze").length >= 1, "freeze line class");
-  assert.equal(byClass(strip, "banner-dismiss").length, 0, "freeze banner is NOT dismissable");
+  const badgesEl = fz.dom.getElementById("degraded-badges");
+  const fzBadges = byClass(badgesEl, "badge--freeze");
+  assert.equal(fzBadges.length, 1, "exactly one freeze badge");
+  assert.equal(collectText(fzBadges[0]), "tracking degraded: session store unreadable",
+    "entry verbatim in the badge");
+  assert.equal(byClass(badgesEl, "banner-dismiss").length, 0, "freeze badge is NOT dismissable");
   assert.ok(fz.dom.getElementById("live-dot").classList.contains("frozen"), "dot frozen while frozen");
   // freeze CSS machinery exists (page lock + hatched derived chips)
   const rules = parseCssRules(readWebFile("style.css"));
@@ -2609,14 +2607,10 @@ test("AC-29: degraded prefix reactions — notes/goals hatch, advisory badges, u
   t.app.render();
   const dom = t.dom;
   assert.ok(!dom.body.classList.contains("frozen"), "no freeze prefix present");
-  // every entry renders verbatim in the strip, one line each
+  // F-4: degraded entries render as badges — the strip carries none of them
   const strip = dom.getElementById("banner-strip");
-  const lines = byClass(strip, "banner-line");
-  assert.equal(lines.length, ADVISORIES.length + REACTIONS.length + UNKNOWNS.length, "one line per entry");
-  const stripText = collectText(strip);
-  for (const e of ADVISORIES.concat(REACTIONS, UNKNOWNS)) {
-    assert.ok(stripText.indexOf(e) !== -1, "verbatim line: " + e);
-  }
+  assert.equal(byClass(strip, "banner-line").length, 0,
+    "degraded entries render as badges, never strip lines");
   // top-bar badges: advisory class exactly for the advisory prefixes
   const badges = byClass(dom.getElementById("degraded-badges"), "badge");
   assert.equal(badges.length, 11, "one badge per entry");
@@ -3194,18 +3188,30 @@ test("T6-carry(c)+(d): unmapped rows carry a dim id span; session/unmapped rows 
 // lane/session/unmapped wiring assertions staying green.
 // =====================================================================
 
-test("T7-A: freeze banner renders the verbatim entry exactly once (no duplicated headline)", () => {
+test("T7-A: freeze renders the verbatim entry exactly once (badge surface, no duplicated headline)", () => {
   const fz = makeQaApp("freeze");
-  const strip = fz.dom.getElementById("banner-strip");
-  const line = byClass(strip, "banner--freeze")[0];
-  assert.ok(line, "freeze banner line renders");
+  const badgesEl = fz.dom.getElementById("degraded-badges");
+  const badge = byClass(badgesEl, "badge--freeze")[0];
+  assert.ok(badge, "freeze badge renders");
   assert.equal(
-    collectText(line),
+    collectText(badge),
     "tracking degraded: session store unreadable",
-    "the freeze banner IS the verbatim entry styled as freeze — no extra headline"
+    "the freeze badge IS the verbatim entry styled as freeze — no extra headline"
   );
-  const occurrences = collectText(strip).split("tracking degraded").length - 1;
-  assert.equal(occurrences, 1, "exactly one occurrence of the tracking-degraded wording in the strip");
+  // the rendered page = every body surface EXCEPT the embedded mock-fixture
+  // script blocks (buildMockDom parks the raw JSON in the body as data)
+  function renderedText(node) {
+    let text = node.text || "";
+    for (const child of node.children) {
+      if (child.tag === "script") continue;
+      text += renderedText(child);
+    }
+    return text;
+  }
+  const occurrences = renderedText(fz.dom.body).split("tracking degraded").length - 1;
+  assert.equal(occurrences, 1,
+    "exactly one occurrence of the tracking-degraded wording anywhere on the page");
+  assert.ok(fz.dom.body.classList.contains("frozen"), "freeze still freezes the body");
 });
 
 test("T7-B: freeze full-page hatch toned to roughly half intensity, still --stale-derived", () => {
