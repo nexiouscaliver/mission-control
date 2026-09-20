@@ -2610,6 +2610,25 @@ test("F-5 mcwallf: UNPARSED note clamp rule + full-text title", () => {
   assert.equal(noteSpan.attrs.title, longNote, "title carries the full note");
 });
 
+test("F-6 mcwallf: verify-tag corner dot grammar + padding accommodation", () => {
+  const rules = parseCssRules(readWebFile("style.css"));
+  const base = rules.find((r) => r.selector === ".verify-tag" && r.media === "");
+  assert.ok(base, "standalone .verify-tag rule exists");
+  assert.equal(base.decls["position"], "relative", "the dot anchors to the tag");
+  assert.equal(base.decls["padding-right"], "16px", "right padding reserves the dot");
+  const dot = rules.find((r) => r.selector === ".verify-tag::after" && r.media === "");
+  assert.ok(dot, ".verify-tag::after rule exists");
+  assert.equal(dot.decls["content"], "\"\"");
+  assert.equal(dot.decls["position"], "absolute");
+  assert.equal(dot.decls["top"], "-4px");
+  assert.equal(dot.decls["right"], "-4px");
+  assert.equal(dot.decls["width"], "10px");
+  assert.equal(dot.decls["height"], "10px");
+  assert.equal(dot.decls["border-radius"], "50%");
+  assert.equal(dot.decls["border"], "1.5px solid var(--derived)");
+  assert.equal(dot.decls["background"], "transparent");
+});
+
 test("AC-29: degraded prefix reactions — notes/goals hatch, advisory badges, unknown verbatim-only", () => {
   const mocks = parseIndexMocks(readWebFile("index.html"));
   const ADVISORIES = [
