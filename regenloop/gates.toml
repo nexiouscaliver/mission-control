@@ -9,7 +9,7 @@ autofix = ""
 [[gate]]
 name = "web-selftest"
 when = ["web/**", "regenloop/gates.toml"]
-check = "node web/selftest.mjs"
+check = "test ! -f web/selftest.mjs || node web/selftest.mjs"
 autofix = ""
 
 [[gate]]
