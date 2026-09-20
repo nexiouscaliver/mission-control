@@ -9,7 +9,9 @@ $MC_WALL_HOME or ~/.zcode/mc-wall; db: flag > $MC_WALL_DB >
 Exit matrix: a MISSING config prints one degrade line and still renders the
 db-derived sections over an empty program list, exit 0; an UNPARSEABLE config
 exits 2 with one stderr line ONLY when the path came from --config, else the
-same degrade-and-render path, exit 0; a missing/unreadable db surfaces the
+same degrade-and-render path, exit 0; a PARSED config whose program/repo rows
+have wrong keys prints one ``tower config invalid`` line and takes the same
+degrade-and-render path, exit 0; a missing/unreadable db surfaces the
 tower's own fail-open degraded entries, exit 0. A top-level catch prints one
 line and exits 0 — this CLI NEVER shows a traceback.
 
@@ -96,7 +98,7 @@ def render(doc):
         lines.append("  (none configured)")
     for prog in programs:
         lines.append("  %s  objective: %s" % (_show(prog.get("program")),
-                                              _show(prog.get("objective")) or "—"))
+                                              _show(prog.get("objective"))))
         master = prog.get("master") or {}
         lines.append("    master: %s | %s | last active %s" % (
             _show(master.get("session_id")), _show(master.get("title")),
@@ -176,7 +178,14 @@ def _run(argv):
                 return 2
             print("tower config unreadable: %s %s" % (cfg_path, CONFIG_HINT))
             data = {}
-    tower_config = _build_tower_config(data, db_path)
+    try:
+        tower_config = _build_tower_config(data, db_path)
+    except (TypeError, ValueError):
+        # Parses as JSON but the program/repo rows have wrong keys — the same
+        # degrade-and-render path as a missing config, never a blank board:
+        # the db-derived sections still render over an empty program list.
+        print("tower config invalid: %s" % cfg_path)
+        tower_config = _build_tower_config({}, db_path)
 
     from mc_wall.tower import collect_state
 

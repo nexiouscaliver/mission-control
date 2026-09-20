@@ -70,6 +70,34 @@ def test_missing_db_degrades(tmp_path, capsys):
     assert "Traceback" not in out
 
 
+def test_bad_config_shape_degrades(tmp_path, capsys):
+    import time
+
+    from scripts.mc_status import main
+    from tests.integration.mcwalli_fixtures import mcwalli_union_db
+
+    # Parses as JSON but the program row has an unknown key (and lacks the
+    # required ones) — a shape failure, not a parse failure.
+    bad = tmp_path / "bad_shape_tower.json"
+    bad.write_text(json.dumps({"programs": [{"program": "x", "bogus_key": 1}],
+                               "repos": [], "pending_launch_path": None}),
+                   encoding="utf-8")
+    now_ms = int(time.time() * 1000)
+    fixture_db = mcwalli_union_db(tmp_path, sessions=[
+        {"id": "sess_bb000000-0000-4000-8000-000000000002", "title": "stray session",
+         "directory": str(tmp_path), "time_created": now_ms - 60_000,
+         "time_updated": now_ms - 60_000}])
+
+    assert main(["--config", str(bad), "--db", fixture_db]) == 0
+
+    out = capsys.readouterr().out
+    assert "tower config invalid: %s" % bad in out
+    assert "(none configured)" in out
+    # db-derived sections still render (the stray session shows up unmapped).
+    assert "stray session" in out
+    assert "Traceback" not in out
+
+
 def test_bad_explicit_config_exit_2(tmp_path, capsys):
     from scripts.mc_status import main
 
