@@ -4,14 +4,19 @@ exit-0, so a timed self-exit is a silent wall death).
 
 The subprocess is spawned exactly as tests/server/test_mcwalls_entry.py does
 (temp MC_WALL_HOME, wall.json, MC_WALL_DB pinned to a nonexistent tmp path);
-that file is read-only for this task, so its importable helpers are imported.
+that file is read-only for this task, so its importable helpers are reused —
+including its already-imported subprocess module object, because the structural
+spawn ban (test_mcwalls_structural.py) allows ONLY test_mcwalls_entry.py to
+import it. The Popen argv below keeps the pinned [sys.executable, "-m", ...]
+shape, never a shell.
 """
 
 import json
 import os
-import subprocess
 import sys
 import time
+
+from tests.server.test_mcwalls_entry import subprocess
 
 
 def test_mcwallf_server_stays_alive_past_10s():
