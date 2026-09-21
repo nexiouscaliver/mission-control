@@ -3899,6 +3899,69 @@ test("round 5: reading state survives poll rebuilds — expanded idle>24h groups
   assert.equal(idleHeadAfter.attrs["aria-expanded"], "true", "still expanded after the rebuild");
 });
 
+test("round 6: background sessions — workflow subagents + side chats hidden by default, clustered per run, revealable", () => {
+  const doc = JSON.parse(JSON.stringify(parseIndexMocks(readWebFile("index.html")).minimal));
+  doc.sessions_unmapped = [
+    { id: "s-main-1", title: "real work", dir: "~/repo/a", last_active_ago_s: 60 },
+    {
+      id: "sess_dwf-dwfrun-abcdef12-3456-7890-abcd-ef1234567890-actor_1_1",
+      title: "workflow subagent actor#@1@1",
+      dir: "~/repo/a",
+      last_active_ago_s: 100,
+    },
+    {
+      id: "sess_dwf-dwfrun-abcdef12-3456-7890-abcd-ef1234567890-actor_2_1",
+      title: "workflow subagent actor#@2@1",
+      dir: "~/repo/a",
+      last_active_ago_s: 200,
+    },
+    { id: "s-chat-1", title: "Selection side chat", dir: "~/repo/a", last_active_ago_s: 300 },
+  ];
+  const dom = buildMockDom(parseIndexMocks(readWebFile("index.html")));
+  const MCW = loadApp();
+  const deps = MCW.createDeps({ document: dom, now: () => FIXED_NOW_MS, location: fakeLocation({}) });
+  const app = MCW.createApp(deps);
+  app.setDocument(doc);
+  app.render();
+  const strip = byClass(dom.getElementById("col3-sessions"), "unmapped-strip")[0];
+  assert.ok(
+    collectText(byClass(strip, "unmapped-head")[0]).indexOf("unmapped (1 · 3 hidden)") !== -1,
+    "strip head counts visible vs hidden"
+  );
+  const toggle = byClass(strip, "unmapped-hidden-toggle")[0];
+  assert.ok(toggle, "hidden-section toggle present");
+  assert.ok(collectText(toggle).indexOf("2 workflow subagents") !== -1, "toggle names the counts");
+  const hiddenEl = byClass(strip, "unmapped-hidden")[0];
+  assert.ok(hiddenEl.classList.contains("collapsed"), "hidden section ships collapsed");
+  const rules = parseCssRules(readWebFile("style.css"));
+  const hiddenRule = rules.find(
+    (r) => r.selector === ".unmapped-hidden.collapsed > .unmapped-group" && r.media === ""
+  );
+  assert.ok(hiddenRule && hiddenRule.decls["display"] === "none", "collapsed groups are CSS-hidden, not absent");
+  toggle.click();
+  assert.ok(!hiddenEl.classList.contains("collapsed"), "toggle reveals the section");
+  const text = collectText(byClass(dom.getElementById("col3-sessions"), "unmapped-strip")[0]);
+  assert.ok(text.indexOf("workflow run abcdef12 · 2") !== -1, "actors cluster under their run label");
+  assert.ok(text.indexOf("side chats · 1") !== -1, "side chats get their own group");
+  assert.ok(text.indexOf("workflow subagent actor#@1@1") !== -1, "rows present once revealed");
+  app.render(); // poll tick: the reveal survives the rebuild
+  const stripAfter = byClass(dom.getElementById("col3-sessions"), "unmapped-strip")[0];
+  assert.equal(
+    byClass(stripAfter, "unmapped-hidden-toggle")[0].attrs["aria-expanded"],
+    "true",
+    "reveal state survives the poll rebuild"
+  );
+  // projects view: excluded until shown, tagged when shown
+  app.setView("projects");
+  const projEl = dom.getElementById("projects-view");
+  assert.ok(collectText(projEl).indexOf("actor#@2@1") === -1, "projects exclude background by default");
+  assert.ok(collectText(projEl).indexOf("real work") !== -1, "main sessions stay listed");
+  byClass(projEl, "projects-bg")[0].click();
+  const projText = collectText(dom.getElementById("projects-view"));
+  assert.ok(projText.indexOf("actor#@2@1") !== -1, "background appears when shown");
+  assert.ok(projText.indexOf("workflow") !== -1, "kind tag on the row");
+});
+
 // ---------------- runner ----------------
 
 async function main() {

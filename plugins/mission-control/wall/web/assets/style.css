@@ -340,6 +340,24 @@ body.panel-open #armed-strip {
   color: var(--ink-dim);
 }
 
+.projects-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-left: auto;
+}
+
+.projects-bg {
+  min-height: 24px;
+  font-size: 12.5px;
+  color: var(--ink-dim);
+}
+
+.projects-bg[aria-pressed="true"] {
+  color: var(--derived);
+  border-color: var(--derived);
+}
+
 .project-card {
   background: var(--panel-2);
   border: 1px solid var(--border);
@@ -1463,6 +1481,37 @@ body.frozen .chip--derived {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12.5px;
   font-weight: 600;
+}
+
+/* ---- round 6: background sessions (workflow subagents, side chats) ----
+ * collapsed until the operator asks; the toggle owns the reveal state */
+
+.unmapped-hidden {
+  margin-top: var(--s2);
+}
+
+.unmapped-hidden.collapsed > .unmapped-group {
+  display: none;
+}
+
+.unmapped-hidden-toggle {
+  min-height: 26px;
+  padding: 2px 8px;
+  color: var(--ink-dim);
+  font-size: 13px;
+}
+
+.unmapped-hidden-toggle:hover {
+  border-color: var(--attention);
+  color: var(--ink);
+}
+
+.unmapped-hidden-toggle[aria-expanded="true"]::before {
+  content: "▾ ";
+}
+
+.unmapped-hidden-toggle[aria-expanded="false"]::before {
+  content: "▸ ";
 }
 
 .unmapped-row {

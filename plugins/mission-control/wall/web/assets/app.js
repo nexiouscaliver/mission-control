@@ -440,17 +440,20 @@
       var gridEl = byId("grid");
       if (gridEl) {
         var counts = { p: 0, o: 0, s: 0 };
+        var unmappedSplit = { main: 0, hidden: 0 };
         if (valid) {
           counts.p = MCW.state.items(stateDoc.programs, null).valid.length;
           var oc = owedCounts();
           counts.o = oc.v + oc.m;
-          var unmappedC = MCW.state.items(stateDoc.sessions_unmapped, "id").valid.length;
+          var unmappedRows = MCW.state.items(stateDoc.sessions_unmapped, "id").valid;
+          var splitU = splitBackgroundRows(unmappedRows);
+          unmappedSplit = { main: splitU.main.length, hidden: unmappedRows.length - splitU.main.length };
           var mappedC = 0;
           var groupsC = buildSessionGroups();
           for (var gk in groupsC) {
             if (Object.prototype.hasOwnProperty.call(groupsC, gk)) mappedC += groupsC[gk].length;
           }
-          counts.s = mappedC + unmappedC;
+          counts.s = mappedC + unmappedRows.length;
         }
         function setPresence(cls, present) {
           if (present) gridEl.classList.add(cls);
@@ -465,7 +468,7 @@
         var contentKinds = (counts.p > 0 ? 1 : 0) + (counts.o > 0 ? 1 : 0) + (counts.s > 0 ? 1 : 0);
         setPresence("one-col", valid && contentKinds === 1);
         setPresence("is-empty", valid && contentKinds === 0);
-        renderEmptyHero(valid, counts, unmappedHeroCount(counts));
+        renderEmptyHero(valid, counts, unmappedSplit);
       }
       renderBanners(stateDoc, pollDriven); // sets freezeActive before the dot reads it
       renderTopBar(valid, pollDriven);
@@ -474,10 +477,12 @@
       wireNeedsMeNow();
     }
 
-    // Unmapped-session count for the slim hero line (0 when not computable).
-    function unmappedHeroCount(counts) {
-      if (stateDoc === null) return 0;
-      return MCW.state.items(stateDoc.sessions_unmapped, "id").valid.length;
+    // Unmapped counts for the slim hero line: VISIBLE vs hidden background.
+    function unmappedHeroCount() {
+      if (stateDoc === null) return { main: 0, hidden: 0 };
+      var rows = MCW.state.items(stateDoc.sessions_unmapped, "id").valid;
+      var split = splitBackgroundRows(rows);
+      return { main: split.main.length, hidden: rows.length - split.main.length };
     }
 
     // Round 4b — two hero forms (round 4 had one):
@@ -487,7 +492,7 @@
     //           sessions / owed merges): one compact context line above the
     //           content instead of a contentless programs column.
     // Hidden whenever programs exist or the doc is invalid.
-    function renderEmptyHero(valid, counts, unmappedCount) {
+    function renderEmptyHero(valid, counts, heroCounts) {
       var hero = byId("empty-hero");
       if (!hero) return;
       var mode = "hidden";
@@ -515,12 +520,15 @@
           );
           scratch.appendChild(sub);
         } else {
-          big.setText(
+          var base =
             "No programs registered yet — " +
-              (unmappedCount > 0
-                ? unmappedCount + " unmapped session" + (unmappedCount === 1 ? "" : "s") + " below."
-                : "what the tower sees is below.")
-          );
+            (heroCounts.main > 0
+              ? heroCounts.main + " unmapped session" + (heroCounts.main === 1 ? "" : "s") + " below."
+              : "what the tower sees is below.");
+          if (heroCounts.hidden > 0) {
+            base += " (+" + heroCounts.hidden + " background hidden)";
+          }
+          big.setText(base);
           scratch.appendChild(big);
         }
       });
@@ -1142,6 +1150,9 @@
     var currentView = "wall"; // "wall" | "projects"
     var projectSort = "recent"; // "recent" | "name"
     var viewWired = false; // view switcher wiring is one-shot
+    // Round 6: background sessions are hidden until asked for.
+    var backgroundOpen = false; // wall strip: reveal workflow/side-chat rows
+    var showBackground = false; // projects view: include them in cards
     // Reading state across poll rebuilds (user report: the session list
     // snapped to its top every cadence tick). Captured from the live column
     // before the churn-guard swap, re-applied after it.
@@ -1239,6 +1250,50 @@
         if (parts[i] !== "") return parts[i];
       }
       return String(pathish);
+    }
+
+    // ---- round 6: background sessions (workflow subagents, side chats) ----
+    // The wall's biggest noise source: a workflow run's subagent sessions and
+    // transient side chats crowd out real work. They classify from data the
+    // state contract already carries — subagent ids embed their workflow run
+    // (sess_dwf-dwfrun-<run>-actor_N_M), side chats are titled "…side chat".
+    // Hidden by default everywhere; the run id gives the honest "link": every
+    // actor of one run clusters under that run's label (the parent chat id
+    // itself is not in the v1 state contract).
+
+    function sessionKind(id, title) {
+      var t = String(title || "").toLowerCase();
+      if (t.indexOf("workflow subagent") === 0 || String(id || "").indexOf("dwf-dwfrun") !== -1) return "workflow";
+      if (t.indexOf("side chat") !== -1) return "sidechat";
+      return "main";
+    }
+
+    function workflowRunKey(id) {
+      var m = /dwf-dwfrun-([0-9a-f][0-9a-f-]+?)-actor/.exec(String(id || ""));
+      return m ? m[1] : "";
+    }
+
+    function splitBackgroundRows(rows) {
+      var main = [];
+      var workflow = {}; // runKey -> rows
+      var workflowOrder = [];
+      var sidechat = [];
+      for (var i = 0; i < rows.length; i += 1) {
+        var kind = sessionKind(rows[i].id, rows[i].title);
+        if (kind === "main") {
+          main.push(rows[i]);
+        } else if (kind === "workflow") {
+          var runKey = workflowRunKey(rows[i].id) || "(unknown run)";
+          if (!workflow[runKey]) {
+            workflow[runKey] = [];
+            workflowOrder.push(runKey);
+          }
+          workflow[runKey].push(rows[i]);
+        } else {
+          sidechat.push(rows[i]);
+        }
+      }
+      return { main: main, workflow: workflow, workflowOrder: workflowOrder, sidechat: sidechat };
     }
 
     // Disabled toggling through the shared DOM surface: setAttribute on
@@ -2309,11 +2364,20 @@
       var res = MCW.state.items(stateDoc.sessions_unmapped, "id");
       if (res.skipped > 0) appendNote(rootEl, "skipped " + res.skipped + " malformed rows", "data-note");
       if (res.valid.length === 0) return 0;
+      var split = splitBackgroundRows(res.valid);
+      var bgCount = res.valid.length - split.main.length;
       var strip = el("div");
       strip.classList.add("unmapped-strip");
       var head = el("div");
       head.classList.add("unmapped-head");
-      head.setText("unmapped (" + res.valid.length + ")");
+      // Round 6: the count names what is VISIBLE and owns the hidden tail —
+      // "unmapped (2)" with no background stays byte-identical (AC-16).
+      head.setText(
+        "unmapped (" +
+          split.main.length +
+          (bgCount > 0 ? " · " + bgCount + " hidden" : "") +
+          ")"
+      );
       strip.appendChild(head);
       // SPEC v2.1 §3/01: a show-all toggle past the strip's scroll cap. The
       // expanded state is owned by unmappedOpen so a poll-driven rebuild of
@@ -2329,7 +2393,8 @@
       rowsEl.classList.add("unmapped-rows");
       if (unmappedOpen) rowsEl.classList.add("open");
       rowsEl.setAttribute("id", "unmapped-rows"); // the toggle's aria-controls target
-      renderUnmappedGroups(rowsEl, res.valid);
+      renderUnmappedGroups(rowsEl, split.main);
+      if (bgCount > 0) renderBackgroundSection(rowsEl, split);
       strip.appendChild(rowsEl);
       if (typeof toggle.addEventListener === "function") {
         toggle.addEventListener("click", function () {
@@ -2345,6 +2410,64 @@
       }
       rootEl.appendChild(strip);
       return res.valid.length;
+    }
+
+    // Round 6: workflow subagents + side chats collapse into ONE revealable
+    // section. Workflow rows cluster under their run's label (the run id from
+    // the session id is the honest parent link — the v1 state contract has no
+    // parent_session_id); side chats get their own group.
+    function renderBackgroundSection(rowsEl, split) {
+      var hiddenEl = el("div");
+      hiddenEl.classList.add("unmapped-hidden");
+      if (!backgroundOpen) hiddenEl.classList.add("collapsed");
+      var toggle = el("button");
+      toggle.setAttribute("type", "button");
+      toggle.classList.add("unmapped-hidden-toggle");
+      var wfTotal = 0;
+      for (var w = 0; w < split.workflowOrder.length; w += 1) wfTotal += split.workflow[split.workflowOrder[w]].length;
+      var parts = [];
+      if (wfTotal > 0) parts.push(wfTotal + " workflow subagent" + (wfTotal === 1 ? "" : "s"));
+      if (split.sidechat.length > 0) parts.push(split.sidechat.length + " side chat" + (split.sidechat.length === 1 ? "" : "s"));
+      toggle.setText("hidden: " + parts.join(" · "));
+      toggle.setAttribute("aria-expanded", backgroundOpen ? "true" : "false");
+      if (typeof toggle.addEventListener === "function") {
+        toggle.addEventListener("click", function () {
+          backgroundOpen = !backgroundOpen;
+          if (backgroundOpen) {
+            hiddenEl.classList.remove("collapsed");
+            toggle.setAttribute("aria-expanded", "true");
+          } else {
+            hiddenEl.classList.add("collapsed");
+            toggle.setAttribute("aria-expanded", "false");
+          }
+        });
+      }
+      hiddenEl.appendChild(toggle);
+      var sortedRuns = split.workflowOrder.slice().sort();
+      for (var r = 0; r < sortedRuns.length; r += 1) {
+        var runKey = sortedRuns[r];
+        var runRows = split.workflow[runKey];
+        var group = el("div");
+        group.classList.add("unmapped-group");
+        var runHead = el("div");
+        runHead.classList.add("unmapped-group-head");
+        runHead.setText("workflow run " + runKey.slice(0, 8) + " · " + runRows.length);
+        runHead.setAttribute("title", "workflow run " + runKey + " — every actor session launched by this run");
+        group.appendChild(runHead);
+        for (var rr = 0; rr < runRows.length; rr += 1) renderUnmappedRow(group, runRows[rr]);
+        hiddenEl.appendChild(group);
+      }
+      if (split.sidechat.length > 0) {
+        var chatGroup = el("div");
+        chatGroup.classList.add("unmapped-group");
+        var chatHead = el("div");
+        chatHead.classList.add("unmapped-group-head");
+        chatHead.setText("side chats · " + split.sidechat.length);
+        chatGroup.appendChild(chatHead);
+        for (var c = 0; c < split.sidechat.length; c += 1) renderUnmappedRow(chatGroup, split.sidechat[c]);
+        hiddenEl.appendChild(chatGroup);
+      }
+      rowsEl.appendChild(hiddenEl);
     }
 
     // Round 4: unmapped rows group by their dir (the path IS the repo for an
@@ -2480,6 +2603,7 @@
           for (var j = 0; j < lanes.length; j += 1) {
             var ses = nullable(lanes[j].session);
             if (ses === null || typeof ses.id !== "string" || ses.id === "") continue;
+            if (!showBackground && sessionKind(ses.id, ses.title) !== "main") continue;
             var laneRepo =
               typeof lanes[j].repo === "string" && lanes[j].repo !== ""
                 ? lanes[j].repo
@@ -2503,10 +2627,12 @@
         }
         var unmapped = MCW.state.items(stateDoc.sessions_unmapped, "id").valid;
         for (var u = 0; u < unmapped.length; u += 1) {
+          var kind = sessionKind(unmapped[u].id, unmapped[u].title);
+          if (!showBackground && kind !== "main") continue;
           var dir = typeof unmapped[u].dir === "string" && unmapped[u].dir !== "" ? unmapped[u].dir : "(no path)";
           var proj = projectFor(dir === "(no path)" ? dir : baseName(dir), dir);
           proj.items.push({
-            tag: "unmapped",
+            tag: kind === "workflow" ? "workflow" : kind === "sidechat" ? "side chat" : "unmapped",
             title: typeof unmapped[u].title === "string" && unmapped[u].title !== "" ? unmapped[u].title : "title pending",
             age: isInt(unmapped[u].last_active_ago_s) ? unmapped[u].last_active_ago_s : 0,
             id: typeof unmapped[u].id === "string" ? unmapped[u].id : "",
@@ -2595,6 +2721,24 @@
       head.classList.add("projects-head");
       head.setText("PROJECTS");
       headRow.appendChild(head);
+      var controls = el("div");
+      controls.classList.add("projects-controls");
+      var bgBtn = el("button");
+      bgBtn.setAttribute("type", "button");
+      bgBtn.classList.add("projects-bg");
+      bgBtn.setAttribute("aria-pressed", showBackground ? "true" : "false");
+      bgBtn.setText(showBackground ? "background: shown" : "background: hidden");
+      bgBtn.setAttribute(
+        "title",
+        "workflow subagent sessions and side chats are hidden until you show them"
+      );
+      if (typeof bgBtn.addEventListener === "function") {
+        bgBtn.addEventListener("click", function () {
+          showBackground = !showBackground;
+          render();
+        });
+      }
+      controls.appendChild(bgBtn);
       var sortBtn = el("button");
       sortBtn.setAttribute("type", "button");
       sortBtn.classList.add("projects-sort");
@@ -2605,7 +2749,8 @@
           render();
         });
       }
-      headRow.appendChild(sortBtn);
+      controls.appendChild(sortBtn);
+      headRow.appendChild(controls);
       rootEl.appendChild(headRow);
       var valid = stateDoc !== null && MCW.state.validateDoc(stateDoc).ok;
       if (!valid) {
