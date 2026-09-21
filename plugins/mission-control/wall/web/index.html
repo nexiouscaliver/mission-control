@@ -8,6 +8,10 @@
   <div class="tb-cluster tb-identity">
     <span id="wordmark">MC WALL</span><span id="live-dot"></span><span id="mode-badge"></span>
   </div>
+  <div class="tb-cluster tb-views">
+    <button id="view-wall" type="button" aria-pressed="true">WALL</button>
+    <button id="view-projects" type="button" aria-pressed="false">PROJECTS</button>
+  </div>
   <div class="tb-cluster tb-owed">
     <button id="needs-me-now" type="button">NEEDS ME NOW <span id="nmn-counter"></span></button>
     <span id="nmn-hint" hidden>nothing owed — updates every 5 s</span>
@@ -28,6 +32,7 @@
   </section>
   <section id="col3-sessions" class="col"></section>
 </main>
+<section id="projects-view" hidden></section>
 <div id="panel-backdrop" hidden></div>
 <div id="launch-panel" hidden></div>
 <footer id="kbd-hint"><span>shortcuts: </span><span class="kbd">n</span><span> needs-me-now · </span><span class="kbd">r</span><span> refresh · </span><span class="kbd">esc</span><span> close panel</span></footer>

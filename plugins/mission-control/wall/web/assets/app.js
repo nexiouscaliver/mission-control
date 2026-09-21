@@ -249,6 +249,30 @@
         grid.appendChild(col3);
         body.appendChild(grid);
       }
+      // Round 5: WALL / PROJECTS view switcher — ships statically in
+      // index.html's topbar; created here only for shells missing it.
+      if (!byId("view-wall")) {
+        var views = el("div");
+        views.classList.add("tb-cluster");
+        views.classList.add("tb-views");
+        var viewWallBtn = el("button", "view-wall");
+        viewWallBtn.setAttribute("type", "button");
+        viewWallBtn.setAttribute("aria-pressed", "true");
+        viewWallBtn.setText("WALL");
+        views.appendChild(viewWallBtn);
+        var viewProjectsBtn = el("button", "view-projects");
+        viewProjectsBtn.setAttribute("type", "button");
+        viewProjectsBtn.setAttribute("aria-pressed", "false");
+        viewProjectsBtn.setText("PROJECTS");
+        views.appendChild(viewProjectsBtn);
+        var topbarForViews = byId("topbar");
+        if (topbarForViews) topbarForViews.appendChild(views);
+      }
+      if (!byId("projects-view")) {
+        var projectsSection = el("section", "projects-view");
+        projectsSection.setAttribute("hidden", "");
+        body.appendChild(projectsSection);
+      }
       if (!byId("panel-backdrop")) {
         var backdrop = el("div", "panel-backdrop");
         backdrop.setAttribute("hidden", "");
@@ -342,12 +366,37 @@
 
     function renderBody(pollDriven) {
       ensureShell();
+      wireViewSwitcher();
       var valid = stateDoc !== null && MCW.state.validateDoc(stateDoc).ok;
+      // Round 5: WALL / PROJECTS view. The grid keeps rendering (hidden) so
+      // the wall stays warm; the projects screen renders on every pass.
+      var projectsEl = byId("projects-view");
+      var gridForView = byId("grid");
+      var projectsMode = currentView === "projects";
+      if (projectsEl !== null && gridForView !== null) {
+        if (projectsMode) {
+          gridForView.setAttribute("hidden", "");
+          projectsEl.removeAttribute("hidden");
+        } else {
+          projectsEl.setAttribute("hidden", "");
+          gridForView.removeAttribute("hidden");
+        }
+      }
+      var wallBtn = byId("view-wall");
+      var projBtn = byId("view-projects");
+      if (wallBtn) wallBtn.setAttribute("aria-pressed", projectsMode ? "false" : "true");
+      if (projBtn) projBtn.setAttribute("aria-pressed", projectsMode ? "true" : "false");
       // T6: LIVE panels blank differently — waiting for the first state (or a
       // missing token); QA keeps the mock/no-data wordings.
       var blankNote = "no data";
       if (live === null) blankNote = stateDoc === null ? "waiting for mock" : "no data";
       else blankNote = live.token === null ? "no token" : "waiting for first state";
+      // Round 5 (user report): the poll rebuilds col3 every cadence tick
+      // (ages change → churn guard swaps the nodes), which threw away the
+      // operator's reading state — the unmapped list snapped back to its top
+      // and collapsed idle>24h groups re-hid. Capture from the LIVE column
+      // before the swap, re-apply after it.
+      captureCol3ViewState();
       for (var i = 0; i < PANEL_ROOT_IDS.length; i += 1) {
         var id = PANEL_ROOT_IDS[i];
         var rootEl = byId(id);
@@ -360,6 +409,12 @@
           else {
             appendNote(scratch, blankNote);
           }
+        });
+      }
+      restoreCol3ViewState();
+      if (projectsMode && projectsEl !== null) {
+        renderContainer(projectsEl, "projects-view", pollDriven, function (scratch) {
+          renderProjectsView(scratch);
         });
       }
       // Boot readability (browser finding, round 4): the two stacked middle
@@ -1081,6 +1136,110 @@
     // churn guard rebuilds it — the expanded state must live HERE, not on the
     // discarded nodes, or the strip snaps shut under someone reading it.
     var unmappedOpen = false;
+
+    // ---- round 5: views + reading-state preservation ----
+
+    var currentView = "wall"; // "wall" | "projects"
+    var projectSort = "recent"; // "recent" | "name"
+    var viewWired = false; // view switcher wiring is one-shot
+    // Reading state across poll rebuilds (user report: the session list
+    // snapped to its top every cadence tick). Captured from the live column
+    // before the churn-guard swap, re-applied after it.
+    var savedUnmappedScroll = 0;
+    var expandedIdleRepos = {}; // session-group head text -> expanded?
+
+    // Fake-DOM-safe class walkers (the pinned surface has no querySelector).
+    function nodesByClass(node, cls) {
+      var out = [];
+      (function walk(n) {
+        var kids = (n && n.children) || [];
+        for (var i = 0; i < kids.length; i += 1) {
+          var child = kids[i];
+          var cn = child.className || "";
+          if ((" " + cn + " ").indexOf(" " + cls + " ") !== -1) out.push(child);
+          walk(child);
+        }
+      })(node);
+      return out;
+    }
+    function firstByClass(node, cls) {
+      var hits = nodesByClass(node, cls);
+      return hits.length > 0 ? hits[0] : null;
+    }
+
+    function captureCol3ViewState() {
+      savedUnmappedScroll = 0;
+      expandedIdleRepos = {};
+      var liveCol3 = byId("col3-sessions");
+      if (!liveCol3) return;
+      var oldRows = firstByClass(liveCol3, "unmapped-rows");
+      if (oldRows !== null && typeof oldRows.scrollTop === "number") {
+        savedUnmappedScroll = oldRows.scrollTop;
+      }
+      var liveGroups = nodesByClass(liveCol3, "session-group");
+      for (var i = 0; i < liveGroups.length; i += 1) {
+        var headEl = firstByClass(liveGroups[i], "session-group-head");
+        var subHead = firstByClass(liveGroups[i], "idle-sub-head");
+        var repoName = headEl !== null ? textOf(headEl) : "";
+        if (repoName !== "" && subHead !== null) {
+          // guarded read: some fake-DOM nodes carry attrs without getAttribute
+          var expandedVal = null;
+          if (typeof subHead.getAttribute === "function") expandedVal = subHead.getAttribute("aria-expanded");
+          else if (subHead.attrs && subHead.attrs["aria-expanded"] !== undefined) expandedVal = subHead.attrs["aria-expanded"];
+          expandedIdleRepos[repoName] = expandedVal === "true";
+        }
+      }
+    }
+
+    function restoreCol3ViewState() {
+      var liveCol3 = byId("col3-sessions");
+      if (!liveCol3) return;
+      var rowsEl = firstByClass(liveCol3, "unmapped-rows");
+      if (rowsEl !== null && savedUnmappedScroll > 0) {
+        try {
+          rowsEl.scrollTop = savedUnmappedScroll; // fake DOM: harmless expando
+        } catch (e) {
+          // never let view restoration break a render
+        }
+      }
+    }
+
+    function setView(name) {
+      if (name !== "wall" && name !== "projects") return currentView;
+      if (currentView === name) {
+        render();
+        return currentView;
+      }
+      currentView = name;
+      render();
+      return currentView;
+    }
+
+    function wireViewSwitcher() {
+      if (viewWired) return;
+      var wallBtn = byId("view-wall");
+      var projBtn = byId("view-projects");
+      if (!wallBtn || !projBtn) return;
+      viewWired = true;
+      if (typeof wallBtn.addEventListener === "function") {
+        wallBtn.addEventListener("click", function () {
+          setView("wall");
+        });
+        projBtn.addEventListener("click", function () {
+          setView("projects");
+        });
+      }
+    }
+
+    // Project display name from a path: the LAST non-empty segment — the full
+    // path is hover-only (project name's title), never printed (user report).
+    function baseName(pathish) {
+      var parts = String(pathish).split("/");
+      for (var i = parts.length - 1; i >= 0; i -= 1) {
+        if (parts[i] !== "") return parts[i];
+      }
+      return String(pathish);
+    }
 
     // Disabled toggling through the shared DOM surface: setAttribute on
     // disable; property + removeAttribute on enable (real DOM and the
@@ -2115,21 +2274,27 @@
       if (idle.length > 0) {
         var sub = el("div");
         sub.classList.add("idle-sub");
-        sub.classList.add("collapsed"); // collapsed by default (SPEC 6.3)
+        // Round 5: the expanded state survives poll rebuilds — it lives in
+        // expandedIdleRepos (captured from the live column each render), not
+        // on the discarded nodes.
+        var startExpanded = expandedIdleRepos[repo] === true;
+        if (!startExpanded) sub.classList.add("collapsed"); // collapsed by default (SPEC 6.3)
         var subHead = el("button");
         subHead.setAttribute("type", "button");
         subHead.classList.add("idle-sub-head");
         subHead.setText("idle >24h (" + idle.length + ")");
-        subHead.setAttribute("aria-expanded", "false");
+        subHead.setAttribute("aria-expanded", startExpanded ? "true" : "false");
         if (typeof subHead.addEventListener === "function") {
           subHead.addEventListener("click", function () {
-            if (sub.classList.contains("collapsed")) {
+            var nowExpanded = sub.classList.contains("collapsed");
+            if (nowExpanded) {
               sub.classList.remove("collapsed");
               subHead.setAttribute("aria-expanded", "true");
             } else {
               sub.classList.add("collapsed");
               subHead.setAttribute("aria-expanded", "false");
             }
+            expandedIdleRepos[repo] = nowExpanded;
           });
         }
         sub.appendChild(subHead);
@@ -2206,7 +2371,11 @@
         groupEl.classList.add("unmapped-group");
         var head = el("div");
         head.classList.add("unmapped-group-head");
-        head.setText(groups[g].dir + " · " + groups[g].rows.length);
+        // Round 5 (user report): the head shows the PROJECT NAME only — the
+        // full path rides the hover tooltip, never the text.
+        var dirLabel = groups[g].dir === "(no path)" ? "(no path)" : baseName(groups[g].dir);
+        head.setText(dirLabel + " · " + groups[g].rows.length);
+        if (groups[g].dir !== "(no path)") head.setAttribute("title", groups[g].dir);
         groupEl.appendChild(head);
         for (var r = 0; r < groups[g].rows.length; r += 1) renderUnmappedRow(groupEl, groups[g].rows[r]);
         rowsEl.appendChild(groupEl);
@@ -2272,6 +2441,184 @@
         appendNote(rootEl, "no sessions");
         appendHint(rootEl, "Sessions working on a lane appear here, grouped by repo.");
       }
+    }
+
+    // =====================================================================
+    // Round 5: PROJECTS view — every session (mapped lanes, masters,
+    // unmapped) grouped by the project it works in, sortable, with
+    // per-project activity. The full path is hover-only; heads show the
+    // project name.
+    // =====================================================================
+
+    function buildProjectIndex() {
+      var projects = {};
+      var order = [];
+      function projectFor(name, path) {
+        var key = name.toLowerCase();
+        if (!projects[key]) {
+          projects[key] = { name: name, path: path || "", items: [] };
+          order.push(key);
+        } else if (path && !projects[key].path) {
+          // an unmapped dir's full path fills in the hover target for a
+          // repo-name-keyed group (cleo + .../cleo are one project)
+          projects[key].path = path;
+        }
+        return projects[key];
+      }
+      if (stateDoc !== null) {
+        var progs = MCW.state.items(stateDoc.programs, null).valid;
+        for (var i = 0; i < progs.length; i += 1) {
+          var progName =
+            typeof progs[i].program === "string" && progs[i].program !== ""
+              ? progs[i].program
+              : "(unnamed program)";
+          var lanes = MCW.state.items(progs[i].lanes, "row_id").valid;
+          var firstRepo =
+            lanes.length > 0 && typeof lanes[0].repo === "string" && lanes[0].repo !== ""
+              ? lanes[0].repo
+              : "(no lanes)";
+          for (var j = 0; j < lanes.length; j += 1) {
+            var ses = nullable(lanes[j].session);
+            if (ses === null || typeof ses.id !== "string" || ses.id === "") continue;
+            var laneRepo =
+              typeof lanes[j].repo === "string" && lanes[j].repo !== ""
+                ? lanes[j].repo
+                : "(unconfigured repo)";
+            projectFor(laneRepo, "").items.push({
+              tag: progName + " · " + lanes[j].row_id,
+              title: sessionDisplayTitle(ses),
+              age: isInt(ses.last_active_ago_s) ? ses.last_active_ago_s : 0,
+              id: ses.id,
+            });
+          }
+          var master = nullable(progs[i].master);
+          if (master !== null && typeof master.session_id === "string" && master.session_id !== "") {
+            projectFor(firstRepo, "").items.push({
+              tag: progName + " · master",
+              title: typeof master.title === "string" && master.title !== "" ? master.title : "title pending",
+              age: isInt(master.last_active_ago_s) ? master.last_active_ago_s : 0,
+              id: master.session_id,
+            });
+          }
+        }
+        var unmapped = MCW.state.items(stateDoc.sessions_unmapped, "id").valid;
+        for (var u = 0; u < unmapped.length; u += 1) {
+          var dir = typeof unmapped[u].dir === "string" && unmapped[u].dir !== "" ? unmapped[u].dir : "(no path)";
+          var proj = projectFor(dir === "(no path)" ? dir : baseName(dir), dir);
+          proj.items.push({
+            tag: "unmapped",
+            title: typeof unmapped[u].title === "string" && unmapped[u].title !== "" ? unmapped[u].title : "title pending",
+            age: isInt(unmapped[u].last_active_ago_s) ? unmapped[u].last_active_ago_s : 0,
+            id: typeof unmapped[u].id === "string" ? unmapped[u].id : "",
+          });
+        }
+      }
+      var out = [];
+      for (var k = 0; k < order.length; k += 1) {
+        var p = projects[order[k]];
+        p.items.sort(function (a, b) {
+          return a.age - b.age;
+        });
+        out.push(p);
+      }
+      if (projectSort === "name") {
+        out.sort(function (a, b) {
+          return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+        });
+      } else {
+        // most recently active project first (items are age-ASC, head wins)
+        out.sort(function (a, b) {
+          var aa = a.items.length > 0 ? a.items[0].age : Infinity;
+          var bb = b.items.length > 0 ? b.items[0].age : Infinity;
+          return aa - bb;
+        });
+      }
+      return out;
+    }
+
+    function renderProjectRow(rootEl, item) {
+      var row = el("div");
+      row.classList.add("project-row");
+      row.setAttribute("data-session-id", item.id);
+      var tag = el("span");
+      tag.classList.add("project-row-tag");
+      tag.setText(item.tag);
+      row.appendChild(tag);
+      var title = el("span");
+      title.classList.add("project-row-title");
+      title.setText(item.title);
+      row.appendChild(title);
+      var age = el("span");
+      age.classList.add("project-row-age");
+      age.setText(MCW.util.humanizeAge(item.age));
+      row.appendChild(age);
+      var shortId = item.id.length > 18 ? item.id.slice(0, 15) + "…" : item.id;
+      var idSpan = el("span");
+      idSpan.classList.add("dim");
+      idSpan.setText(shortId);
+      if (shortId !== item.id) idSpan.setAttribute("title", item.id);
+      row.appendChild(idSpan);
+      wireClickable(row, function () {
+        copyText(item.id, null).then(function (ok) {
+          if (ok) transientNoteIn(row, "id copied");
+        });
+      });
+      rootEl.appendChild(row);
+    }
+
+    function renderProjectCard(rootEl, p) {
+      var card = el("div");
+      card.classList.add("project-card");
+      var head = el("div");
+      head.classList.add("project-head");
+      var name = el("span");
+      name.classList.add("project-name");
+      name.setText(p.name);
+      if (p.path !== "") name.setAttribute("title", p.path); // hover-only full path
+      head.appendChild(name);
+      var meta = el("span");
+      meta.classList.add("project-meta");
+      meta.setText(
+        p.items.length + " session" + (p.items.length === 1 ? "" : "s") + " · newest " + MCW.util.humanizeAge(p.items[0].age)
+      );
+      head.appendChild(meta);
+      card.appendChild(head);
+      for (var i = 0; i < p.items.length; i += 1) renderProjectRow(card, p.items[i]);
+      rootEl.appendChild(card);
+    }
+
+    function renderProjectsView(rootEl) {
+      clearNode(rootEl);
+      var headRow = el("div");
+      headRow.classList.add("projects-headrow");
+      var head = el("div");
+      head.classList.add("projects-head");
+      head.setText("PROJECTS");
+      headRow.appendChild(head);
+      var sortBtn = el("button");
+      sortBtn.setAttribute("type", "button");
+      sortBtn.classList.add("projects-sort");
+      sortBtn.setText(projectSort === "recent" ? "sort: recent activity" : "sort: name");
+      if (typeof sortBtn.addEventListener === "function") {
+        sortBtn.addEventListener("click", function () {
+          projectSort = projectSort === "recent" ? "name" : "recent";
+          render();
+        });
+      }
+      headRow.appendChild(sortBtn);
+      rootEl.appendChild(headRow);
+      var valid = stateDoc !== null && MCW.state.validateDoc(stateDoc).ok;
+      if (!valid) {
+        appendNote(rootEl, "no data");
+        return;
+      }
+      var projects = buildProjectIndex();
+      if (projects.length === 0) {
+        appendNote(rootEl, "no sessions");
+        appendHint(rootEl, "Sessions appear here grouped by the project they work in.");
+        return;
+      }
+      for (var i = 0; i < projects.length; i += 1) renderProjectCard(rootEl, projects[i]);
     }
 
     // =====================================================================
@@ -2470,6 +2817,7 @@
       renderBanners: renderBanners,
       startLive: startLive,
       diagnostics: diagnostics,
+      setView: setView,
     };
     // T3: QA armed-demo override state (null | "prompt-armed" | "goal-armed" |
     // "cleared"); seeded null, reset by every mountQA.

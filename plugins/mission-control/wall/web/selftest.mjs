@@ -3834,17 +3834,69 @@ test("round 4b: adaptive grid — sole content goes full width; empty columns le
   assert.ok(hideIdle && hideIdle.decls["display"] === "none", "contentless columns leave the grid entirely");
 });
 
-test("round 4: unmapped rows group by dir — path renders once per group, id demoted to a copy handle", () => {
+test("round 4: unmapped rows group by dir — heads show the project NAME, full path hover-only; id demoted to a copy handle", () => {
   const { dom } = makeQaApp("full");
   const strip = byClass(dom.getElementById("col3-sessions"), "unmapped-strip")[0];
   const groups = byClass(strip, "unmapped-group");
   assert.equal(groups.length, 2, "two distinct dirs -> two groups");
-  const head0 = collectText(byClass(groups[0], "unmapped-group-head")[0]);
-  assert.ok(head0.indexOf("~/.zcode/s-unmapped-1") !== -1, "group head carries the dir");
+  const head0 = byClass(groups[0], "unmapped-group-head")[0];
+  assert.ok(collectText(head0).indexOf("s-unmapped-1") !== -1, "head shows the project NAME");
+  assert.equal(collectText(head0).indexOf("/.zcode"), -1, "full path is never printed");
+  assert.equal(head0.attrs["title"], "~/.zcode/s-unmapped-1", "full path on hover");
   const row0 = collectText(byClass(groups[0], "unmapped-row")[0]);
   assert.ok(row0.indexOf("scratch: rebase experiment") !== -1, "row still carries the title");
   assert.equal(row0.indexOf("~/.zcode/s-unmapped-1"), -1, "the path renders once per group, not per row");
   assert.ok(collectText(byClass(groups[0], "unmapped-row")[0]).indexOf("s-unmapped-1") !== -1, "short id tail present");
+});
+
+test("round 5: WALL/PROJECTS switcher — projects view groups every session by project, newest-first, sortable", () => {
+  const full = makeQaApp("full");
+  const grid = full.dom.getElementById("grid");
+  const projEl = full.dom.getElementById("projects-view");
+  assert.ok(!("hidden" in grid.attrs), "wall is the default view");
+  assert.ok("hidden" in projEl.attrs, "projects view ships hidden");
+  assert.equal(full.dom.getElementById("view-wall").attrs["aria-pressed"], "true");
+
+  full.app.setView("projects");
+  assert.ok("hidden" in grid.attrs, "grid hides on the projects view");
+  assert.ok(!("hidden" in projEl.attrs), "projects view visible");
+  assert.equal(full.dom.getElementById("view-projects").attrs["aria-pressed"], "true");
+
+  const cards = byClass(projEl, "project-card");
+  // cleo (4: s-101, s-105, s-107 + master s-master-1) + two unmapped dirs
+  assert.equal(cards.length, 3, "three project groups from the full fixture");
+  const names = cards.map((c) => collectText(byClass(c, "project-name")[0]));
+  // recent-first: cleo (newest 95s) then s-unmapped-2 (300s) then s-unmapped-1 (2d)
+  assert.deepEqual(names, ["cleo", "s-unmapped-2", "s-unmapped-1"], "projects sort by recent activity");
+  const cleo = cards[0];
+  assert.ok(collectText(cleo).indexOf("secfix: join hardening") !== -1, "lane sessions listed under their project");
+  assert.ok(collectText(cleo).indexOf("mission-control tower") !== -1, "master row folded into its project");
+  const unmappedCard = byClass(projEl, "project-card")[2];
+  assert.equal(
+    byClass(unmappedCard, "project-name")[0].attrs["title"],
+    "~/.zcode/s-unmapped-1",
+    "project name carries the full path as hover-only title"
+  );
+
+  // sort toggle flips group order (name A..Z: cleo, s-unmapped-1, s-unmapped-2)
+  byClass(projEl, "projects-sort")[0].click();
+  const namesAfter = byClass(projEl, "project-card").map((c) => collectText(byClass(c, "project-name")[0]));
+  assert.deepEqual(namesAfter, ["cleo", "s-unmapped-1", "s-unmapped-2"], "name sort reorders the groups");
+
+  full.app.setView("wall");
+  assert.ok(!("hidden" in grid.attrs), "switching back restores the wall");
+});
+
+test("round 5: reading state survives poll rebuilds — expanded idle>24h groups stay expanded", () => {
+  const { app, dom } = makeQaApp("full");
+  const col3 = dom.getElementById("col3-sessions");
+  const idleHead = byClass(col3, "idle-sub-head")[0];
+  assert.ok(idleHead, "full fixture has an idle>24h group (s-103 at 250000s)");
+  idleHead.click();
+  assert.equal(idleHead.attrs["aria-expanded"], "true", "expanded on click");
+  app.render(); // a poll-driven rebuild (ages ticked)
+  const idleHeadAfter = byClass(dom.getElementById("col3-sessions"), "idle-sub-head")[0];
+  assert.equal(idleHeadAfter.attrs["aria-expanded"], "true", "still expanded after the rebuild");
 });
 
 // ---------------- runner ----------------
