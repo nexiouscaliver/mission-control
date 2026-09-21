@@ -5,11 +5,19 @@
 <link rel="stylesheet" href="assets/style.css">
 </head><body>
 <header id="topbar">
-  <span id="wordmark">MC WALL</span><span id="live-dot"></span><span id="mode-badge"></span>
-  <button id="needs-me-now" type="button">NEEDS ME NOW <span id="nmn-counter"></span></button>
-  <span id="armed-indicator-slot"></span><span id="degraded-badges"></span>
-  <span id="state-age-caption"></span>
+  <div class="tb-cluster tb-identity">
+    <span id="wordmark">MC WALL</span><span id="live-dot"></span><span id="mode-badge"></span>
+  </div>
+  <div class="tb-cluster tb-owed">
+    <button id="needs-me-now" type="button">NEEDS ME NOW <span id="nmn-counter"></span></button>
+    <span id="nmn-hint" hidden>nothing owed — updates every 5 s</span>
+  </div>
+  <div class="tb-cluster tb-health">
+    <span id="degraded-badges" role="status"></span>
+    <span id="state-age-caption"></span>
+  </div>
 </header>
+<div id="armed-strip"><span id="armed-indicator-slot"></span></div>
 <div id="banner-strip" role="alert" hidden></div>
 <main id="grid">
   <section id="col1-programs" class="col"></section>
@@ -19,7 +27,9 @@
   </section>
   <section id="col3-sessions" class="col"></section>
 </main>
+<div id="panel-backdrop" hidden></div>
 <div id="launch-panel" hidden></div>
+<footer id="kbd-hint"><span>shortcuts: </span><span class="kbd">n</span><span> needs-me-now · </span><span class="kbd">r</span><span> refresh · </span><span class="kbd">esc</span><span> close panel</span></footer>
 <script type="application/json" id="mock-full">{
   "schema_version": 1,
   "server": {

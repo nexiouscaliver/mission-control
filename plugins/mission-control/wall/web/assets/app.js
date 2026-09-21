@@ -178,22 +178,44 @@
       var body = doc.body;
       if (!byId("topbar")) {
         var bar = el("header", "topbar");
+        // SPEC v2.1 A2: three top-bar clusters — identity, owed, health.
+        var identity = el("div");
+        identity.classList.add("tb-cluster");
+        identity.classList.add("tb-identity");
         var wordmark = el("span", "wordmark");
         wordmark.setText("MC WALL");
-        bar.appendChild(wordmark);
-        bar.appendChild(el("span", "live-dot"));
-        bar.appendChild(el("span", "mode-badge"));
+        identity.appendChild(wordmark);
+        identity.appendChild(el("span", "live-dot"));
+        identity.appendChild(el("span", "mode-badge"));
+        bar.appendChild(identity);
+        var owed = el("div");
+        owed.classList.add("tb-cluster");
+        owed.classList.add("tb-owed");
         var needsMeNow = el("button", "needs-me-now");
         needsMeNow.setAttribute("type", "button");
         needsMeNow.setText("NEEDS ME NOW");
         needsMeNow.appendChild(el("span", "nmn-counter"));
-        bar.appendChild(needsMeNow);
-        bar.appendChild(el("span", "armed-indicator-slot"));
+        owed.appendChild(needsMeNow);
+        var nmnHint = el("span", "nmn-hint");
+        nmnHint.setAttribute("hidden", "");
+        nmnHint.setText("nothing owed — updates every 5 s");
+        owed.appendChild(nmnHint);
+        bar.appendChild(owed);
+        var health = el("div");
+        health.classList.add("tb-cluster");
+        health.classList.add("tb-health");
         var badges = el("span", "degraded-badges");
         badges.setAttribute("role", "status"); // F-4: the a11y announce survives on the badge row
-        bar.appendChild(badges);
-        bar.appendChild(el("span", "state-age-caption"));
+        health.appendChild(badges);
+        health.appendChild(el("span", "state-age-caption"));
+        bar.appendChild(health);
         body.appendChild(bar);
+      }
+      // SPEC v2.1 A1: the armed indicator leaves the top bar for its own strip.
+      if (!byId("armed-strip")) {
+        var armedStrip = el("div", "armed-strip");
+        armedStrip.appendChild(el("span", "armed-indicator-slot"));
+        body.appendChild(armedStrip);
       }
       if (!byId("banner-strip")) {
         var strip = el("div", "banner-strip");
@@ -220,18 +242,62 @@
         grid.appendChild(col3);
         body.appendChild(grid);
       }
+      if (!byId("panel-backdrop")) {
+        var backdrop = el("div", "panel-backdrop");
+        backdrop.setAttribute("hidden", "");
+        body.appendChild(backdrop);
+      }
       if (!byId("launch-panel")) {
         var launch = el("div", "launch-panel");
         launch.setAttribute("hidden", "");
         body.appendChild(launch);
       }
+      if (!byId("kbd-hint")) {
+        var kbd = el("footer", "kbd-hint");
+        var seg;
+        seg = el("span");
+        seg.setText("shortcuts: ");
+        kbd.appendChild(seg);
+        seg = el("span");
+        seg.classList.add("kbd");
+        seg.setText("n");
+        kbd.appendChild(seg);
+        seg = el("span");
+        seg.setText(" needs-me-now · ");
+        kbd.appendChild(seg);
+        seg = el("span");
+        seg.classList.add("kbd");
+        seg.setText("r");
+        kbd.appendChild(seg);
+        seg = el("span");
+        seg.setText(" refresh · ");
+        kbd.appendChild(seg);
+        seg = el("span");
+        seg.classList.add("kbd");
+        seg.setText("esc");
+        kbd.appendChild(seg);
+        seg = el("span");
+        seg.setText(" close panel");
+        kbd.appendChild(seg);
+        body.appendChild(kbd);
+      }
     }
 
-    function appendNote(rootEl, text) {
+    function appendNote(rootEl, text, extraClass) {
       var dim = el("div");
       dim.classList.add("panel-note");
+      if (extraClass) dim.classList.add(extraClass);
       dim.setText(String(text));
       rootEl.appendChild(dim);
+    }
+
+    // Companion guidance line on a VALID-doc empty panel (SPEC v2.1 §4.4).
+    // Never used on blank/waiting/L0 panels — those keep exactly one child.
+    function appendHint(rootEl, text) {
+      var hint = el("div");
+      hint.classList.add("empty-hint");
+      hint.setText(String(text));
+      rootEl.appendChild(hint);
     }
 
     function renderBlank(note) {
@@ -304,9 +370,12 @@
         return;
       }
       var res = MCW.state.items(stateDoc.programs, null);
-      if (res.valid.length === 0) appendNote(rootEl, "no programs");
+      if (res.valid.length === 0) {
+        appendNote(rootEl, "no programs");
+        appendHint(rootEl, "Programs appear here once the tower registers one — this page updates itself every 5 s.");
+      }
       for (var i = 0; i < res.valid.length; i += 1) renderProgramCard(rootEl, res.valid[i]);
-      if (res.skipped > 0) appendNote(rootEl, "skipped " + res.skipped + " malformed rows");
+      if (res.skipped > 0) appendNote(rootEl, "skipped " + res.skipped + " malformed rows", "data-note");
     }
 
     function renderProgramCard(rootEl, prog) {
@@ -357,10 +426,13 @@
       var laneRes = MCW.state.items(prog.lanes, "row_id");
       var listEl = el("div");
       listEl.classList.add("lane-list");
-      if (laneRes.valid.length === 0) appendNote(listEl, "no lanes");
+      if (laneRes.valid.length === 0) {
+        appendNote(listEl, "no lanes");
+        appendHint(listEl, "No lanes are open for this program yet.");
+      }
       for (var i = 0; i < laneRes.valid.length; i += 1) renderLane(listEl, mtime, laneRes.valid[i]);
       card.appendChild(listEl);
-      if (laneRes.skipped > 0) appendNote(card, "skipped " + laneRes.skipped + " malformed rows");
+      if (laneRes.skipped > 0) appendNote(card, "skipped " + laneRes.skipped + " malformed rows", "data-note");
 
       rootEl.appendChild(card);
     }
@@ -376,6 +448,19 @@
       parentEl.appendChild(badge);
     }
 
+    // chip grammar v2 (SPEC v2.1 §2.4): the severity axis. Pure — provenance
+    // stays in the pinned chip--note/derived/stale classes; this picks the
+    // additive modifier: failed reads blocked, partial / UNPARSED / a stalled
+    // lane / an unstamped note read watch, everything stamped-and-healthy ok.
+    function statusSeverity(lane, mtime) {
+      var status = typeof lane.status_parsed === "string" && lane.status_parsed !== "" ? lane.status_parsed : "UNPARSED";
+      if (status === "failed") return "chip--sev-blocked";
+      if (status === "partial" || status === "UNPARSED") return "chip--sev-watch";
+      if (nullable(lane.stalled) !== null) return "chip--sev-watch";
+      if (mtime === 0) return "chip--sev-watch";
+      return "chip--sev-ok";
+    }
+
     function renderLane(listEl, mtime, lane) {
       var laneEl = el("div");
       laneEl.classList.add("lane");
@@ -384,6 +469,7 @@
       var status = typeof lane.status_parsed === "string" && lane.status_parsed !== "" ? lane.status_parsed : "UNPARSED";
       var chipEl = el("div");
       chipEl.classList.add("chip");
+      chipEl.classList.add(statusSeverity(lane, mtime)); // additive severity axis
       if (status === "UNPARSED") {
         // SPEC 5: unknown vocab renders as UNPARSED, never an error.
         chipEl.classList.add("chip--stale");
@@ -517,6 +603,12 @@
       // wireClickable helper gives click + Enter/Space the same action).
       if (status === "forged") {
         laneEl.classList.add("lane--launchable");
+        // SPEC v2.1 §3/06: a persistent at-rest affordance — hover only ever
+        // elevates it (the row already reads as openable without hovering).
+        var go = el("span");
+        go.classList.add("lane-go");
+        go.setText("▸");
+        laneEl.appendChild(go);
         var rowId = lane.row_id; // renderLane parameter scope — no capture IIFE needed
         wireClickable(laneEl, function () {
           openLaunchPanel(rowId);
@@ -588,6 +680,7 @@
     function mountQA(caseName) {
       app.qaArmOverride = null; // QA arm-demo override is per-mount, in-memory only
       app.qaArmDismissed = false; // fresh mount re-offers the mock pending
+      unmappedOpen = false; // fresh mount = fresh strip state (a view, not data)
       var requested = typeof caseName === "string" && caseName !== "" ? caseName : null;
       var search = requested !== null ? "?case=" + encodeURIComponent(requested) : "";
       var n = MCW.state.normalize(doc, { search: search });
@@ -605,12 +698,26 @@
     // QA-only armed-demo override (SPEC 7.3): LAUNCH cycles the override
     // null -> prompt-armed -> goal-armed -> cleared -> null. In-memory only;
     // mountQA and a page reload reset it. T5: each cycle refreshes the bar.
+    // SPEC v2.1 screen 09: with the panel OPEN, the same tick re-renders it so
+    // the pending line tracks the override, and focus lands on the fresh
+    // LAUNCH node. LIVE never reaches this (its LAUNCH is disabled — AC-34);
+    // the strip's re-copy/cancel POSTs do not re-render the panel either.
     var QA_ARM_ORDER = [null, "prompt-armed", "goal-armed", "cleared"];
     function qaArmCycle() {
       var idx = QA_ARM_ORDER.indexOf(app.qaArmOverride);
       if (idx === -1) idx = 0;
       app.qaArmOverride = QA_ARM_ORDER[(idx + 1) % QA_ARM_ORDER.length];
       renderArmedBar();
+      var panelEl = byId("launch-panel");
+      if (lastPanelRowId !== null && panelEl && panelEl.classList.contains("open")) {
+        var hit = findLaneRow(lastPanelRowId);
+        if (hit !== null) {
+          renderLaunchPanel(hit.prog, hit.lane);
+          if (launchBtnNode !== null && typeof launchBtnNode.focus === "function") {
+            launchBtnNode.focus();
+          }
+        }
+      }
       return app.qaArmOverride;
     }
 
@@ -640,6 +747,37 @@
       panelEl.appendChild(line);
     }
 
+    // Panel sections (SPEC v2.1 §3/07): a small uppercase head over grouped
+    // key/value lines. Unpinned structure — purely a reading aid.
+    function launchSection(panelEl, title) {
+      var section = el("div");
+      section.classList.add("launch-section");
+      var head = el("div");
+      head.classList.add("launch-section-head");
+      head.setText(title);
+      section.appendChild(head);
+      panelEl.appendChild(section);
+      return section;
+    }
+
+    // Status mirror chip: the lane's provenance + severity classes re-rendered
+    // inside the panel so the armed decision reads with the lane's color.
+    function mirrorChipInto(parentEl, lane, mtime) {
+      var status = typeof lane.status_parsed === "string" && lane.status_parsed !== "" ? lane.status_parsed : "UNPARSED";
+      var chip = el("div");
+      chip.classList.add("chip");
+      if (status === "UNPARSED" || mtime === 0) chip.classList.add("chip--stale");
+      else chip.classList.add("chip--note");
+      chip.classList.add(statusSeverity(lane, mtime));
+      if (status === "UNPARSED") {
+        var noteText = typeof lane.status_note === "string" ? lane.status_note : "";
+        chip.setText("UNPARSED: " + (noteText !== "" ? noteText : "(empty status)"));
+      } else {
+        chip.setText(status);
+      }
+      parentEl.appendChild(chip);
+    }
+
     function renderLaunchPanel(prog, lane) {
       var panelEl = byId("launch-panel");
       if (!panelEl) return;
@@ -653,6 +791,10 @@
       title.classList.add("launch-title");
       title.setText("LAUNCH " + lane.row_id);
       head.appendChild(title);
+      var escHint = el("span");
+      escHint.classList.add("launch-esc");
+      escHint.setText("esc");
+      head.appendChild(escHint);
       var closeBtn = el("button");
       closeBtn.setAttribute("type", "button");
       closeBtn.classList.add("launch-close");
@@ -661,28 +803,31 @@
       launchCloseBtn = closeBtn; // openLaunchPanel focuses it once rendered
       panelEl.appendChild(head);
 
-      launchLine(panelEl, "row", lane.row_id);
+      var laneSec = launchSection(panelEl, "lane");
+      launchLine(laneSec, "row", lane.row_id);
       var progName = typeof prog.program === "string" && prog.program !== "" ? prog.program : "(unnamed program)";
-      launchLine(panelEl, "program", progName);
+      launchLine(laneSec, "program", progName);
       var place = [];
       if (typeof lane.repo === "string" && lane.repo !== "") place.push(lane.repo);
       if (typeof lane.branch === "string" && lane.branch !== "") place.push(lane.branch);
       if (typeof lane.slug === "string" && lane.slug !== "") place.push(lane.slug);
-      launchLine(panelEl, "repo", place.length > 0 ? place.join(" · ") : "(unconfigured repo)", place.length === 0);
+      launchLine(laneSec, "repo", place.length > 0 ? place.join(" · ") : "(unconfigured repo)", place.length === 0);
+      mirrorChipInto(laneSec, lane, isInt(prog.note_mtime) ? prog.note_mtime : 0);
 
+      var manifestSec = launchSection(panelEl, "manifest");
       var manifest = nullable(lane.manifest);
       var mv = function (v) {
         return typeof v === "string" && v !== "" ? v : "(none)";
       };
       if (manifest === null) {
-        launchLine(panelEl, "manifest", "none — launch via master", true);
+        launchLine(manifestSec, "manifest", "none — launch via master", true);
       } else {
-        launchLine(panelEl, "manifest", mv(manifest.path));
-        launchLine(panelEl, "prompt", mv(manifest.prompt_md));
-        launchLine(panelEl, "goal", mv(manifest.goal_md));
+        launchLine(manifestSec, "manifest", mv(manifest.path));
+        launchLine(manifestSec, "prompt", mv(manifest.prompt_md));
+        launchLine(manifestSec, "goal", mv(manifest.goal_md));
         var mrs = Array.isArray(manifest.precondition_mrs) ? manifest.precondition_mrs : [];
-        launchLine(panelEl, "preconditions", mrs.length > 0 ? mrs.join(" · ") : "none", mrs.length === 0);
-        launchLine(panelEl, "stall_t_hours", String(isInt(manifest.stall_t_hours) ? manifest.stall_t_hours : 0));
+        launchLine(manifestSec, "preconditions", mrs.length > 0 ? mrs.join(" · ") : "none", mrs.length === 0);
+        launchLine(manifestSec, "stall_t_hours", String(isInt(manifest.stall_t_hours) ? manifest.stall_t_hours : 0));
       }
       // Pinned placeholder: the prompt text is not in the v1 state contract.
       var ph = el("div");
@@ -716,6 +861,7 @@
       }
       panelEl.appendChild(btn);
       panelEl.appendChild(note);
+      launchBtnNode = btn; // the QA arm demo refocuses the fresh LAUNCH node
 
       if (typeof btn.addEventListener === "function" && !live) {
         btn.addEventListener("click", function () {
@@ -730,13 +876,38 @@
       panelEl.classList.add("open");
     }
 
+    // One-shot backdrop click wiring (SPEC v2.1 §3/07: click-closes).
+    function wireLaunchBackdrop() {
+      var backdrop = byId("panel-backdrop");
+      if (!backdrop || backdropWired) return;
+      backdropWired = true;
+      if (typeof backdrop.addEventListener === "function") {
+        backdrop.addEventListener("click", function () {
+          closeLaunchPanel();
+        });
+      }
+    }
+
     function openLaunchPanel(rowId) {
       var key = String(rowId);
       var hit = findLaneRow(key);
       if (hit === null) return false;
-      // Remember the triggering lane so close can hand focus back (dialog a11y).
+      // Remember the triggering lane so close can hand focus back (dialog a11y)
+      // and the QA arm demo knows which panel to re-render (SPEC v2.1 §3/09).
+      lastPanelRowId = key;
       lastTrigger = findDataIn(byId("col1-programs"), "row-id", key);
       renderLaunchPanel(hit.prog, hit.lane);
+      var backdrop = byId("panel-backdrop");
+      if (backdrop) {
+        backdrop.classList.add("open");
+        backdrop.removeAttribute("hidden");
+      }
+      wireLaunchBackdrop();
+      // SPEC v2.1 screen 10 (browser finding, round 3): the open panel must
+      // never occlude the armed strip's controls — the body class lets CSS
+      // dock the armed chip beside the panel (and the strip's z-index lifts
+      // it above the backdrop), keeping re-copy/cancel/× clickable.
+      if (doc && doc.body) doc.body.classList.add("panel-open");
       if (launchCloseBtn !== null && typeof launchCloseBtn.focus === "function") {
         launchCloseBtn.focus();
       }
@@ -746,6 +917,12 @@
     function closeLaunchPanel() {
       var panelEl = byId("launch-panel");
       if (panelEl) panelEl.classList.remove("open");
+      var backdrop = byId("panel-backdrop");
+      if (backdrop) {
+        backdrop.classList.remove("open");
+        backdrop.setAttribute("hidden", "");
+      }
+      if (doc && doc.body) doc.body.classList.remove("panel-open");
       if (lastTrigger !== null && typeof lastTrigger.focus === "function") {
         lastTrigger.focus();
       }
@@ -758,9 +935,17 @@
     // =====================================================================
 
     var launchCloseBtn = null; // set by renderLaunchPanel; focused on open
+    var launchBtnNode = null; // set by renderLaunchPanel; the QA arm demo refocuses it
     var lastTrigger = null; // lane that opened the panel; refocused on close
+    var lastPanelRowId = null; // row whose panel is open; the QA arm demo re-renders it
+    var backdropWired = false; // #panel-backdrop click wiring is one-shot
     var nmnWired = false; // #needs-me-now click wiring is one-shot
     var qaCase = null; // applied case, so keyboard r can re-mount in QA
+    // SPEC v2.1 screen 02 (browser finding, round 3): live tower ages tick on
+    // every poll, so the strip's content signature always differs and the
+    // churn guard rebuilds it — the expanded state must live HERE, not on the
+    // discarded nodes, or the strip snaps shut under someone reading it.
+    var unmappedOpen = false;
 
     // Disabled toggling through the shared DOM surface: setAttribute on
     // disable; property + removeAttribute on enable (real DOM and the
@@ -843,7 +1028,15 @@
         if (btn && btn.parentNode) host = btn.parentNode;
       }
       if (host === null && doc.body) host = doc.body;
-      if (host === null) return;
+      transientNoteIn(host, text, isError);
+    }
+
+    // The same primitive with an EXPLICIT host — for anchors whose parent is
+    // not where the note must appear (the unmapped strip scrolls internally,
+    // so a note appended after its last row lands out of sight below the
+    // scroller fold; browser finding, round 3).
+    function transientNoteIn(host, text, isError) {
+      if (text === null || text === undefined || host === null || !doc) return;
       var note = el("span");
       note.classList.add("inline-note");
       if (isError) note.classList.add("inline-note--error");
@@ -872,19 +1065,26 @@
       return { v: v, m: m };
     }
 
-    // Mix counter + disabled state on the top-bar button (SPEC 7.1).
+    // Mix counter + owed/idle state on the top-bar button (SPEC 7.1; v2.1 §5.2).
+    // 0 owed does NOT disable the button — it goes idle-styled (aria-disabled)
+    // and stays clickable so the click can surface the nothing-owed note.
     function updateNeedsMeNow() {
       var counterEl = byId("nmn-counter");
       var btn = byId("needs-me-now");
+      var hint = byId("nmn-hint");
       var c = owedCounts();
-      if (counterEl) counterEl.setText(c.v + "v·" + c.m + "m");
+      if (counterEl) counterEl.setText(c.v + " verify · " + c.m + " merge");
       if (btn) {
         if (c.v === 0 && c.m === 0) {
-          setDisabled(btn, true);
+          btn.classList.add("nmn-idle");
+          btn.setAttribute("aria-disabled", "true");
           btn.setAttribute("title", "nothing owed");
+          if (hint) hint.removeAttribute("hidden");
         } else {
-          setDisabled(btn, false);
-          btn.setAttribute("title", "");
+          btn.classList.remove("nmn-idle");
+          btn.removeAttribute("aria-disabled");
+          btn.setAttribute("title", "shortcut: n");
+          if (hint) hint.setAttribute("hidden", "");
         }
       }
     }
@@ -914,9 +1114,12 @@
         return;
       }
       var res = MCW.state.items(stateDoc.verify_queue, "row_id");
-      if (res.valid.length === 0) appendNote(rootEl, "nothing to verify");
+      if (res.valid.length === 0) {
+        appendNote(rootEl, "nothing to verify");
+        appendHint(rootEl, "When a lane finishes, its COPY VERIFY command lands here.");
+      }
       for (var i = 0; i < res.valid.length; i += 1) renderVerifyRow(rootEl, res.valid[i]);
-      if (res.skipped > 0) appendNote(rootEl, "skipped " + res.skipped + " malformed rows");
+      if (res.skipped > 0) appendNote(rootEl, "skipped " + res.skipped + " malformed rows", "data-note");
     }
 
     function renderVerifyRow(rootEl, row) {
@@ -1039,10 +1242,13 @@
         if (res.valid[i].kind === "merge") merges.push(res.valid[i]);
         else unsupported += 1;
       }
-      if (merges.length === 0) appendNote(rootEl, "nothing owed");
+      if (merges.length === 0) {
+        appendNote(rootEl, "nothing owed");
+        appendHint(rootEl, "Merge requests waiting on you will appear here.");
+      }
       for (var j = 0; j < merges.length; j += 1) renderMergeCard(rootEl, merges[j]);
-      if (skipped > 0) appendNote(rootEl, "skipped " + skipped + " malformed rows");
-      if (unsupported > 0) appendNote(rootEl, "skipped " + unsupported + " unsupported rows");
+      if (skipped > 0) appendNote(rootEl, "skipped " + skipped + " malformed rows", "data-note");
+      if (unsupported > 0) appendNote(rootEl, "skipped " + unsupported + " unsupported rows", "data-note");
     }
 
     function renderMergeCard(rootEl, m) {
@@ -1367,6 +1573,12 @@
           bad.classList.add("banner--bad-doc");
           bad.setText("wall: bad state document (" + v.reason + ")");
           scratch.appendChild(bad);
+          // SPEC v2.1 §4.4: the companion hint is a SIBLING of the pinned
+          // line — never a child (AC-4/AC-22 read the pinned line's own text).
+          var badHint = el("div");
+          badHint.classList.add("banner-hint");
+          badHint.setText("Panels stay blank until a valid state document arrives — nothing on this page is rendered from invalid data.");
+          scratch.appendChild(badHint);
         }
         // T6 LIVE page-generated lines (SPEC 4.3/8): the missing-token line and
         // the debounced poll-failure DEGRADED banner. Never the reserved
@@ -1377,6 +1589,10 @@
           mt.classList.add("banner--bad-doc");
           mt.setText("wall: missing token in URL");
           scratch.appendChild(mt);
+          var mtHint = el("div");
+          mtHint.classList.add("banner-hint");
+          mtHint.setText("Open the wall link printed by mc-wall open.");
+          scratch.appendChild(mtHint);
         }
         var degradedTxt = degradedBannerText();
         if (degradedTxt !== null && !live.degradedDismissed) {
@@ -1444,6 +1660,10 @@
       }
       var cap = byId("state-age-caption");
       if (cap) {
+        // SPEC v2.1 §3/01: the caption explains itself on hover — the wall's
+        // age is the age of the last state DOCUMENT, which surprises nobody
+        // who has read the tooltip (audit: "state 0s" reads as a bug without it).
+        cap.setAttribute("title", "age of the last state document received from the wall server");
         // T6: while LIVE failures stack up, the shown state IS the last-good —
         // label it with the age of the last successful poll (SPEC 4.3).
         if (live !== null && live.failures > 0 && live.lastGoodAtMs !== null) {
@@ -1706,8 +1926,11 @@
       row.appendChild(idle);
       // T6 carry-over (d) + T7 (H): clickable rows are keyboard-operable too —
       // one shared wiring helper (click + Enter/Space -> the same action).
+      // SPEC v2.1 §4.3: a resolved copy confirms with a transient note.
       wireClickable(row, function () {
-        copyText(m.id, null); // copy-without-label-swap (SPEC 7.2)
+        copyText(m.id, null).then(function (ok) { // copy-without-label-swap (SPEC 7.2)
+          if (ok) transientNote("id copied", row);
+        });
       });
       parentEl.appendChild(row);
     }
@@ -1758,7 +1981,7 @@
 
     function renderUnmappedStrip(rootEl) {
       var res = MCW.state.items(stateDoc.sessions_unmapped, "id");
-      if (res.skipped > 0) appendNote(rootEl, "skipped " + res.skipped + " malformed rows");
+      if (res.skipped > 0) appendNote(rootEl, "skipped " + res.skipped + " malformed rows", "data-note");
       if (res.valid.length === 0) return 0;
       var strip = el("div");
       strip.classList.add("unmapped-strip");
@@ -1766,10 +1989,34 @@
       head.classList.add("unmapped-head");
       head.setText("unmapped (" + res.valid.length + ")");
       strip.appendChild(head);
+      // SPEC v2.1 §3/01: a show-all toggle past the strip's scroll cap. The
+      // expanded state is owned by unmappedOpen so a poll-driven rebuild of
+      // the strip re-applies it instead of snapping shut.
+      var toggle = el("button");
+      toggle.setAttribute("type", "button");
+      toggle.classList.add("unmapped-toggle");
+      toggle.setText("show all");
+      toggle.setAttribute("aria-expanded", unmappedOpen ? "true" : "false");
+      toggle.setAttribute("aria-controls", "unmapped-rows");
+      strip.appendChild(toggle);
       var rowsEl = el("div");
       rowsEl.classList.add("unmapped-rows");
+      if (unmappedOpen) rowsEl.classList.add("open");
+      rowsEl.setAttribute("id", "unmapped-rows"); // the toggle's aria-controls target
       for (var i = 0; i < res.valid.length; i += 1) renderUnmappedRow(rowsEl, res.valid[i]);
       strip.appendChild(rowsEl);
+      if (typeof toggle.addEventListener === "function") {
+        toggle.addEventListener("click", function () {
+          unmappedOpen = !unmappedOpen;
+          if (unmappedOpen) {
+            rowsEl.classList.add("open");
+            toggle.setAttribute("aria-expanded", "true");
+          } else {
+            rowsEl.classList.remove("open");
+            toggle.setAttribute("aria-expanded", "false");
+          }
+        });
+      }
       rootEl.appendChild(strip);
       return res.valid.length;
     }
@@ -1795,8 +2042,15 @@
       idSpan.setText(" · " + u.id);
       row.appendChild(idSpan);
       // T6 carry-over (d) + T7 (H): keyboard parity via the shared wiring helper.
+      // SPEC v2.1 §4.3: a resolved copy confirms with a transient note —
+      // placed INSIDE the clicked row, because the strip scrolls internally
+      // and a note appended to the rows container lands out of sight past
+      // the fold (browser finding, round 3). The row is the only anchor that
+      // is guaranteed visible: the user just clicked it.
       wireClickable(row, function () {
-        copyText(u.id, null);
+        copyText(u.id, null).then(function (ok) {
+          if (ok) transientNoteIn(row, "id copied");
+        });
       });
       rowsEl.appendChild(row);
     }
@@ -1815,7 +2069,10 @@
       var stripCount = 0;
       if (cls.sessionsUnmapped === "ok") stripCount = renderUnmappedStrip(rootEl);
       else appendNote(rootEl, "no data"); // L2 on the strip's source array
-      if (rowCount === 0 && stripCount === 0) appendNote(rootEl, "no sessions");
+      if (rowCount === 0 && stripCount === 0) {
+        appendNote(rootEl, "no sessions");
+        appendHint(rootEl, "Sessions working on a lane appear here, grouped by repo.");
+      }
     }
 
     // =====================================================================
