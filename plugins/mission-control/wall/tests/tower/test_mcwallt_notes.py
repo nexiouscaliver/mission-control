@@ -330,14 +330,17 @@ def test_mcwallt_lane_session_variants(tmp_path):
     # Exactly-1 prefix hits -> full session object, id = FULL db id.
     assert lanes["W3-L0"]["session"] == {"id": "sess_3f3f3f3f-3f3f-43f3-83f3-3f3f3f3f3f3f",
                                          "title": None, "title_pending": True,
-                                         "dir": "/mcwallt/l0", "last_active_ago_s": 30}
+                                         "dir": "/mcwallt/l0", "last_active_ago_s": 30,
+                                         "parent_session_id": None}
     assert lanes["W3-L1"]["session"] == {"id": "sess_9a690ab2-cde8-4e9a-bc4e-177fcc68545f",
                                          "title": "", "title_pending": True,
-                                         "dir": "/mcwallt/l1", "last_active_ago_s": 120}
+                                         "dir": "/mcwallt/l1", "last_active_ago_s": 120,
+                                         "parent_session_id": None}
     assert lanes["W3-L2"]["session"] == {"id": "sess_2243e9a1-ef61-4f35-a05a-a4cd422abec6",
                                          "title": "MC - Managing multiple mission control sessions workflow",
                                          "title_pending": False,
-                                         "dir": "/mcwallt/l2", "last_active_ago_s": 80}
+                                         "dir": "/mcwallt/l2", "last_active_ago_s": 80,
+                                         "parent_session_id": None}
     # 0 hits -> session null, NO degraded entry (the row may predate launch).
     assert lanes["W3-L3"]["session"] is None
     # 2 hits -> session null + entry 9 for the raw token.

@@ -219,7 +219,10 @@ def _join_sessions(config: TowerConfig, store, cur, now: float, factor: int,
                            "title_pending": title is None or title == "",
                            "dir": obj["dir"],
                            # contract requires int; 0 = the spec's unknown-age convention
-                           "last_active_ago_s": max(0, int(now - epoch)) if epoch is not None else 0}
+                           "last_active_ago_s": max(0, int(now - epoch)) if epoch is not None else 0,
+                           # the spawning chat's id (session.parent_id); .get so an
+                           # adapter predating the field degrades to null, never crashes
+                           "parent_session_id": obj.get("parent_session_id")}
         joined_ids.add(obj["id"])
         if epoch is not None:
             session_epochs[id(lane)] = epoch

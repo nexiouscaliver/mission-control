@@ -148,37 +148,65 @@ def scan_tags(cur, cutoff: int) -> dict[str, set[str]]:
     return result
 
 
+def _has_parent_id(cur) -> bool:
+    """session.parent_id presence (verified live read-only 2026-09-22: the
+    column EXISTS and is POPULATED — workflow actors ``sess_dwf-dwfrun-…``
+    and side chats carry their spawning chat's id). The column is OPTIONAL:
+    unlike REQUIRED, an older db without it reads every parent as NULL —
+    never a store-wide schema-drift degradation."""
+    rows = cur.execute("PRAGMA table_info(session)").fetchall()
+    return any(r[1] == "parent_id" for r in rows)
+
+
+def _parent_expr(cur) -> str:
+    """The SELECT expression for the parent column: the real column when
+    present, SQL NULL when absent — the fetched row shape stays uniform
+    either way, so callers unpack one fixed column list."""
+    return "parent_id" if _has_parent_id(cur) else "NULL"
+
+
+def _as_parent_id(v) -> str | None:
+    """A parent id is a non-empty str; SQL-NULL / empty / odd-typed -> None
+    (an absent parent and a blank parent are the same fact)."""
+    return v if isinstance(v, str) and v != "" else None
+
+
 def session_rows(cur, ids: list[str]) -> dict[str, dict]:
-    """By-id parameterized session rows (id/title/directory + raw timestamps)."""
+    """By-id parameterized session rows (id/title/directory + raw timestamps
+    + parent_session_id)."""
+    parent = _parent_expr(cur)
     out: dict[str, dict] = {}
     for sid in ids:
         row = cur.execute(
-            "SELECT id, title, directory, time_updated, time_created"
+            f"SELECT id, title, directory, time_updated, time_created, {parent}"
             " FROM session WHERE id = ?", (sid,)).fetchone()
         if row is not None:
             out[row[0]] = {"id": row[0], "title": row[1], "directory": row[2],
-                           "time_updated": row[3], "time_created": row[4]}
+                           "time_updated": row[3], "time_created": row[4],
+                           "parent_session_id": _as_parent_id(row[5])}
     return out
 
 
 def lane_join(cur, token: str) -> tuple[dict | None, bool]:
     """Token-prefix join (§5): exactly 1 hit -> ({id, title, dir,
-    time_updated_epoch_s}, False); 0 hits -> (None, False); >1 -> (None, True).
-    time_updated_epoch_s is None for a SQL-NULL timestamp (caller resolves the
-    unknown age). The contract session object (title_pending /
-    last_active_ago_s) is assembled by collect, which owns `now`. Token
-    membership is never consulted here and the windowed scan never invalidates
-    a join."""
+    time_updated_epoch_s, parent_session_id}, False); 0 hits -> (None, False);
+    >1 -> (None, True). time_updated_epoch_s is None for a SQL-NULL timestamp
+    (caller resolves the unknown age). The contract session object
+    (title_pending / last_active_ago_s) is assembled by collect, which owns
+    `now`. Token membership is never consulted here and the windowed scan never
+    invalidates a join."""
     rows = cur.execute(
-        "SELECT id, title, directory, time_updated FROM session WHERE id LIKE ?",
+        "SELECT id, title, directory, time_updated, " + _parent_expr(cur) +
+        " FROM session WHERE id LIKE ?",
         (token + "%",)).fetchall()
     if len(rows) > 1:
         return (None, True)
     if not rows:
         return (None, False)
-    sid, title, directory, time_updated = rows[0]
+    sid, title, directory, time_updated, parent_id = rows[0]
     return ({"id": sid, "title": title, "dir": directory,
-             "time_updated_epoch_s": to_seconds(time_updated)}, False)
+             "time_updated_epoch_s": to_seconds(time_updated),
+             "parent_session_id": _as_parent_id(parent_id)}, False)
 
 
 def unmapped_rows(cur, now_s: float, factor: int, session_window_s: int,
@@ -192,10 +220,10 @@ def unmapped_rows(cur, now_s: float, factor: int, session_window_s: int,
     first), tie id asc."""
     cutoff = cutoff_stored(now_s, session_window_s, factor)
     rows = cur.execute(
-        "SELECT id, title, directory, time_updated FROM session"
-        " WHERE time_archived IS NULL AND time_created > ?", (cutoff,)).fetchall()
+        "SELECT id, title, directory, time_updated, " + _parent_expr(cur) +
+        " FROM session WHERE time_archived IS NULL AND time_created > ?", (cutoff,)).fetchall()
     out = []
-    for sid, title, directory, time_updated in rows:
+    for sid, title, directory, time_updated, parent_id in rows:
         if sid.startswith("sess_subagent_"):
             continue
         if sid in joined_ids:
@@ -208,7 +236,8 @@ def unmapped_rows(cur, now_s: float, factor: int, session_window_s: int,
                     "title": title if title is not None else "",
                     "dir": directory if directory is not None else "",
                     # contract requires int; 0 is the spec's unknown-age convention
-                    "last_active_ago_s": max(0, int(now_s - ts)) if ts is not None else 0})
+                    "last_active_ago_s": max(0, int(now_s - ts)) if ts is not None else 0,
+                    "parent_session_id": _as_parent_id(parent_id)})
     out.sort(key=lambda r: (r["last_active_ago_s"], r["id"]))
     return out
 

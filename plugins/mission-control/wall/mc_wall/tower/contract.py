@@ -22,7 +22,7 @@ CONTRACT_EXAMPLE = json.loads(r'''{"schema_version":1,"server":{"uptime_s":0,"ge
      "suggest_verify":null,"stalled":null}]}],
  "verify_queue":[{"row_id":"","program":"","finished_ago_s":0,"master_hint":"","verify_cmd":""}],
  "human_actions":[{"kind":"merge","ref":"","repo":"","repo_host":"","title":"","pipeline":"","ready":true}],
- "sessions_unmapped":[{"id":"","title":"","dir":"","last_active_ago_s":0}],
+ "sessions_unmapped":[{"id":"","title":"","dir":"","last_active_ago_s":0,"parent_session_id":null}],
  "launch_pending":null}''')
 
 # Declarative shape spec, checked recursively by assert_shape:
@@ -53,7 +53,7 @@ SHAPES = {
     "manifest": {"path": STR, "prompt_md": STR, "goal_md": STR, "precondition_mrs": [STR],
                  "stall_t_hours": "int|float"},
     "session": {"id": STR, "title": NULSTR, "dir": NULSTR, "title_pending": bool,
-                "last_active_ago_s": INT},
+                "last_active_ago_s": INT, "parent_session_id": NULSTR},
     "goal": {"state": STR, "queue_tail": STR, "budget": dict},
     "suggest_verify": {"because": [STR]},
     "stalled": {"because": STR, "last_event": STR},
@@ -69,7 +69,8 @@ SHAPES = {
                          "master_hint": STR, "verify_cmd": STR},
     "human_action_row": {"kind": STR, "ref": STR, "repo": STR, "repo_host": STR,
                          "title": STR, "pipeline": STR, "ready": bool},
-    "unmapped_row": {"id": STR, "title": STR, "dir": STR, "last_active_ago_s": INT},
+    "unmapped_row": {"id": STR, "title": STR, "dir": STR, "last_active_ago_s": INT,
+                     "parent_session_id": NULSTR},
 }
 
 _PRIMITIVES = {"str": str, "int": int, "float": float, "bool": bool, "None": type(None)}

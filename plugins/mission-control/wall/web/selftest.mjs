@@ -741,7 +741,7 @@ const FROZEN_MANIFEST = {
   master: ["session_id", "title", "last_active_ago_s"],
   lane: ["row_id", "repo", "branch", "slug", "status_note", "status_parsed", "manifest", "session", "goal", "signals", "suggest_verify", "stalled"],
   manifest: ["path", "prompt_md", "goal_md", "precondition_mrs", "stall_t_hours"],
-  session: ["id", "title", "title_pending", "dir", "last_active_ago_s"],
+  session: ["id", "title", "title_pending", "dir", "last_active_ago_s", "parent_session_id"],
   goal: ["state", "queue_tail", "budget"],
   signals: ["pushed", "mr"],
   signalsPushed: ["value", "age_s"],
@@ -750,7 +750,7 @@ const FROZEN_MANIFEST = {
   stalled: ["because", "last_event"],
   verifyRow: ["row_id", "program", "finished_ago_s", "master_hint", "verify_cmd"],
   humanRow: ["kind", "ref", "repo", "repo_host", "title", "pipeline", "ready"],
-  unmappedRow: ["id", "title", "dir", "last_active_ago_s"],
+  unmappedRow: ["id", "title", "dir", "last_active_ago_s", "parent_session_id"],
   wall: ["pending"],
   wallPending: ["version", "status", "flag", "reason", "row_id", "lane_tag", "repo_root", "prompt_sha256", "launch_click_ms", "matched_session_id", "matched_at_ms", "last_eval_ms", "advisory_120s_fired", "canary_fired", "updated_at_ms"],
 };
@@ -3960,6 +3960,139 @@ test("round 6: background sessions — workflow subagents + side chats hidden by
   const projText = collectText(dom.getElementById("projects-view"));
   assert.ok(projText.indexOf("actor#@2@1") !== -1, "background appears when shown");
   assert.ok(projText.indexOf("workflow") !== -1, "kind tag on the row");
+});
+
+test("round 7: parent lineage — run heads carry the parent, side chats tag theirs, dangling parents degrade to short id", () => {
+  const doc = JSON.parse(JSON.stringify(parseIndexMocks(readWebFile("index.html")).minimal));
+  const PARENT_IN_DOC = "s-parent-1";
+  const PARENT_DANGLING = "sess_5eed0000-0000-4000-8000-0000000000dd";
+  doc.sessions_unmapped = [
+    // the spawning chat itself is ON the page (a main unmapped row) — the
+    // index resolves its title for every child pointing at it
+    { id: PARENT_IN_DOC, title: "the spawning chat", dir: "~/repo/a", last_active_ago_s: 60, parent_session_id: null },
+    {
+      id: "sess_dwf-dwfrun-abcdef12-3456-7890-abcd-ef1234567890-actor_1_1",
+      title: "workflow subagent actor#@1@1",
+      dir: "~/repo/a",
+      last_active_ago_s: 100,
+      parent_session_id: PARENT_IN_DOC,
+    },
+    {
+      id: "sess_dwf-dwfrun-abcdef12-3456-7890-abcd-ef1234567890-actor_2_1",
+      title: "workflow subagent actor#@2@1",
+      dir: "~/repo/a",
+      last_active_ago_s: 200,
+      parent_session_id: PARENT_IN_DOC,
+    },
+    {
+      // parent outside the doc window: title unresolved, short id stands in
+      id: "sess_dwf-dwfrun-99999999-3456-7890-abcd-ef1234567890-actor_1_1",
+      title: "workflow subagent actor#@1@1",
+      dir: "~/repo/a",
+      last_active_ago_s: 150,
+      parent_session_id: PARENT_DANGLING,
+    },
+    {
+      // multi-parent run: one actor per parent -> per-parent sub-heads
+      id: "sess_dwf-dwfrun-77777777-3456-7890-abcd-ef1234567890-actor_1_1",
+      title: "workflow subagent actor#@1@1",
+      dir: "~/repo/a",
+      last_active_ago_s: 120,
+      parent_session_id: PARENT_IN_DOC,
+    },
+    {
+      id: "sess_dwf-dwfrun-77777777-3456-7890-abcd-ef1234567890-actor_2_1",
+      title: "workflow subagent actor#@2@1",
+      dir: "~/repo/a",
+      last_active_ago_s: 130,
+      parent_session_id: PARENT_DANGLING,
+    },
+    { id: "s-chat-1", title: "Selection side chat", dir: "~/repo/a", last_active_ago_s: 300, parent_session_id: PARENT_IN_DOC },
+    { id: "s-chat-2", title: "Selection side chat", dir: "~/repo/a", last_active_ago_s: 400, parent_session_id: PARENT_DANGLING },
+    { id: "s-chat-3", title: "Selection side chat", dir: "~/repo/a", last_active_ago_s: 500, parent_session_id: 42 },
+  ];
+  const dom = buildMockDom(parseIndexMocks(readWebFile("index.html")));
+  const MCW = loadApp();
+  const deps = MCW.createDeps({ document: dom, now: () => FIXED_NOW_MS, location: fakeLocation({}) });
+  const app = MCW.createApp(deps);
+  app.setDocument(doc);
+  app.render();
+  const col3 = dom.getElementById("col3-sessions");
+  const strip = byClass(col3, "unmapped-strip")[0];
+  assert.ok(
+    collectText(byClass(strip, "unmapped-head")[0]).indexOf("unmapped (1 · 8 hidden)") !== -1,
+    "strip head counts one visible main row vs eight hidden"
+  );
+  byClass(strip, "unmapped-hidden-toggle")[0].click();
+
+  const heads = byClass(col3, "unmapped-group-head").map((h) => collectText(h));
+  const headNode = (txt) => byClass(col3, "unmapped-group-head").find((h) => collectText(h) === txt);
+  // the common case: one run, one parent -> the head names the parent ONCE
+  const single = headNode("workflow run abcdef12 · 2 → the spawning chat");
+  assert.ok(single, "single-parent run head carries the parent's resolved title");
+  assert.ok(
+    (single.attrs["title"] || "").indexOf("parent " + PARENT_IN_DOC) !== -1,
+    "run head hover carries the full parent id"
+  );
+  // dangling parent: short id (13 chars + ellipsis), never the raw full id
+  const dangling = headNode("workflow run 99999999 · 1 → sess_5eed0000…");
+  assert.ok(dangling, "dangling parent degrades to the short id label");
+  assert.ok(
+    (dangling.attrs["title"] || "").indexOf("parent " + PARENT_DANGLING) !== -1,
+    "dangling parent's full id rides the hover"
+  );
+  // multi-parent run: plain head + one sub-head per distinct parent
+  const multi = headNode("workflow run 77777777 · 2");
+  assert.ok(multi, "multi-parent run head stays plain (no single parent to name)");
+  const subHeads = byClass(col3, "unmapped-subgroup-head").map((h) => collectText(h));
+  assert.deepEqual(
+    subHeads,
+    ["↳ the spawning chat", "↳ sess_5eed0000…"],
+    "per-parent sub-heads in first-seen order"
+  );
+  // side chats: per-row parent tag; wrong-typed parent reads as none (L4)
+  const chatRows = byClass(col3, "unmapped-row").filter((r) => (r.attrs["data-session-id"] || "").indexOf("s-chat-") === 0);
+  assert.equal(chatRows.length, 3, "three side-chat rows");
+  assert.ok(collectText(chatRows[0]).indexOf("↳ the spawning chat") !== -1, "side chat names an in-doc parent");
+  assert.ok(
+    (byClass(chatRows[0], "unmapped-parent")[0].attrs["title"] || "").indexOf("parent session " + PARENT_IN_DOC) !== -1,
+    "side-chat parent tag hover carries the full id"
+  );
+  assert.ok(collectText(chatRows[1]).indexOf("↳ sess_5eed0000…") !== -1, "side chat dangling parent degrades to short id");
+  assert.ok(collectText(chatRows[2]).indexOf("↳") === -1, "wrong-typed parent_session_id reads as no parent");
+
+  // poll rebuild keeps the reveal and the lineage labels together
+  app.render();
+  const col3After = dom.getElementById("col3-sessions");
+  const textAfter = collectText(byClass(col3After, "unmapped-strip")[0]);
+  assert.ok(textAfter.indexOf("workflow run abcdef12 · 2 → the spawning chat") !== -1, "lineage labels survive the poll rebuild");
+  assert.equal(
+    byClass(col3After, "unmapped-hidden-toggle")[0].attrs["aria-expanded"],
+    "true",
+    "reveal state survives the poll rebuild"
+  );
+
+  // projects view: background rows carry the parent as hover-only title
+  app.setView("projects");
+  const projEl = dom.getElementById("projects-view");
+  byClass(projEl, "projects-bg")[0].click();
+  const bgRow = byClass(dom.getElementById("projects-view"), "project-row").find(
+    (r) => r.attrs["data-session-id"] === "s-chat-1"
+  );
+  assert.ok(bgRow, "background row present once shown");
+  assert.equal(
+    bgRow.attrs["title"],
+    "parent: the spawning chat — " + PARENT_IN_DOC,
+    "projects row hover carries the resolved parent"
+  );
+  const danglingRow = byClass(dom.getElementById("projects-view"), "project-row").find(
+    (r) => r.attrs["data-session-id"] === "s-chat-2"
+  );
+  assert.equal(
+    danglingRow.attrs["title"],
+    "parent: sess_5eed0000… — " + PARENT_DANGLING,
+    "projects row hover carries the dangling parent's full id"
+  );
 });
 
 // ---------------- runner ----------------
