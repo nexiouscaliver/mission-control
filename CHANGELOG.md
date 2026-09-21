@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 New changes accumulate here between releases, above the latest version entry (Keep a Changelog convention; the release gates skip this section when reading the head version).
 
+## [1.6.0] - 2026-09-22
+
+The Wall UI, redesigned end to end around operator triage: severity-ordered lanes, an adaptive layout with no dead space, a PROJECTS view, and background sessions that stay out of sight until asked (PR #4).
+
+### Added
+- **PROJECTS view** (WALL/PROJECTS switcher in the top bar) — every session (mapped lanes, masters, unmapped) grouped by project, project name only with the full path on hover, most-recently-active first, a recent/name sort toggle, and click-to-copy session ids (short form; full id copied).
+- **Background-session hiding** — workflow subagent sessions and side chats are classified from the state the wall already carries (subagent ids embed their workflow run id; side chats by title) and hidden by default: the strip reads `unmapped (N · M hidden)`, and the reveal clusters every actor under its workflow run (`workflow run <id> · count`, full id on hover) with side chats grouped separately. The projects view gets a `background: hidden/shown` toggle and kind tags. The reveal and all reading state survive the 5s poll rebuilds.
+- **Adaptive grid** — contentless columns leave the layout; sole content centers full-width; a fully-empty wall hides the grid behind an "All clear" hero; a slim context line replaces the empty programs column when no programs are registered. No more half-empty dashboards.
+- **Discoverability** — shortcut legend (n needs-me-now · r refresh · esc close panel), persistent lane-open affordance with hover elevation, `show all ▾` on the unmapped strip, guided copy on every empty and error state, and a human "wrong or expired link" error page.
+- **Launch journey made visible** — the clickable forged lane opens a restructured launch side panel (LANE / MANIFEST sections, mirrored status chip, esc hint, backdrop click-close, focus return).
+
+### Changed
+- **Severity-first triage order** — lanes sort failed → watch (UNPARSED / partial / stalled) → healthy (stable within tier); verify queue renders oldest-first (the same order the needs-me-now jump walks); NOT-ready merges float above ready ones with readiness edges; all pinned by DOM-order assertions in the wall selftest.
+- **Chip grammar v2** — additive severity axis over the provenance classes (failed red / watch amber / ok green), per-status variants (done quiet, in-flight filled, parked dim), and the program-level authority stamp renders once on the card head instead of on every chip.
+- **Accent discipline** — amber is the "your move" family (armed strip, owed NEEDS ME NOW, COPY VERIFY, verify-row edges), red reserved for blocked/broken, cyan for interactive (focus, hover, jump flash).
+- **Armed indicator promoted to its own full-width strip** — re-copy / cancel / × stay clickable while the launch panel is open, docking flush against the panel edge; the top bar becomes three labeled clusters (identity / owed / health).
+- NEEDS ME NOW counter reads "N verify · M merge"; a zero-owed click confirms with its own "all clear ✓" transient instead of echoing the hint.
+- NEEDS ME NOW jump: page-side fallback and panel ordering agree (oldest verify head wins).
+
+### Fixed
+- The armed strip no longer clips the launch panel's first rows (panel is border-box so its drawn width matches the dock; verified flush geometrically).
+- Poll rebuilds no longer reset the session list's scroll position or re-collapse expanded idle>24h groups.
+- Boot renders one waiting box per column under an amber pulsing "booting" dot — red now means measured staleness only.
+- Unknown GET/HEAD routes under a valid token 302 to the canonical wall page instead of dumping raw JSON (`mc_wall/server/app.py`).
+- The launch panel's `pending:` line tracks goal-armed / cleared instead of going stale.
+
+Gates: wall `.venv/bin/pytest -q` 234 passed; `node web/selftest.mjs` 101/101 (severity-order, adaptive-grid, hero-forms, booting-dot, projects and background-hiding contracts added); repo `tests/run_smoke.sh` and `scripts/verify_packaging.sh` green at 1.6.0.
+
 ## [1.5.0] - 2026-09-21
 
 One repo for everything: the MC Wall joins mission-control with its full git history (subtree import at `plugins/mission-control/wall/`).
