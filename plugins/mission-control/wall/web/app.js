@@ -178,28 +178,57 @@
       var body = doc.body;
       if (!byId("topbar")) {
         var bar = el("header", "topbar");
+        // SPEC v2.1 A2: three top-bar clusters — identity, owed, health.
+        var identity = el("div");
+        identity.classList.add("tb-cluster");
+        identity.classList.add("tb-identity");
         var wordmark = el("span", "wordmark");
         wordmark.setText("MC WALL");
-        bar.appendChild(wordmark);
-        bar.appendChild(el("span", "live-dot"));
-        bar.appendChild(el("span", "mode-badge"));
+        identity.appendChild(wordmark);
+        identity.appendChild(el("span", "live-dot"));
+        identity.appendChild(el("span", "mode-badge"));
+        bar.appendChild(identity);
+        var owed = el("div");
+        owed.classList.add("tb-cluster");
+        owed.classList.add("tb-owed");
         var needsMeNow = el("button", "needs-me-now");
         needsMeNow.setAttribute("type", "button");
         needsMeNow.setText("NEEDS ME NOW");
         needsMeNow.appendChild(el("span", "nmn-counter"));
-        bar.appendChild(needsMeNow);
-        bar.appendChild(el("span", "armed-indicator-slot"));
+        owed.appendChild(needsMeNow);
+        var nmnHint = el("span", "nmn-hint");
+        nmnHint.setAttribute("hidden", "");
+        nmnHint.setText("nothing owed — updates every 5 s");
+        owed.appendChild(nmnHint);
+        bar.appendChild(owed);
+        var health = el("div");
+        health.classList.add("tb-cluster");
+        health.classList.add("tb-health");
         var badges = el("span", "degraded-badges");
         badges.setAttribute("role", "status"); // F-4: the a11y announce survives on the badge row
-        bar.appendChild(badges);
-        bar.appendChild(el("span", "state-age-caption"));
+        health.appendChild(badges);
+        health.appendChild(el("span", "state-age-caption"));
+        bar.appendChild(health);
         body.appendChild(bar);
+      }
+      // SPEC v2.1 A1: the armed indicator leaves the top bar for its own strip.
+      if (!byId("armed-strip")) {
+        var armedStrip = el("div", "armed-strip");
+        armedStrip.appendChild(el("span", "armed-indicator-slot"));
+        body.appendChild(armedStrip);
       }
       if (!byId("banner-strip")) {
         var strip = el("div", "banner-strip");
         strip.setAttribute("role", "alert");
         strip.setAttribute("hidden", "");
         body.appendChild(strip);
+      }
+      // Round 4: the all-clear hero for a fully-empty VALID wall (hidden
+      // unless renderEmptyHero says otherwise).
+      if (!byId("empty-hero")) {
+        var hero = el("div", "empty-hero");
+        hero.setAttribute("hidden", "");
+        body.appendChild(hero);
       }
       if (!byId("grid")) {
         var grid = el("main", "grid");
@@ -220,18 +249,86 @@
         grid.appendChild(col3);
         body.appendChild(grid);
       }
+      // Round 5: WALL / PROJECTS view switcher — ships statically in
+      // index.html's topbar; created here only for shells missing it.
+      if (!byId("view-wall")) {
+        var views = el("div");
+        views.classList.add("tb-cluster");
+        views.classList.add("tb-views");
+        var viewWallBtn = el("button", "view-wall");
+        viewWallBtn.setAttribute("type", "button");
+        viewWallBtn.setAttribute("aria-pressed", "true");
+        viewWallBtn.setText("WALL");
+        views.appendChild(viewWallBtn);
+        var viewProjectsBtn = el("button", "view-projects");
+        viewProjectsBtn.setAttribute("type", "button");
+        viewProjectsBtn.setAttribute("aria-pressed", "false");
+        viewProjectsBtn.setText("PROJECTS");
+        views.appendChild(viewProjectsBtn);
+        var topbarForViews = byId("topbar");
+        if (topbarForViews) topbarForViews.appendChild(views);
+      }
+      if (!byId("projects-view")) {
+        var projectsSection = el("section", "projects-view");
+        projectsSection.setAttribute("hidden", "");
+        body.appendChild(projectsSection);
+      }
+      if (!byId("panel-backdrop")) {
+        var backdrop = el("div", "panel-backdrop");
+        backdrop.setAttribute("hidden", "");
+        body.appendChild(backdrop);
+      }
       if (!byId("launch-panel")) {
         var launch = el("div", "launch-panel");
         launch.setAttribute("hidden", "");
         body.appendChild(launch);
       }
+      if (!byId("kbd-hint")) {
+        var kbd = el("footer", "kbd-hint");
+        var seg;
+        seg = el("span");
+        seg.setText("shortcuts: ");
+        kbd.appendChild(seg);
+        seg = el("span");
+        seg.classList.add("kbd");
+        seg.setText("n");
+        kbd.appendChild(seg);
+        seg = el("span");
+        seg.setText(" needs-me-now · ");
+        kbd.appendChild(seg);
+        seg = el("span");
+        seg.classList.add("kbd");
+        seg.setText("r");
+        kbd.appendChild(seg);
+        seg = el("span");
+        seg.setText(" refresh · ");
+        kbd.appendChild(seg);
+        seg = el("span");
+        seg.classList.add("kbd");
+        seg.setText("esc");
+        kbd.appendChild(seg);
+        seg = el("span");
+        seg.setText(" close panel");
+        kbd.appendChild(seg);
+        body.appendChild(kbd);
+      }
     }
 
-    function appendNote(rootEl, text) {
+    function appendNote(rootEl, text, extraClass) {
       var dim = el("div");
       dim.classList.add("panel-note");
+      if (extraClass) dim.classList.add(extraClass);
       dim.setText(String(text));
       rootEl.appendChild(dim);
+    }
+
+    // Companion guidance line on a VALID-doc empty panel (SPEC v2.1 §4.4).
+    // Never used on blank/waiting/L0 panels — those keep exactly one child.
+    function appendHint(rootEl, text) {
+      var hint = el("div");
+      hint.classList.add("empty-hint");
+      hint.setText(String(text));
+      rootEl.appendChild(hint);
     }
 
     function renderBlank(note) {
@@ -269,12 +366,37 @@
 
     function renderBody(pollDriven) {
       ensureShell();
+      wireViewSwitcher();
       var valid = stateDoc !== null && MCW.state.validateDoc(stateDoc).ok;
+      // Round 5: WALL / PROJECTS view. The grid keeps rendering (hidden) so
+      // the wall stays warm; the projects screen renders on every pass.
+      var projectsEl = byId("projects-view");
+      var gridForView = byId("grid");
+      var projectsMode = currentView === "projects";
+      if (projectsEl !== null && gridForView !== null) {
+        if (projectsMode) {
+          gridForView.setAttribute("hidden", "");
+          projectsEl.removeAttribute("hidden");
+        } else {
+          projectsEl.setAttribute("hidden", "");
+          gridForView.removeAttribute("hidden");
+        }
+      }
+      var wallBtn = byId("view-wall");
+      var projBtn = byId("view-projects");
+      if (wallBtn) wallBtn.setAttribute("aria-pressed", projectsMode ? "false" : "true");
+      if (projBtn) projBtn.setAttribute("aria-pressed", projectsMode ? "true" : "false");
       // T6: LIVE panels blank differently — waiting for the first state (or a
       // missing token); QA keeps the mock/no-data wordings.
       var blankNote = "no data";
       if (live === null) blankNote = stateDoc === null ? "waiting for mock" : "no data";
       else blankNote = live.token === null ? "no token" : "waiting for first state";
+      // Round 5 (user report): the poll rebuilds col3 every cadence tick
+      // (ages change → churn guard swaps the nodes), which threw away the
+      // operator's reading state — the unmapped list snapped back to its top
+      // and collapsed idle>24h groups re-hid. Capture from the LIVE column
+      // before the swap, re-apply after it.
+      captureCol3ViewState();
       for (var i = 0; i < PANEL_ROOT_IDS.length; i += 1) {
         var id = PANEL_ROOT_IDS[i];
         var rootEl = byId(id);
@@ -289,11 +411,130 @@
           }
         });
       }
+      restoreCol3ViewState();
+      if (projectsMode && projectsEl !== null) {
+        renderContainer(projectsEl, "projects-view", pollDriven, function (scratch) {
+          renderProjectsView(scratch);
+        });
+      }
+      // Boot readability (browser finding, round 4): the two stacked middle
+      // subpanels rendered as one duplicated "waiting for first state" box.
+      // Both notes stay in the DOM (AC-5 reads every panel), but while the
+      // LIVE wall is ACTUALLY booting (no valid doc yet) the SECOND subpanel's
+      // chrome collapses via CSS so the operator sees one waiting box per
+      // column, not a double render. The blankNote wording alone is NOT the
+      // trigger — in LIVE it reads "waiting for first state" on every render,
+      // valid docs included (browser finding, minimal-case shot).
+      var col2 = byId("col2");
+      if (col2) {
+        if (!valid && blankNote === "waiting for first state") col2.classList.add("waiting");
+        else col2.classList.remove("waiting");
+      }
+      // Round 4b — the grid is ADAPTIVE: a column with no rows leaves the
+      // grid template instead of staying as an empty box floating in dead
+      // space (browser finding: the default live wall showed two contentless
+      // columns plus ~60% void). Classes (set only for VALID docs — an L0
+      // doc's blank panels ARE its content): has-programs / has-owed /
+      // has-sessions select the grid template in CSS; one-col centers a sole
+      // content column; is-empty hides the grid behind the all-clear hero.
+      var gridEl = byId("grid");
+      if (gridEl) {
+        var counts = { p: 0, o: 0, s: 0 };
+        var unmappedSplit = { main: 0, hidden: 0 };
+        if (valid) {
+          counts.p = MCW.state.items(stateDoc.programs, null).valid.length;
+          var oc = owedCounts();
+          counts.o = oc.v + oc.m;
+          var unmappedRows = MCW.state.items(stateDoc.sessions_unmapped, "id").valid;
+          var splitU = splitBackgroundRows(unmappedRows);
+          unmappedSplit = { main: splitU.main.length, hidden: unmappedRows.length - splitU.main.length };
+          var mappedC = 0;
+          var groupsC = buildSessionGroups();
+          for (var gk in groupsC) {
+            if (Object.prototype.hasOwnProperty.call(groupsC, gk)) mappedC += groupsC[gk].length;
+          }
+          counts.s = mappedC + unmappedRows.length;
+        }
+        function setPresence(cls, present) {
+          if (present) gridEl.classList.add(cls);
+          else gridEl.classList.remove(cls);
+        }
+        setPresence("has-programs", counts.p > 0);
+        setPresence("no-programs", counts.p === 0);
+        setPresence("has-owed", counts.o > 0);
+        setPresence("no-owed", counts.o === 0);
+        setPresence("has-sessions", counts.s > 0);
+        setPresence("no-sessions", counts.s === 0);
+        var contentKinds = (counts.p > 0 ? 1 : 0) + (counts.o > 0 ? 1 : 0) + (counts.s > 0 ? 1 : 0);
+        setPresence("one-col", valid && contentKinds === 1);
+        setPresence("is-empty", valid && contentKinds === 0);
+        renderEmptyHero(valid, counts, unmappedSplit);
+      }
       renderBanners(stateDoc, pollDriven); // sets freezeActive before the dot reads it
       renderTopBar(valid, pollDriven);
       renderArmedBar(pollDriven);
       updateNeedsMeNow();
       wireNeedsMeNow();
+    }
+
+    // Unmapped counts for the slim hero line: VISIBLE vs hidden background.
+    function unmappedHeroCount() {
+      if (stateDoc === null) return { main: 0, hidden: 0 };
+      var rows = MCW.state.items(stateDoc.sessions_unmapped, "id").valid;
+      var split = splitBackgroundRows(rows);
+      return { main: split.main.length, hidden: rows.length - split.main.length };
+    }
+
+    // Round 4b — two hero forms (round 4 had one):
+    //   big   — a fully-empty VALID wall: the whole page IS the statement;
+    //           the grid hides behind it (CSS #grid.is-empty).
+    //   slim  — no programs registered, but there IS content (unmapped
+    //           sessions / owed merges): one compact context line above the
+    //           content instead of a contentless programs column.
+    // Hidden whenever programs exist or the doc is invalid.
+    function renderEmptyHero(valid, counts, heroCounts) {
+      var hero = byId("empty-hero");
+      if (!hero) return;
+      var mode = "hidden";
+      if (valid) {
+        var contentKinds = (counts.p > 0 ? 1 : 0) + (counts.o > 0 ? 1 : 0) + (counts.s > 0 ? 1 : 0);
+        if (contentKinds === 0) mode = "big";
+        else if (counts.p === 0) mode = "slim";
+      }
+      if (mode === "hidden") {
+        hero.setAttribute("hidden", "");
+        hero.classList.remove("hero--big");
+        hero.classList.remove("hero--slim");
+        return;
+      }
+      renderContainer(hero, "empty-hero", false, function (scratch) {
+        var big = el("div");
+        big.classList.add("hero-line");
+        if (mode === "big") {
+          big.setText("All clear — nothing needs you right now.");
+          scratch.appendChild(big);
+          var sub = el("div");
+          sub.classList.add("hero-sub");
+          sub.setText(
+            "Programs, verify work, and owed merges will appear here the moment the tower registers them. This page updates itself every 5 s."
+          );
+          scratch.appendChild(sub);
+        } else {
+          var base =
+            "No programs registered yet — " +
+            (heroCounts.main > 0
+              ? heroCounts.main + " unmapped session" + (heroCounts.main === 1 ? "" : "s") + " below."
+              : "what the tower sees is below.");
+          if (heroCounts.hidden > 0) {
+            base += " (+" + heroCounts.hidden + " background hidden)";
+          }
+          big.setText(base);
+          scratch.appendChild(big);
+        }
+      });
+      hero.removeAttribute("hidden");
+      hero.classList.add(mode === "big" ? "hero--big" : "hero--slim");
+      hero.classList.remove(mode === "big" ? "hero--slim" : "hero--big");
     }
 
     function renderCol1(rootEl) {
@@ -304,9 +545,12 @@
         return;
       }
       var res = MCW.state.items(stateDoc.programs, null);
-      if (res.valid.length === 0) appendNote(rootEl, "no programs");
+      if (res.valid.length === 0) {
+        appendNote(rootEl, "no programs");
+        appendHint(rootEl, "Programs appear here once the tower registers one — this page updates itself every 5 s.");
+      }
       for (var i = 0; i < res.valid.length; i += 1) renderProgramCard(rootEl, res.valid[i]);
-      if (res.skipped > 0) appendNote(rootEl, "skipped " + res.skipped + " malformed rows");
+      if (res.skipped > 0) appendNote(rootEl, "skipped " + res.skipped + " malformed rows", "data-note");
     }
 
     function renderProgramCard(rootEl, prog) {
@@ -357,12 +601,41 @@
       var laneRes = MCW.state.items(prog.lanes, "row_id");
       var listEl = el("div");
       listEl.classList.add("lane-list");
-      if (laneRes.valid.length === 0) appendNote(listEl, "no lanes");
-      for (var i = 0; i < laneRes.valid.length; i += 1) renderLane(listEl, mtime, laneRes.valid[i]);
+      if (laneRes.valid.length === 0) {
+        appendNote(listEl, "no lanes");
+        appendHint(listEl, "No lanes are open for this program yet.");
+      }
+      var orderedLanes = lanesBySeverity(laneRes.valid, mtime);
+      for (var i = 0; i < orderedLanes.length; i += 1) renderLane(listEl, mtime, orderedLanes[i]);
       card.appendChild(listEl);
-      if (laneRes.skipped > 0) appendNote(card, "skipped " + laneRes.skipped + " malformed rows");
+      if (laneRes.skipped > 0) appendNote(card, "skipped " + laneRes.skipped + " malformed rows", "data-note");
 
       rootEl.appendChild(card);
+    }
+
+    // Operator triage order (round 4 contract: a parked lane may never render
+    // above a failed one). Stable tiering — served order is preserved inside a
+    // tier: blocked (failed) first, then watch (UNPARSED / partial / a stalled
+    // lane / an unstamped note), then everything healthy.
+    function laneSeverityRank(lane, mtime) {
+      var sev = statusSeverity(lane, mtime);
+      if (sev === "chip--sev-blocked") return 0;
+      if (sev === "chip--sev-watch") return 1;
+      return 2;
+    }
+
+    function lanesBySeverity(lanes, mtime) {
+      var decorated = [];
+      for (var i = 0; i < lanes.length; i += 1) {
+        decorated.push({ lane: lanes[i], rank: laneSeverityRank(lanes[i], mtime), idx: i });
+      }
+      decorated.sort(function (a, b) {
+        if (a.rank !== b.rank) return a.rank - b.rank;
+        return a.idx - b.idx;
+      });
+      var out = [];
+      for (var j = 0; j < decorated.length; j += 1) out.push(decorated[j].lane);
+      return out;
     }
 
     // T7 (D): one builder for MR badges — the !/# glyph prefix stays the
@@ -376,6 +649,19 @@
       parentEl.appendChild(badge);
     }
 
+    // chip grammar v2 (SPEC v2.1 §2.4): the severity axis. Pure — provenance
+    // stays in the pinned chip--note/derived/stale classes; this picks the
+    // additive modifier: failed reads blocked, partial / UNPARSED / a stalled
+    // lane / an unstamped note read watch, everything stamped-and-healthy ok.
+    function statusSeverity(lane, mtime) {
+      var status = typeof lane.status_parsed === "string" && lane.status_parsed !== "" ? lane.status_parsed : "UNPARSED";
+      if (status === "failed") return "chip--sev-blocked";
+      if (status === "partial" || status === "UNPARSED") return "chip--sev-watch";
+      if (nullable(lane.stalled) !== null) return "chip--sev-watch";
+      if (mtime === 0) return "chip--sev-watch";
+      return "chip--sev-ok";
+    }
+
     function renderLane(listEl, mtime, lane) {
       var laneEl = el("div");
       laneEl.classList.add("lane");
@@ -384,6 +670,7 @@
       var status = typeof lane.status_parsed === "string" && lane.status_parsed !== "" ? lane.status_parsed : "UNPARSED";
       var chipEl = el("div");
       chipEl.classList.add("chip");
+      chipEl.classList.add(statusSeverity(lane, mtime)); // additive severity axis
       if (status === "UNPARSED") {
         // SPEC 5: unknown vocab renders as UNPARSED, never an error.
         chipEl.classList.add("chip--stale");
@@ -402,16 +689,13 @@
       } else {
         chipEl.classList.add(mtime === 0 ? "chip--stale" : "chip--note");
         chipEl.setText(status);
-        var stampSpan = el("span");
-        stampSpan.classList.add("chip-stamp");
-        if (mtime === 0) {
-          stampSpan.setText(" · stamped: unknown");
-        } else {
-          stampSpan.setText(" · stamped " + stampAge(mtime));
-          stampSpan.setAttribute("title", String(mtime));
-        }
-        chipEl.appendChild(stampSpan);
+        // Round 4 de-noise: the authority stamp is PROGRAM-level (note_mtime is
+        // identical on every lane's chip) and lives once on the card head —
+        // repeating "· stamped 22h" on each chip was noise, not information.
+        // The stale provenance demotion (mtime 0 -> chip--stale) is kept: it is
+        // trust grammar, not the stamp text.
       }
+      chipEl.classList.add("chip--s-" + status.toLowerCase().replace(/[^a-z0-9]+/g, "-"));
       var manifest = nullable(lane.manifest);
       var stalledInfo = nullable(lane.stalled);
       if (stalledInfo !== null) chipEl.classList.add("stalled"); // treatment, not a 4th level
@@ -517,6 +801,12 @@
       // wireClickable helper gives click + Enter/Space the same action).
       if (status === "forged") {
         laneEl.classList.add("lane--launchable");
+        // SPEC v2.1 §3/06: a persistent at-rest affordance — hover only ever
+        // elevates it (the row already reads as openable without hovering).
+        var go = el("span");
+        go.classList.add("lane-go");
+        go.setText("▸");
+        laneEl.appendChild(go);
         var rowId = lane.row_id; // renderLane parameter scope — no capture IIFE needed
         wireClickable(laneEl, function () {
           openLaunchPanel(rowId);
@@ -588,6 +878,7 @@
     function mountQA(caseName) {
       app.qaArmOverride = null; // QA arm-demo override is per-mount, in-memory only
       app.qaArmDismissed = false; // fresh mount re-offers the mock pending
+      unmappedOpen = false; // fresh mount = fresh strip state (a view, not data)
       var requested = typeof caseName === "string" && caseName !== "" ? caseName : null;
       var search = requested !== null ? "?case=" + encodeURIComponent(requested) : "";
       var n = MCW.state.normalize(doc, { search: search });
@@ -605,12 +896,26 @@
     // QA-only armed-demo override (SPEC 7.3): LAUNCH cycles the override
     // null -> prompt-armed -> goal-armed -> cleared -> null. In-memory only;
     // mountQA and a page reload reset it. T5: each cycle refreshes the bar.
+    // SPEC v2.1 screen 09: with the panel OPEN, the same tick re-renders it so
+    // the pending line tracks the override, and focus lands on the fresh
+    // LAUNCH node. LIVE never reaches this (its LAUNCH is disabled — AC-34);
+    // the strip's re-copy/cancel POSTs do not re-render the panel either.
     var QA_ARM_ORDER = [null, "prompt-armed", "goal-armed", "cleared"];
     function qaArmCycle() {
       var idx = QA_ARM_ORDER.indexOf(app.qaArmOverride);
       if (idx === -1) idx = 0;
       app.qaArmOverride = QA_ARM_ORDER[(idx + 1) % QA_ARM_ORDER.length];
       renderArmedBar();
+      var panelEl = byId("launch-panel");
+      if (lastPanelRowId !== null && panelEl && panelEl.classList.contains("open")) {
+        var hit = findLaneRow(lastPanelRowId);
+        if (hit !== null) {
+          renderLaunchPanel(hit.prog, hit.lane);
+          if (launchBtnNode !== null && typeof launchBtnNode.focus === "function") {
+            launchBtnNode.focus();
+          }
+        }
+      }
       return app.qaArmOverride;
     }
 
@@ -640,6 +945,37 @@
       panelEl.appendChild(line);
     }
 
+    // Panel sections (SPEC v2.1 §3/07): a small uppercase head over grouped
+    // key/value lines. Unpinned structure — purely a reading aid.
+    function launchSection(panelEl, title) {
+      var section = el("div");
+      section.classList.add("launch-section");
+      var head = el("div");
+      head.classList.add("launch-section-head");
+      head.setText(title);
+      section.appendChild(head);
+      panelEl.appendChild(section);
+      return section;
+    }
+
+    // Status mirror chip: the lane's provenance + severity classes re-rendered
+    // inside the panel so the armed decision reads with the lane's color.
+    function mirrorChipInto(parentEl, lane, mtime) {
+      var status = typeof lane.status_parsed === "string" && lane.status_parsed !== "" ? lane.status_parsed : "UNPARSED";
+      var chip = el("div");
+      chip.classList.add("chip");
+      if (status === "UNPARSED" || mtime === 0) chip.classList.add("chip--stale");
+      else chip.classList.add("chip--note");
+      chip.classList.add(statusSeverity(lane, mtime));
+      if (status === "UNPARSED") {
+        var noteText = typeof lane.status_note === "string" ? lane.status_note : "";
+        chip.setText("UNPARSED: " + (noteText !== "" ? noteText : "(empty status)"));
+      } else {
+        chip.setText(status);
+      }
+      parentEl.appendChild(chip);
+    }
+
     function renderLaunchPanel(prog, lane) {
       var panelEl = byId("launch-panel");
       if (!panelEl) return;
@@ -653,6 +989,10 @@
       title.classList.add("launch-title");
       title.setText("LAUNCH " + lane.row_id);
       head.appendChild(title);
+      var escHint = el("span");
+      escHint.classList.add("launch-esc");
+      escHint.setText("esc");
+      head.appendChild(escHint);
       var closeBtn = el("button");
       closeBtn.setAttribute("type", "button");
       closeBtn.classList.add("launch-close");
@@ -661,28 +1001,31 @@
       launchCloseBtn = closeBtn; // openLaunchPanel focuses it once rendered
       panelEl.appendChild(head);
 
-      launchLine(panelEl, "row", lane.row_id);
+      var laneSec = launchSection(panelEl, "lane");
+      launchLine(laneSec, "row", lane.row_id);
       var progName = typeof prog.program === "string" && prog.program !== "" ? prog.program : "(unnamed program)";
-      launchLine(panelEl, "program", progName);
+      launchLine(laneSec, "program", progName);
       var place = [];
       if (typeof lane.repo === "string" && lane.repo !== "") place.push(lane.repo);
       if (typeof lane.branch === "string" && lane.branch !== "") place.push(lane.branch);
       if (typeof lane.slug === "string" && lane.slug !== "") place.push(lane.slug);
-      launchLine(panelEl, "repo", place.length > 0 ? place.join(" · ") : "(unconfigured repo)", place.length === 0);
+      launchLine(laneSec, "repo", place.length > 0 ? place.join(" · ") : "(unconfigured repo)", place.length === 0);
+      mirrorChipInto(laneSec, lane, isInt(prog.note_mtime) ? prog.note_mtime : 0);
 
+      var manifestSec = launchSection(panelEl, "manifest");
       var manifest = nullable(lane.manifest);
       var mv = function (v) {
         return typeof v === "string" && v !== "" ? v : "(none)";
       };
       if (manifest === null) {
-        launchLine(panelEl, "manifest", "none — launch via master", true);
+        launchLine(manifestSec, "manifest", "none — launch via master", true);
       } else {
-        launchLine(panelEl, "manifest", mv(manifest.path));
-        launchLine(panelEl, "prompt", mv(manifest.prompt_md));
-        launchLine(panelEl, "goal", mv(manifest.goal_md));
+        launchLine(manifestSec, "manifest", mv(manifest.path));
+        launchLine(manifestSec, "prompt", mv(manifest.prompt_md));
+        launchLine(manifestSec, "goal", mv(manifest.goal_md));
         var mrs = Array.isArray(manifest.precondition_mrs) ? manifest.precondition_mrs : [];
-        launchLine(panelEl, "preconditions", mrs.length > 0 ? mrs.join(" · ") : "none", mrs.length === 0);
-        launchLine(panelEl, "stall_t_hours", String(isInt(manifest.stall_t_hours) ? manifest.stall_t_hours : 0));
+        launchLine(manifestSec, "preconditions", mrs.length > 0 ? mrs.join(" · ") : "none", mrs.length === 0);
+        launchLine(manifestSec, "stall_t_hours", String(isInt(manifest.stall_t_hours) ? manifest.stall_t_hours : 0));
       }
       // Pinned placeholder: the prompt text is not in the v1 state contract.
       var ph = el("div");
@@ -716,6 +1059,7 @@
       }
       panelEl.appendChild(btn);
       panelEl.appendChild(note);
+      launchBtnNode = btn; // the QA arm demo refocuses the fresh LAUNCH node
 
       if (typeof btn.addEventListener === "function" && !live) {
         btn.addEventListener("click", function () {
@@ -730,13 +1074,38 @@
       panelEl.classList.add("open");
     }
 
+    // One-shot backdrop click wiring (SPEC v2.1 §3/07: click-closes).
+    function wireLaunchBackdrop() {
+      var backdrop = byId("panel-backdrop");
+      if (!backdrop || backdropWired) return;
+      backdropWired = true;
+      if (typeof backdrop.addEventListener === "function") {
+        backdrop.addEventListener("click", function () {
+          closeLaunchPanel();
+        });
+      }
+    }
+
     function openLaunchPanel(rowId) {
       var key = String(rowId);
       var hit = findLaneRow(key);
       if (hit === null) return false;
-      // Remember the triggering lane so close can hand focus back (dialog a11y).
+      // Remember the triggering lane so close can hand focus back (dialog a11y)
+      // and the QA arm demo knows which panel to re-render (SPEC v2.1 §3/09).
+      lastPanelRowId = key;
       lastTrigger = findDataIn(byId("col1-programs"), "row-id", key);
       renderLaunchPanel(hit.prog, hit.lane);
+      var backdrop = byId("panel-backdrop");
+      if (backdrop) {
+        backdrop.classList.add("open");
+        backdrop.removeAttribute("hidden");
+      }
+      wireLaunchBackdrop();
+      // SPEC v2.1 screen 10 (browser finding, round 3): the open panel must
+      // never occlude the armed strip's controls — the body class lets CSS
+      // dock the armed chip beside the panel (and the strip's z-index lifts
+      // it above the backdrop), keeping re-copy/cancel/× clickable.
+      if (doc && doc.body) doc.body.classList.add("panel-open");
       if (launchCloseBtn !== null && typeof launchCloseBtn.focus === "function") {
         launchCloseBtn.focus();
       }
@@ -746,6 +1115,12 @@
     function closeLaunchPanel() {
       var panelEl = byId("launch-panel");
       if (panelEl) panelEl.classList.remove("open");
+      var backdrop = byId("panel-backdrop");
+      if (backdrop) {
+        backdrop.classList.remove("open");
+        backdrop.setAttribute("hidden", "");
+      }
+      if (doc && doc.body) doc.body.classList.remove("panel-open");
       if (lastTrigger !== null && typeof lastTrigger.focus === "function") {
         lastTrigger.focus();
       }
@@ -758,9 +1133,168 @@
     // =====================================================================
 
     var launchCloseBtn = null; // set by renderLaunchPanel; focused on open
+    var launchBtnNode = null; // set by renderLaunchPanel; the QA arm demo refocuses it
     var lastTrigger = null; // lane that opened the panel; refocused on close
+    var lastPanelRowId = null; // row whose panel is open; the QA arm demo re-renders it
+    var backdropWired = false; // #panel-backdrop click wiring is one-shot
     var nmnWired = false; // #needs-me-now click wiring is one-shot
     var qaCase = null; // applied case, so keyboard r can re-mount in QA
+    // SPEC v2.1 screen 02 (browser finding, round 3): live tower ages tick on
+    // every poll, so the strip's content signature always differs and the
+    // churn guard rebuilds it — the expanded state must live HERE, not on the
+    // discarded nodes, or the strip snaps shut under someone reading it.
+    var unmappedOpen = false;
+
+    // ---- round 5: views + reading-state preservation ----
+
+    var currentView = "wall"; // "wall" | "projects"
+    var projectSort = "recent"; // "recent" | "name"
+    var viewWired = false; // view switcher wiring is one-shot
+    // Round 6: background sessions are hidden until asked for.
+    var backgroundOpen = false; // wall strip: reveal workflow/side-chat rows
+    var showBackground = false; // projects view: include them in cards
+    // Reading state across poll rebuilds (user report: the session list
+    // snapped to its top every cadence tick). Captured from the live column
+    // before the churn-guard swap, re-applied after it.
+    var savedUnmappedScroll = 0;
+    var expandedIdleRepos = {}; // session-group head text -> expanded?
+
+    // Fake-DOM-safe class walkers (the pinned surface has no querySelector).
+    function nodesByClass(node, cls) {
+      var out = [];
+      (function walk(n) {
+        var kids = (n && n.children) || [];
+        for (var i = 0; i < kids.length; i += 1) {
+          var child = kids[i];
+          var cn = child.className || "";
+          if ((" " + cn + " ").indexOf(" " + cls + " ") !== -1) out.push(child);
+          walk(child);
+        }
+      })(node);
+      return out;
+    }
+    function firstByClass(node, cls) {
+      var hits = nodesByClass(node, cls);
+      return hits.length > 0 ? hits[0] : null;
+    }
+
+    function captureCol3ViewState() {
+      savedUnmappedScroll = 0;
+      expandedIdleRepos = {};
+      var liveCol3 = byId("col3-sessions");
+      if (!liveCol3) return;
+      var oldRows = firstByClass(liveCol3, "unmapped-rows");
+      if (oldRows !== null && typeof oldRows.scrollTop === "number") {
+        savedUnmappedScroll = oldRows.scrollTop;
+      }
+      var liveGroups = nodesByClass(liveCol3, "session-group");
+      for (var i = 0; i < liveGroups.length; i += 1) {
+        var headEl = firstByClass(liveGroups[i], "session-group-head");
+        var subHead = firstByClass(liveGroups[i], "idle-sub-head");
+        var repoName = headEl !== null ? textOf(headEl) : "";
+        if (repoName !== "" && subHead !== null) {
+          // guarded read: some fake-DOM nodes carry attrs without getAttribute
+          var expandedVal = null;
+          if (typeof subHead.getAttribute === "function") expandedVal = subHead.getAttribute("aria-expanded");
+          else if (subHead.attrs && subHead.attrs["aria-expanded"] !== undefined) expandedVal = subHead.attrs["aria-expanded"];
+          expandedIdleRepos[repoName] = expandedVal === "true";
+        }
+      }
+    }
+
+    function restoreCol3ViewState() {
+      var liveCol3 = byId("col3-sessions");
+      if (!liveCol3) return;
+      var rowsEl = firstByClass(liveCol3, "unmapped-rows");
+      if (rowsEl !== null && savedUnmappedScroll > 0) {
+        try {
+          rowsEl.scrollTop = savedUnmappedScroll; // fake DOM: harmless expando
+        } catch (e) {
+          // never let view restoration break a render
+        }
+      }
+    }
+
+    function setView(name) {
+      if (name !== "wall" && name !== "projects") return currentView;
+      if (currentView === name) {
+        render();
+        return currentView;
+      }
+      currentView = name;
+      render();
+      return currentView;
+    }
+
+    function wireViewSwitcher() {
+      if (viewWired) return;
+      var wallBtn = byId("view-wall");
+      var projBtn = byId("view-projects");
+      if (!wallBtn || !projBtn) return;
+      viewWired = true;
+      if (typeof wallBtn.addEventListener === "function") {
+        wallBtn.addEventListener("click", function () {
+          setView("wall");
+        });
+        projBtn.addEventListener("click", function () {
+          setView("projects");
+        });
+      }
+    }
+
+    // Project display name from a path: the LAST non-empty segment — the full
+    // path is hover-only (project name's title), never printed (user report).
+    function baseName(pathish) {
+      var parts = String(pathish).split("/");
+      for (var i = parts.length - 1; i >= 0; i -= 1) {
+        if (parts[i] !== "") return parts[i];
+      }
+      return String(pathish);
+    }
+
+    // ---- round 6: background sessions (workflow subagents, side chats) ----
+    // The wall's biggest noise source: a workflow run's subagent sessions and
+    // transient side chats crowd out real work. They classify from data the
+    // state contract already carries — subagent ids embed their workflow run
+    // (sess_dwf-dwfrun-<run>-actor_N_M), side chats are titled "…side chat".
+    // Hidden by default everywhere; the run id gives the honest "link": every
+    // actor of one run clusters under that run's label (the parent chat id
+    // itself is not in the v1 state contract).
+
+    function sessionKind(id, title) {
+      var t = String(title || "").toLowerCase();
+      if (t.indexOf("workflow subagent") === 0 || String(id || "").indexOf("dwf-dwfrun") !== -1) return "workflow";
+      if (t.indexOf("side chat") !== -1) return "sidechat";
+      return "main";
+    }
+
+    function workflowRunKey(id) {
+      var m = /dwf-dwfrun-([0-9a-f][0-9a-f-]+?)-actor/.exec(String(id || ""));
+      return m ? m[1] : "";
+    }
+
+    function splitBackgroundRows(rows) {
+      var main = [];
+      var workflow = {}; // runKey -> rows
+      var workflowOrder = [];
+      var sidechat = [];
+      for (var i = 0; i < rows.length; i += 1) {
+        var kind = sessionKind(rows[i].id, rows[i].title);
+        if (kind === "main") {
+          main.push(rows[i]);
+        } else if (kind === "workflow") {
+          var runKey = workflowRunKey(rows[i].id) || "(unknown run)";
+          if (!workflow[runKey]) {
+            workflow[runKey] = [];
+            workflowOrder.push(runKey);
+          }
+          workflow[runKey].push(rows[i]);
+        } else {
+          sidechat.push(rows[i]);
+        }
+      }
+      return { main: main, workflow: workflow, workflowOrder: workflowOrder, sidechat: sidechat };
+    }
 
     // Disabled toggling through the shared DOM surface: setAttribute on
     // disable; property + removeAttribute on enable (real DOM and the
@@ -843,7 +1377,15 @@
         if (btn && btn.parentNode) host = btn.parentNode;
       }
       if (host === null && doc.body) host = doc.body;
-      if (host === null) return;
+      transientNoteIn(host, text, isError);
+    }
+
+    // The same primitive with an EXPLICIT host — for anchors whose parent is
+    // not where the note must appear (the unmapped strip scrolls internally,
+    // so a note appended after its last row lands out of sight below the
+    // scroller fold; browser finding, round 3).
+    function transientNoteIn(host, text, isError) {
+      if (text === null || text === undefined || host === null || !doc) return;
       var note = el("span");
       note.classList.add("inline-note");
       if (isError) note.classList.add("inline-note--error");
@@ -872,19 +1414,26 @@
       return { v: v, m: m };
     }
 
-    // Mix counter + disabled state on the top-bar button (SPEC 7.1).
+    // Mix counter + owed/idle state on the top-bar button (SPEC 7.1; v2.1 §5.2).
+    // 0 owed does NOT disable the button — it goes idle-styled (aria-disabled)
+    // and stays clickable so the click can surface the nothing-owed note.
     function updateNeedsMeNow() {
       var counterEl = byId("nmn-counter");
       var btn = byId("needs-me-now");
+      var hint = byId("nmn-hint");
       var c = owedCounts();
-      if (counterEl) counterEl.setText(c.v + "v·" + c.m + "m");
+      if (counterEl) counterEl.setText(c.v + " verify · " + c.m + " merge");
       if (btn) {
         if (c.v === 0 && c.m === 0) {
-          setDisabled(btn, true);
+          btn.classList.add("nmn-idle");
+          btn.setAttribute("aria-disabled", "true");
           btn.setAttribute("title", "nothing owed");
+          if (hint) hint.removeAttribute("hidden");
         } else {
-          setDisabled(btn, false);
-          btn.setAttribute("title", "");
+          btn.classList.remove("nmn-idle");
+          btn.removeAttribute("aria-disabled");
+          btn.setAttribute("title", "shortcut: n");
+          if (hint) hint.setAttribute("hidden", "");
         }
       }
     }
@@ -914,9 +1463,20 @@
         return;
       }
       var res = MCW.state.items(stateDoc.verify_queue, "row_id");
-      if (res.valid.length === 0) appendNote(rootEl, "nothing to verify");
-      for (var i = 0; i < res.valid.length; i += 1) renderVerifyRow(rootEl, res.valid[i]);
-      if (res.skipped > 0) appendNote(rootEl, "skipped " + res.skipped + " malformed rows");
+      if (res.valid.length === 0) {
+        appendNote(rootEl, "nothing to verify");
+        appendHint(rootEl, "When a lane finishes, its COPY VERIFY command lands here.");
+      }
+      // Round 4: oldest finished first — the panel now reads in the SAME order
+      // the needs-me-now jump walks (fallbackCandidates: finished_ago_s DESC,
+      // head wins), so "the top row" and "where n takes me" can never disagree.
+      var orderedRows = res.valid.slice().sort(function (a, b) {
+        var aa = isInt(a.finished_ago_s) ? a.finished_ago_s : 0;
+        var bb = isInt(b.finished_ago_s) ? b.finished_ago_s : 0;
+        return bb - aa;
+      });
+      for (var i = 0; i < orderedRows.length; i += 1) renderVerifyRow(rootEl, orderedRows[i]);
+      if (res.skipped > 0) appendNote(rootEl, "skipped " + res.skipped + " malformed rows", "data-note");
     }
 
     function renderVerifyRow(rootEl, row) {
@@ -1039,15 +1599,26 @@
         if (res.valid[i].kind === "merge") merges.push(res.valid[i]);
         else unsupported += 1;
       }
-      if (merges.length === 0) appendNote(rootEl, "nothing owed");
-      for (var j = 0; j < merges.length; j += 1) renderMergeCard(rootEl, merges[j]);
-      if (skipped > 0) appendNote(rootEl, "skipped " + skipped + " malformed rows");
-      if (unsupported > 0) appendNote(rootEl, "skipped " + unsupported + " unsupported rows");
+      if (merges.length === 0) {
+        appendNote(rootEl, "nothing owed");
+        appendHint(rootEl, "Merge requests waiting on you will appear here.");
+      }
+      // Round 4: NOT-ready merges float to the top (they still need pipeline
+      // attention); ready ones follow in served order. Stable tiering.
+      var orderedMerges = merges.slice().sort(function (a, b) {
+        var ar = a.ready === true ? 1 : 0;
+        var br = b.ready === true ? 1 : 0;
+        return ar - br;
+      });
+      for (var j = 0; j < orderedMerges.length; j += 1) renderMergeCard(rootEl, orderedMerges[j]);
+      if (skipped > 0) appendNote(rootEl, "skipped " + skipped + " malformed rows", "data-note");
+      if (unsupported > 0) appendNote(rootEl, "skipped " + unsupported + " unsupported rows", "data-note");
     }
 
     function renderMergeCard(rootEl, m) {
       var card = el("div");
       card.classList.add("merge-card");
+      card.classList.add(m.ready === true ? "merge-card--ready" : "merge-card--not-ready");
       card.setAttribute("data-row-id", m.ref);
       var line = el("div");
       line.classList.add("merge-line");
@@ -1163,7 +1734,12 @@
       var cands = fallbackCandidates();
       if (cands.length === 0) {
         out.note = triggerNote === null ? "nothing owed" : triggerNote;
-        if (out.note !== null) transientNote(out.note, null);
+        // Round 4 (browser finding): the persistent nmn-hint already reads
+        // "nothing owed — updates every 5 s"; echoing the same words inline
+        // read as a duplication bug (screens 01c/03). The transient confirms
+        // DIFFERENTLY; the returned note keeps the pinned "nothing owed"
+        // contract (AC-17/AC-18 read the return value, not the transient).
+        if (out.note !== null) transientNote(triggerNote === null ? "all clear ✓" : out.note, null);
         return Promise.resolve(out);
       }
       var head = cands[0];
@@ -1189,7 +1765,7 @@
     function needsMeNow() {
       var counts = owedCounts();
       if (counts.v === 0 && counts.m === 0) {
-        transientNote("nothing owed", null);
+        transientNote("all clear ✓", null); // display only — see pageSideFallback note
         return Promise.resolve({ jumped: null, copied: null, note: "nothing owed" });
       }
       var live = deps.location.protocol !== "file:";
@@ -1209,7 +1785,7 @@
           return res.json().then(function (body) {
             var action = body !== null && typeof body === "object" ? body.action : null;
             if (action === null || typeof action !== "object") {
-              transientNote("nothing owed", null);
+              transientNote("all clear ✓", null); // display only — see pageSideFallback note
               return { jumped: null, copied: null, note: "nothing owed" };
             }
             var rid = typeof action.row_id === "string" ? action.row_id : "";
@@ -1367,6 +1943,12 @@
           bad.classList.add("banner--bad-doc");
           bad.setText("wall: bad state document (" + v.reason + ")");
           scratch.appendChild(bad);
+          // SPEC v2.1 §4.4: the companion hint is a SIBLING of the pinned
+          // line — never a child (AC-4/AC-22 read the pinned line's own text).
+          var badHint = el("div");
+          badHint.classList.add("banner-hint");
+          badHint.setText("Panels stay blank until a valid state document arrives — nothing on this page is rendered from invalid data.");
+          scratch.appendChild(badHint);
         }
         // T6 LIVE page-generated lines (SPEC 4.3/8): the missing-token line and
         // the debounced poll-failure DEGRADED banner. Never the reserved
@@ -1377,6 +1959,10 @@
           mt.classList.add("banner--bad-doc");
           mt.setText("wall: missing token in URL");
           scratch.appendChild(mt);
+          var mtHint = el("div");
+          mtHint.classList.add("banner-hint");
+          mtHint.setText("Open the wall link printed by mc-wall open.");
+          scratch.appendChild(mtHint);
         }
         var degradedTxt = degradedBannerText();
         if (degradedTxt !== null && !live.degradedDismissed) {
@@ -1421,6 +2007,11 @@
     function currentDot(valid) {
       if (freezeActive) return "frozen";
       if (live !== null) {
+        // Round 4 (browser finding, screen 01b): before the FIRST poll settles
+        // we know nothing — red "stale" read as an error during a normal boot.
+        // Amber "booting" covers exactly that window; the first poll outcome
+        // (live / stale) takes over from there.
+        if (live.polls === 0) return "booting";
         return live.failures === 0 && live.lastGoodAtMs !== null ? "live" : "stale";
       }
       return valid ? "qa" : "stale";
@@ -1444,6 +2035,10 @@
       }
       var cap = byId("state-age-caption");
       if (cap) {
+        // SPEC v2.1 §3/01: the caption explains itself on hover — the wall's
+        // age is the age of the last state DOCUMENT, which surprises nobody
+        // who has read the tooltip (audit: "state 0s" reads as a bug without it).
+        cap.setAttribute("title", "age of the last state document received from the wall server");
         // T6: while LIVE failures stack up, the shown state IS the last-good —
         // label it with the age of the last successful poll (SPEC 4.3).
         if (live !== null && live.failures > 0 && live.lastGoodAtMs !== null) {
@@ -1706,8 +2301,11 @@
       row.appendChild(idle);
       // T6 carry-over (d) + T7 (H): clickable rows are keyboard-operable too —
       // one shared wiring helper (click + Enter/Space -> the same action).
+      // SPEC v2.1 §4.3: a resolved copy confirms with a transient note.
       wireClickable(row, function () {
-        copyText(m.id, null); // copy-without-label-swap (SPEC 7.2)
+        copyText(m.id, null).then(function (ok) { // copy-without-label-swap (SPEC 7.2)
+          if (ok) transientNote("id copied", row);
+        });
       });
       parentEl.appendChild(row);
     }
@@ -1731,21 +2329,27 @@
       if (idle.length > 0) {
         var sub = el("div");
         sub.classList.add("idle-sub");
-        sub.classList.add("collapsed"); // collapsed by default (SPEC 6.3)
+        // Round 5: the expanded state survives poll rebuilds — it lives in
+        // expandedIdleRepos (captured from the live column each render), not
+        // on the discarded nodes.
+        var startExpanded = expandedIdleRepos[repo] === true;
+        if (!startExpanded) sub.classList.add("collapsed"); // collapsed by default (SPEC 6.3)
         var subHead = el("button");
         subHead.setAttribute("type", "button");
         subHead.classList.add("idle-sub-head");
         subHead.setText("idle >24h (" + idle.length + ")");
-        subHead.setAttribute("aria-expanded", "false");
+        subHead.setAttribute("aria-expanded", startExpanded ? "true" : "false");
         if (typeof subHead.addEventListener === "function") {
           subHead.addEventListener("click", function () {
-            if (sub.classList.contains("collapsed")) {
+            var nowExpanded = sub.classList.contains("collapsed");
+            if (nowExpanded) {
               sub.classList.remove("collapsed");
               subHead.setAttribute("aria-expanded", "true");
             } else {
               sub.classList.add("collapsed");
               subHead.setAttribute("aria-expanded", "false");
             }
+            expandedIdleRepos[repo] = nowExpanded;
           });
         }
         sub.appendChild(subHead);
@@ -1758,45 +2362,186 @@
 
     function renderUnmappedStrip(rootEl) {
       var res = MCW.state.items(stateDoc.sessions_unmapped, "id");
-      if (res.skipped > 0) appendNote(rootEl, "skipped " + res.skipped + " malformed rows");
+      if (res.skipped > 0) appendNote(rootEl, "skipped " + res.skipped + " malformed rows", "data-note");
       if (res.valid.length === 0) return 0;
+      var split = splitBackgroundRows(res.valid);
+      var bgCount = res.valid.length - split.main.length;
       var strip = el("div");
       strip.classList.add("unmapped-strip");
       var head = el("div");
       head.classList.add("unmapped-head");
-      head.setText("unmapped (" + res.valid.length + ")");
+      // Round 6: the count names what is VISIBLE and owns the hidden tail —
+      // "unmapped (2)" with no background stays byte-identical (AC-16).
+      head.setText(
+        "unmapped (" +
+          split.main.length +
+          (bgCount > 0 ? " · " + bgCount + " hidden" : "") +
+          ")"
+      );
       strip.appendChild(head);
+      // SPEC v2.1 §3/01: a show-all toggle past the strip's scroll cap. The
+      // expanded state is owned by unmappedOpen so a poll-driven rebuild of
+      // the strip re-applies it instead of snapping shut.
+      var toggle = el("button");
+      toggle.setAttribute("type", "button");
+      toggle.classList.add("unmapped-toggle");
+      toggle.setText("show all");
+      toggle.setAttribute("aria-expanded", unmappedOpen ? "true" : "false");
+      toggle.setAttribute("aria-controls", "unmapped-rows");
+      strip.appendChild(toggle);
       var rowsEl = el("div");
       rowsEl.classList.add("unmapped-rows");
-      for (var i = 0; i < res.valid.length; i += 1) renderUnmappedRow(rowsEl, res.valid[i]);
+      if (unmappedOpen) rowsEl.classList.add("open");
+      rowsEl.setAttribute("id", "unmapped-rows"); // the toggle's aria-controls target
+      renderUnmappedGroups(rowsEl, split.main);
+      if (bgCount > 0) renderBackgroundSection(rowsEl, split);
       strip.appendChild(rowsEl);
+      if (typeof toggle.addEventListener === "function") {
+        toggle.addEventListener("click", function () {
+          unmappedOpen = !unmappedOpen;
+          if (unmappedOpen) {
+            rowsEl.classList.add("open");
+            toggle.setAttribute("aria-expanded", "true");
+          } else {
+            rowsEl.classList.remove("open");
+            toggle.setAttribute("aria-expanded", "false");
+          }
+        });
+      }
       rootEl.appendChild(strip);
       return res.valid.length;
     }
 
+    // Round 6: workflow subagents + side chats collapse into ONE revealable
+    // section. Workflow rows cluster under their run's label (the run id from
+    // the session id is the honest parent link — the v1 state contract has no
+    // parent_session_id); side chats get their own group.
+    function renderBackgroundSection(rowsEl, split) {
+      var hiddenEl = el("div");
+      hiddenEl.classList.add("unmapped-hidden");
+      if (!backgroundOpen) hiddenEl.classList.add("collapsed");
+      var toggle = el("button");
+      toggle.setAttribute("type", "button");
+      toggle.classList.add("unmapped-hidden-toggle");
+      var wfTotal = 0;
+      for (var w = 0; w < split.workflowOrder.length; w += 1) wfTotal += split.workflow[split.workflowOrder[w]].length;
+      var parts = [];
+      if (wfTotal > 0) parts.push(wfTotal + " workflow subagent" + (wfTotal === 1 ? "" : "s"));
+      if (split.sidechat.length > 0) parts.push(split.sidechat.length + " side chat" + (split.sidechat.length === 1 ? "" : "s"));
+      toggle.setText("hidden: " + parts.join(" · "));
+      toggle.setAttribute("aria-expanded", backgroundOpen ? "true" : "false");
+      if (typeof toggle.addEventListener === "function") {
+        toggle.addEventListener("click", function () {
+          backgroundOpen = !backgroundOpen;
+          if (backgroundOpen) {
+            hiddenEl.classList.remove("collapsed");
+            toggle.setAttribute("aria-expanded", "true");
+          } else {
+            hiddenEl.classList.add("collapsed");
+            toggle.setAttribute("aria-expanded", "false");
+          }
+        });
+      }
+      hiddenEl.appendChild(toggle);
+      var sortedRuns = split.workflowOrder.slice().sort();
+      for (var r = 0; r < sortedRuns.length; r += 1) {
+        var runKey = sortedRuns[r];
+        var runRows = split.workflow[runKey];
+        var group = el("div");
+        group.classList.add("unmapped-group");
+        var runHead = el("div");
+        runHead.classList.add("unmapped-group-head");
+        runHead.setText("workflow run " + runKey.slice(0, 8) + " · " + runRows.length);
+        runHead.setAttribute("title", "workflow run " + runKey + " — every actor session launched by this run");
+        group.appendChild(runHead);
+        for (var rr = 0; rr < runRows.length; rr += 1) renderUnmappedRow(group, runRows[rr]);
+        hiddenEl.appendChild(group);
+      }
+      if (split.sidechat.length > 0) {
+        var chatGroup = el("div");
+        chatGroup.classList.add("unmapped-group");
+        var chatHead = el("div");
+        chatHead.classList.add("unmapped-group-head");
+        chatHead.setText("side chats · " + split.sidechat.length);
+        chatGroup.appendChild(chatHead);
+        for (var c = 0; c < split.sidechat.length; c += 1) renderUnmappedRow(chatGroup, split.sidechat[c]);
+        hiddenEl.appendChild(chatGroup);
+      }
+      rowsEl.appendChild(hiddenEl);
+    }
+
+    // Round 4: unmapped rows group by their dir (the path IS the repo for an
+    // unmapped session) so a wall of 25 near-identical rows becomes a few
+    // labeled repo groups; the path renders once per group instead of once
+    // per row. Groups sort alphabetically; rows within a group keep served
+    // order. Rows with no dir land in "(no path)".
+    function renderUnmappedGroups(rowsEl, rows) {
+      var groups = [];
+      var index = {};
+      for (var i = 0; i < rows.length; i += 1) {
+        var dir = typeof rows[i].dir === "string" && rows[i].dir !== "" ? rows[i].dir : "(no path)";
+        if (!index[dir]) {
+          index[dir] = { dir: dir, rows: [] };
+          groups.push(index[dir]);
+        }
+        index[dir].rows.push(rows[i]);
+      }
+      groups.sort(function (a, b) {
+        return a.dir < b.dir ? -1 : a.dir > b.dir ? 1 : 0;
+      });
+      for (var g = 0; g < groups.length; g += 1) {
+        var groupEl = el("div");
+        groupEl.classList.add("unmapped-group");
+        var head = el("div");
+        head.classList.add("unmapped-group-head");
+        // Round 5 (user report): the head shows the PROJECT NAME only — the
+        // full path rides the hover tooltip, never the text.
+        var dirLabel = groups[g].dir === "(no path)" ? "(no path)" : baseName(groups[g].dir);
+        head.setText(dirLabel + " · " + groups[g].rows.length);
+        if (groups[g].dir !== "(no path)") head.setAttribute("title", groups[g].dir);
+        groupEl.appendChild(head);
+        for (var r = 0; r < groups[g].rows.length; r += 1) renderUnmappedRow(groupEl, groups[g].rows[r]);
+        rowsEl.appendChild(groupEl);
+      }
+    }
+
     // Separate function so each row's click closure owns its u (no shared var).
+    // Round 4b: the row is three SEGMENTS (title / age / id) so CSS can align
+    // it like a table row at full width — the old single text node wrapped
+    // unpredictably. Own text per segment keeps collectText() pins intact.
     function renderUnmappedRow(rowsEl, u) {
       var row = el("div");
       row.classList.add("unmapped-row");
       row.setAttribute("data-session-id", u.id);
       var uTitle = typeof u.title === "string" && u.title !== "" ? u.title : "title pending";
-      var uDir = typeof u.dir === "string" ? u.dir : "";
-      row.setText(
-        uTitle +
-          " · " +
-          uDir +
-          " · " +
-          MCW.util.humanizeAge(isInt(u.last_active_ago_s) ? u.last_active_ago_s : 0)
-      );
-      // T6 carry-over (c): dim span with the session id so an unmapped row is
-      // identifiable for copying. setText runs first — it wipes children.
+      var titleSpan = el("span");
+      titleSpan.classList.add("unmapped-title");
+      titleSpan.setText(uTitle);
+      row.appendChild(titleSpan);
+      var ageSpan = el("span");
+      ageSpan.classList.add("unmapped-age");
+      ageSpan.setText(MCW.util.humanizeAge(isInt(u.last_active_ago_s) ? u.last_active_ago_s : 0));
+      row.appendChild(ageSpan);
+      // The id is demoted to a dim monospace tail (short form + ellipsis when
+      // long; full id on hover) — it is a copy handle, not reading material.
+      // The click still copies the FULL id (AC-16 reads the copied ids).
+      var rawId = typeof u.id === "string" ? u.id : "";
+      var shortId = rawId.length > 18 ? rawId.slice(0, 15) + "…" : rawId;
       var idSpan = el("span");
       idSpan.classList.add("dim");
-      idSpan.setText(" · " + u.id);
+      idSpan.setText(shortId);
+      if (shortId !== rawId) idSpan.setAttribute("title", rawId);
       row.appendChild(idSpan);
       // T6 carry-over (d) + T7 (H): keyboard parity via the shared wiring helper.
+      // SPEC v2.1 §4.3: a resolved copy confirms with a transient note —
+      // placed INSIDE the clicked row, because the strip scrolls internally
+      // and a note appended to the rows container lands out of sight past
+      // the fold (browser finding, round 3). The row is the only anchor that
+      // is guaranteed visible: the user just clicked it.
       wireClickable(row, function () {
-        copyText(u.id, null);
+        copyText(u.id, null).then(function (ok) {
+          if (ok) transientNoteIn(row, "id copied");
+        });
       });
       rowsEl.appendChild(row);
     }
@@ -1815,7 +2560,210 @@
       var stripCount = 0;
       if (cls.sessionsUnmapped === "ok") stripCount = renderUnmappedStrip(rootEl);
       else appendNote(rootEl, "no data"); // L2 on the strip's source array
-      if (rowCount === 0 && stripCount === 0) appendNote(rootEl, "no sessions");
+      if (rowCount === 0 && stripCount === 0) {
+        appendNote(rootEl, "no sessions");
+        appendHint(rootEl, "Sessions working on a lane appear here, grouped by repo.");
+      }
+    }
+
+    // =====================================================================
+    // Round 5: PROJECTS view — every session (mapped lanes, masters,
+    // unmapped) grouped by the project it works in, sortable, with
+    // per-project activity. The full path is hover-only; heads show the
+    // project name.
+    // =====================================================================
+
+    function buildProjectIndex() {
+      var projects = {};
+      var order = [];
+      function projectFor(name, path) {
+        var key = name.toLowerCase();
+        if (!projects[key]) {
+          projects[key] = { name: name, path: path || "", items: [] };
+          order.push(key);
+        } else if (path && !projects[key].path) {
+          // an unmapped dir's full path fills in the hover target for a
+          // repo-name-keyed group (cleo + .../cleo are one project)
+          projects[key].path = path;
+        }
+        return projects[key];
+      }
+      if (stateDoc !== null) {
+        var progs = MCW.state.items(stateDoc.programs, null).valid;
+        for (var i = 0; i < progs.length; i += 1) {
+          var progName =
+            typeof progs[i].program === "string" && progs[i].program !== ""
+              ? progs[i].program
+              : "(unnamed program)";
+          var lanes = MCW.state.items(progs[i].lanes, "row_id").valid;
+          var firstRepo =
+            lanes.length > 0 && typeof lanes[0].repo === "string" && lanes[0].repo !== ""
+              ? lanes[0].repo
+              : "(no lanes)";
+          for (var j = 0; j < lanes.length; j += 1) {
+            var ses = nullable(lanes[j].session);
+            if (ses === null || typeof ses.id !== "string" || ses.id === "") continue;
+            if (!showBackground && sessionKind(ses.id, ses.title) !== "main") continue;
+            var laneRepo =
+              typeof lanes[j].repo === "string" && lanes[j].repo !== ""
+                ? lanes[j].repo
+                : "(unconfigured repo)";
+            projectFor(laneRepo, "").items.push({
+              tag: progName + " · " + lanes[j].row_id,
+              title: sessionDisplayTitle(ses),
+              age: isInt(ses.last_active_ago_s) ? ses.last_active_ago_s : 0,
+              id: ses.id,
+            });
+          }
+          var master = nullable(progs[i].master);
+          if (master !== null && typeof master.session_id === "string" && master.session_id !== "") {
+            projectFor(firstRepo, "").items.push({
+              tag: progName + " · master",
+              title: typeof master.title === "string" && master.title !== "" ? master.title : "title pending",
+              age: isInt(master.last_active_ago_s) ? master.last_active_ago_s : 0,
+              id: master.session_id,
+            });
+          }
+        }
+        var unmapped = MCW.state.items(stateDoc.sessions_unmapped, "id").valid;
+        for (var u = 0; u < unmapped.length; u += 1) {
+          var kind = sessionKind(unmapped[u].id, unmapped[u].title);
+          if (!showBackground && kind !== "main") continue;
+          var dir = typeof unmapped[u].dir === "string" && unmapped[u].dir !== "" ? unmapped[u].dir : "(no path)";
+          var proj = projectFor(dir === "(no path)" ? dir : baseName(dir), dir);
+          proj.items.push({
+            tag: kind === "workflow" ? "workflow" : kind === "sidechat" ? "side chat" : "unmapped",
+            title: typeof unmapped[u].title === "string" && unmapped[u].title !== "" ? unmapped[u].title : "title pending",
+            age: isInt(unmapped[u].last_active_ago_s) ? unmapped[u].last_active_ago_s : 0,
+            id: typeof unmapped[u].id === "string" ? unmapped[u].id : "",
+          });
+        }
+      }
+      var out = [];
+      for (var k = 0; k < order.length; k += 1) {
+        var p = projects[order[k]];
+        p.items.sort(function (a, b) {
+          return a.age - b.age;
+        });
+        out.push(p);
+      }
+      if (projectSort === "name") {
+        out.sort(function (a, b) {
+          return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+        });
+      } else {
+        // most recently active project first (items are age-ASC, head wins)
+        out.sort(function (a, b) {
+          var aa = a.items.length > 0 ? a.items[0].age : Infinity;
+          var bb = b.items.length > 0 ? b.items[0].age : Infinity;
+          return aa - bb;
+        });
+      }
+      return out;
+    }
+
+    function renderProjectRow(rootEl, item) {
+      var row = el("div");
+      row.classList.add("project-row");
+      row.setAttribute("data-session-id", item.id);
+      var tag = el("span");
+      tag.classList.add("project-row-tag");
+      tag.setText(item.tag);
+      row.appendChild(tag);
+      var title = el("span");
+      title.classList.add("project-row-title");
+      title.setText(item.title);
+      row.appendChild(title);
+      var age = el("span");
+      age.classList.add("project-row-age");
+      age.setText(MCW.util.humanizeAge(item.age));
+      row.appendChild(age);
+      var shortId = item.id.length > 18 ? item.id.slice(0, 15) + "…" : item.id;
+      var idSpan = el("span");
+      idSpan.classList.add("dim");
+      idSpan.setText(shortId);
+      if (shortId !== item.id) idSpan.setAttribute("title", item.id);
+      row.appendChild(idSpan);
+      wireClickable(row, function () {
+        copyText(item.id, null).then(function (ok) {
+          if (ok) transientNoteIn(row, "id copied");
+        });
+      });
+      rootEl.appendChild(row);
+    }
+
+    function renderProjectCard(rootEl, p) {
+      var card = el("div");
+      card.classList.add("project-card");
+      var head = el("div");
+      head.classList.add("project-head");
+      var name = el("span");
+      name.classList.add("project-name");
+      name.setText(p.name);
+      if (p.path !== "") name.setAttribute("title", p.path); // hover-only full path
+      head.appendChild(name);
+      var meta = el("span");
+      meta.classList.add("project-meta");
+      meta.setText(
+        p.items.length + " session" + (p.items.length === 1 ? "" : "s") + " · newest " + MCW.util.humanizeAge(p.items[0].age)
+      );
+      head.appendChild(meta);
+      card.appendChild(head);
+      for (var i = 0; i < p.items.length; i += 1) renderProjectRow(card, p.items[i]);
+      rootEl.appendChild(card);
+    }
+
+    function renderProjectsView(rootEl) {
+      clearNode(rootEl);
+      var headRow = el("div");
+      headRow.classList.add("projects-headrow");
+      var head = el("div");
+      head.classList.add("projects-head");
+      head.setText("PROJECTS");
+      headRow.appendChild(head);
+      var controls = el("div");
+      controls.classList.add("projects-controls");
+      var bgBtn = el("button");
+      bgBtn.setAttribute("type", "button");
+      bgBtn.classList.add("projects-bg");
+      bgBtn.setAttribute("aria-pressed", showBackground ? "true" : "false");
+      bgBtn.setText(showBackground ? "background: shown" : "background: hidden");
+      bgBtn.setAttribute(
+        "title",
+        "workflow subagent sessions and side chats are hidden until you show them"
+      );
+      if (typeof bgBtn.addEventListener === "function") {
+        bgBtn.addEventListener("click", function () {
+          showBackground = !showBackground;
+          render();
+        });
+      }
+      controls.appendChild(bgBtn);
+      var sortBtn = el("button");
+      sortBtn.setAttribute("type", "button");
+      sortBtn.classList.add("projects-sort");
+      sortBtn.setText(projectSort === "recent" ? "sort: recent activity" : "sort: name");
+      if (typeof sortBtn.addEventListener === "function") {
+        sortBtn.addEventListener("click", function () {
+          projectSort = projectSort === "recent" ? "name" : "recent";
+          render();
+        });
+      }
+      controls.appendChild(sortBtn);
+      headRow.appendChild(controls);
+      rootEl.appendChild(headRow);
+      var valid = stateDoc !== null && MCW.state.validateDoc(stateDoc).ok;
+      if (!valid) {
+        appendNote(rootEl, "no data");
+        return;
+      }
+      var projects = buildProjectIndex();
+      if (projects.length === 0) {
+        appendNote(rootEl, "no sessions");
+        appendHint(rootEl, "Sessions appear here grouped by the project they work in.");
+        return;
+      }
+      for (var i = 0; i < projects.length; i += 1) renderProjectCard(rootEl, projects[i]);
     }
 
     // =====================================================================
@@ -2014,6 +2962,7 @@
       renderBanners: renderBanners,
       startLive: startLive,
       diagnostics: diagnostics,
+      setView: setView,
     };
     // T3: QA armed-demo override state (null | "prompt-armed" | "goal-armed" |
     // "cleared"); seeded null, reset by every mountQA.

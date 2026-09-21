@@ -1,18 +1,36 @@
 /* MC Wall — style.css (canonical). The copy at assets/style.css must stay
  * byte-identical (AC-32). The :root token set below is the design contract
- * of record (SPEC section 10) — dark, dense-but-scannable, information-first. */
+ * of record (redesign SPEC v2.1, "the operator's wall") — dark, dense-but-
+ * scannable, information-first. Hue semantics (round 4 accent discipline):
+ *   --attention cyan-blue  = interactive / look here (focus, hover, jump,
+ *                            stalled ring) — deliberately never an alarm;
+ *   --derived amber        = pending human action (armed strip, the owed CTA,
+ *                            COPY VERIFY) AND derived signals — the "your
+ *                            move" family;
+ *   --stale red            = blocked / broken only. */
 
 :root {
-  --bg: #0b0e14;
-  --panel: #11151d;
-  --panel-2: #161b26;
-  --border: #232b3a;
-  --ink: #e8eef5;
-  --ink-dim: #9aa4b1;
-  --note: #3fd47f;
-  --derived: #e3b341;
-  --stale: #f16a60;
-  --attention: #f0883e;
+  --bg: #0e1319;
+  --panel: #151c24;
+  --panel-2: #1b242e;
+  --border: #2c3947;
+  --ink: #e9f0f6;
+  --ink-dim: #a5b3c2;
+  --note: #4cd787;
+  --derived: #e9b95c;
+  --stale: #ff8578;
+  --attention: #62c2f0;
+  /* additive layout + shape tokens (SPEC v2.1 §2.1) — the only spacing
+   * vocabulary; no rule below may invent a raw px gap where a step exists */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --r-s: 4px;
+  --r-m: 8px;
+  --r-pill: 999px;
+  --focus: var(--attention);
 }
 
 html,
@@ -35,24 +53,42 @@ body {
   display: none !important;
 }
 
-/* ---- top bar shell ---- */
+/* ---- top bar shell (SPEC v2.1 §1/A2: three clusters) ---- */
 
 #topbar {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 12px;
-  padding: 8px 16px;
+  gap: var(--s3);
+  padding: var(--s2) var(--s4);
   background: var(--panel);
   border-bottom: 1px solid var(--border);
+  /* round 4 polish: the operator bar survives scrolling the wall */
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.tb-cluster {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+
+.tb-health {
+  margin-left: auto;
 }
 
 #wordmark {
-  font-weight: 700;
-  letter-spacing: 0.05em;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 #live-dot {
+  position: relative;
   width: 10px;
   height: 10px;
   border-radius: 50%;
@@ -64,6 +100,31 @@ body {
   color: var(--ink-dim);
 }
 
+/* the owed CTA: amber-tinted while it has work to name (the "your move"
+ * family — round 4 accent discipline); idle-dim at 0 owed (SPEC v2.1 §2.5)
+ * — still focusable/clickable either way */
+
+#needs-me-now {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--derived) 14%, var(--panel-2));
+  border: 2px solid var(--derived);
+}
+
+#needs-me-now.nmn-idle {
+  color: var(--ink-dim);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+}
+
+#nmn-hint {
+  color: var(--ink-dim);
+  font-size: 14px;
+}
+
+#nmn-counter {
+  font-weight: 700;
+}
+
 /* ---- generic interactive states (every control the page introduces) ---- */
 
 button {
@@ -72,24 +133,19 @@ button {
   color: var(--ink);
   background: var(--panel-2);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--r-s);
   padding: 4px 10px;
   min-height: 26px;
   cursor: pointer;
 }
 
 button:hover {
-  border-color: var(--note);
-}
-
-button:focus-visible {
-  outline: 2px solid var(--note);
-  outline-offset: 2px;
+  border-color: var(--attention);
 }
 
 button:active {
   background: var(--panel);
-  border-color: var(--note);
+  border-color: var(--attention);
 }
 
 button:disabled {
@@ -98,21 +154,350 @@ button:disabled {
   cursor: not-allowed;
 }
 
+/* one focus language (SPEC v2.1 §4.1): 2px cyan outline, offset 2, everywhere */
+
+button:focus-visible,
+.lane--launchable:focus-visible,
+.session-row:focus-visible,
+.unmapped-row:focus-visible,
+.unmapped-toggle:focus-visible,
+.idle-sub-head:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ---- armed strip (A1: the armed indicator leaves the top bar) ---- */
+
+#armed-strip {
+  padding: 0 var(--s4);
+  /* Browser finding, round 3 (screen 10): the fixed launch panel (z 20) and
+   * its backdrop (z 19) otherwise occlude the strip's right-aligned controls.
+   * Riding above both keeps re-copy/cancel/× visible and clickable while the
+   * panel is open; freeze (z 40, pointer-events none) still covers the page. */
+  position: relative;
+  z-index: 25;
+}
+
+/* with the panel open, the strip's BOX ends where the panel begins (round 4
+ * fix, screens 07-10): the old padding-right hack kept the full-width strip
+ * painting its border/background OVER the panel's first field row. An even
+ * right margin shrinks the box instead — the armed chip + its controls dock
+ * beside the panel edge with nothing overlapping. */
+
+body.panel-open #armed-strip {
+  padding-right: 0;
+  margin-right: min(420px, 92vw);
+}
+
 /* ---- three-column grid (SPEC section 6) ---- */
 
 #grid {
   display: grid;
   grid-template-columns: minmax(340px, 1fr) minmax(420px, 1.25fr) minmax(340px, 1fr);
-  gap: 12px;
-  padding: 16px;
+  grid-template-areas: "programs verify sessions";
+  gap: var(--s3);
+  padding: var(--s4);
+  align-items: start;
+}
+
+#col1-programs {
+  grid-area: programs;
+}
+
+#col2 {
+  grid-area: verify;
+}
+
+#col3-sessions {
+  grid-area: sessions;
+}
+
+/* ---- round 4b: the ADAPTIVE grid ----
+ * A column with no rows leaves the grid template instead of remaining as an
+ * empty box floating in dead space (the default live wall used to show two
+ * contentless columns beside ~60% void). renderBody tags #grid with
+ * has-/no-programs, has-/no-owed, has-/no-sessions; the combinations below
+ * pick the template. A sole content column centers at a readable width. */
+
+#grid.has-programs.has-owed.has-sessions {
+  grid-template-columns: minmax(340px, 1fr) minmax(420px, 1.25fr) minmax(340px, 1fr);
+  grid-template-areas: "programs verify sessions";
+}
+
+#grid.has-programs.has-owed.no-sessions {
+  grid-template-columns: minmax(340px, 1.1fr) minmax(420px, 1fr);
+  grid-template-areas: "programs verify";
+}
+
+#grid.has-programs.no-owed.has-sessions {
+  grid-template-columns: minmax(340px, 1.1fr) minmax(340px, 1fr);
+  grid-template-areas: "programs sessions";
+}
+
+#grid.no-programs.has-owed.has-sessions {
+  grid-template-columns: minmax(420px, 1.1fr) minmax(340px, 1fr);
+  grid-template-areas: "verify sessions";
+}
+
+#grid.has-programs.no-owed.no-sessions {
+  grid-template-columns: 1fr;
+  grid-template-areas: "programs";
+}
+
+#grid.no-programs.has-owed.no-sessions {
+  grid-template-columns: 1fr;
+  grid-template-areas: "verify";
+}
+
+#grid.no-programs.no-owed.has-sessions {
+  grid-template-columns: 1fr;
+  grid-template-areas: "sessions";
+}
+
+/* Columns whose area is not in the active template are REMOVED, not left for
+ * auto-placement: a dangling grid-area spawns implicit tracks that garble the
+ * template (browser finding, round 4b — the live wall rendered verify boxes
+ * in an implicit third column beside the sessions-only grid). display:none
+ * takes them out of placement; their notes stay in the DOM for the pins. */
+
+#grid.no-programs.no-owed #col1-programs,
+#grid.no-programs.no-owed #col2 {
+  display: none;
+}
+
+#grid.no-programs.has-owed #col1-programs {
+  display: none;
+}
+
+#grid.has-programs.no-owed #col2 {
+  display: none;
+}
+
+#grid.has-programs.has-owed.no-sessions #col3-sessions {
+  display: none;
+}
+
+#grid.no-programs.has-owed.no-sessions #col3-sessions {
+  display: none;
+}
+
+#grid.has-programs.no-owed.no-sessions #col3-sessions {
+  display: none;
+}
+
+/* sole-sessions view: the collapsed 240px scroll cap wastes the page — let
+ * the list breathe while keeping it scrollable (base rule stays pinned).
+ * :not(.open) matters: without it this rule's specificity beats
+ * .unmapped-rows.open and the show-all toggle stops doing anything. */
+
+#grid.one-col .unmapped-rows:not(.open) {
+  max-height: 62vh;
+}
+
+/* ---- round 5: view switcher (WALL / PROJECTS) + projects screen ---- */
+
+.tb-views {
+  margin-left: var(--s2);
+}
+
+.tb-views button {
+  min-height: 24px;
+  padding: 1px 10px;
+  font-size: 12.5px;
+  letter-spacing: 0.06em;
+  color: var(--ink-dim);
+}
+
+.tb-views button[aria-pressed="true"] {
+  color: var(--derived);
+  border-color: var(--derived);
+}
+
+#projects-view {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: var(--s4);
+}
+
+.projects-headrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--s2);
+}
+
+.projects-head {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.projects-sort {
+  min-height: 24px;
+  font-size: 12.5px;
+  color: var(--ink-dim);
+}
+
+.projects-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-left: auto;
+}
+
+.projects-bg {
+  min-height: 24px;
+  font-size: 12.5px;
+  color: var(--ink-dim);
+}
+
+.projects-bg[aria-pressed="true"] {
+  color: var(--derived);
+  border-color: var(--derived);
+}
+
+.project-card {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-m);
+  padding: 10px;
+}
+
+.project-card + .project-card {
+  margin-top: var(--s3);
+}
+
+.project-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+}
+
+.project-name {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+/* the full path rides the name's title tooltip — never printed (round 5) */
+
+.project-meta {
+  margin-left: auto;
+  color: var(--ink-dim);
+  font-size: 13px;
+}
+
+.project-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-top: 6px;
+  padding: 5px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-m);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.project-row:hover {
+  border-color: var(--attention);
+}
+
+.project-row-tag {
+  color: var(--ink-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.project-row-title {
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.project-row-age {
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+
+.project-row .dim {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+}
+
+#grid.one-col .col {
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+/* a fully-empty VALID wall: the grid hides entirely — the big hero IS the page */
+
+#grid.is-empty {
+  display: none;
+}
+
+/* ---- round 4: the all-clear hero (index.html ships it hidden between the
+ * banner strip and the grid; renderEmptyHero fills one of two forms) ---- */
+
+#empty-hero.hero--big {
+  margin: 0 var(--s4);
+  padding: 26vh var(--s4) 0;
+  text-align: center;
+}
+
+#empty-hero.hero--big .hero-line {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  color: var(--note);
+}
+
+#empty-hero.hero--big .hero-sub {
+  margin: var(--s2) auto 0;
+  max-width: 640px;
+  color: var(--ink-dim);
+  font-size: 14px;
+}
+
+/* slim form: one context line when programs are absent but content exists */
+
+#empty-hero.hero--slim {
+  margin: 0 var(--s4);
+  padding: var(--s3) 0 0;
+  text-align: center;
+}
+
+#empty-hero.hero--slim .hero-line {
+  color: var(--ink-dim);
+  font-size: 14px;
+}
+
+/* boot readability (round 4, screen 01b): while LIVE waits for the first
+ * state, the middle column's TWO waiting subpanels read as one duplicated
+ * box — collapse the second; the notes stay in the DOM (AC-5 reads them) */
+
+#col2.waiting .subpanel + .subpanel {
+  display: none;
+}
+
+#col2.waiting .subpanel {
+  border-style: dashed;
 }
 
 .col {
   min-width: 0;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 12px;
+  border-radius: var(--r-m);
+  padding: var(--s3);
 }
 
 #col2 {
@@ -123,12 +508,12 @@ button:disabled {
 .subpanel {
   background: var(--panel-2);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-m);
   padding: 10px;
 }
 
 #col2 .subpanel + .subpanel {
-  margin-top: 12px;
+  margin-top: var(--s3);
 }
 
 /* dim empty-state note rendered by app.renderBlank */
@@ -138,17 +523,37 @@ button:disabled {
   font-size: 14px;
 }
 
+/* skipped-rows notes (SPEC v2.1 §4.4): micro-mono, ⓘ prefix, text unchanged */
+
+.data-note {
+  color: var(--ink-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+}
+
+.data-note::before {
+  content: "ⓘ ";
+}
+
+/* companion guidance lines on valid-doc empty panels (SPEC v2.1 §4.4) */
+
+.empty-hint {
+  margin-top: var(--s1);
+  color: var(--ink-dim);
+  font-size: 14px;
+}
+
 /* ---- Col 1: program cards (SPEC 6.1) ---- */
 
 .program-card {
   background: var(--panel-2);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-m);
   padding: 10px;
 }
 
 .program-card + .program-card {
-  margin-top: 12px;
+  margin-top: var(--s3);
 }
 
 .card-head {
@@ -190,6 +595,14 @@ button:disabled {
 
 .lane--launchable {
   cursor: pointer;
+  border-radius: var(--r-s);
+}
+
+/* hover is elevation, never the sole carrier (the persistent ▸ rides along) */
+
+.lane--launchable:hover {
+  background: color-mix(in srgb, var(--attention) 7%, var(--panel-2));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--attention) 45%, var(--panel-2));
 }
 
 .lane--launchable:hover .chip,
@@ -197,15 +610,11 @@ button:disabled {
   border-color: var(--attention);
 }
 
-.lane--launchable:focus-visible {
-  outline: 2px solid var(--note);
-  outline-offset: 2px;
-}
-
 .lane .stalled-note,
 .lane .session-line,
 .lane .goal-line {
   flex-basis: 100%;
+  padding-left: 14px; /* SPEC v2.1 §3/05(b): detail lines indent under the chip */
   font-size: 14px;
   color: var(--ink-dim);
 }
@@ -215,13 +624,24 @@ button:disabled {
   font-weight: 600;
 }
 
+/* forged lanes carry a persistent trailing affordance — visible at rest */
+
+.lane-go {
+  color: var(--ink-dim);
+}
+
+.lane--launchable:hover .lane-go,
+.lane--launchable:focus-visible .lane-go {
+  color: var(--attention);
+}
+
 .chip {
   position: relative;
   display: inline-flex;
   align-items: center;
   min-height: 26px;
   padding: 2px 16px 2px 10px; /* right padding leaves room for the corner dot */
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   font-size: 14px;
   font-weight: 600;
   background: var(--panel);
@@ -281,10 +701,56 @@ button:disabled {
   background: transparent;
 }
 
-.chip-stamp {
-  color: var(--ink-dim);
-  font-size: 14px;
-  font-weight: 600;
+/* chip grammar v2 (SPEC v2.1 §2.4): severity rides ADDITIVE modifier classes
+ * placed AFTER the provenance rules so border-color/color cascade wins; the
+ * base border shorthands above stay untouched (AC-26 exact-string pins). */
+
+.chip--sev-ok {
+  color: var(--note);
+  border-color: var(--note);
+  background-color: color-mix(in srgb, var(--note) 12%, var(--panel-2));
+}
+
+.chip--sev-watch {
+  color: var(--derived);
+  border-color: var(--derived);
+  background-color: color-mix(in srgb, var(--derived) 12%, var(--panel-2));
+}
+
+.chip--sev-blocked {
+  color: var(--stale);
+  border-color: var(--stale);
+  background-color: color-mix(in srgb, var(--stale) 12%, var(--panel-2));
+}
+
+/* a stale-PROVENANCE chip watched/blocked re-hatches in the severity hue */
+
+.chip--stale.chip--sev-watch {
+  color: var(--derived);
+  border-color: var(--derived);
+  background-image: repeating-linear-gradient(45deg, color-mix(in srgb, var(--derived) 30%, transparent) 0 2px, transparent 2px 6px);
+}
+
+.chip--stale.chip--sev-blocked {
+  background-image: repeating-linear-gradient(45deg, color-mix(in srgb, var(--stale) 30%, transparent) 0 2px, transparent 2px 6px);
+}
+
+/* round 4 status variants: the green family reads differently at a glance —
+ * done goes quiet (finished work), in-flight is the LIVE one, parked dims.
+ * Additive over the sev-ok base; no new tokens. */
+
+.chip--s-done {
+  color: color-mix(in srgb, var(--note) 55%, var(--ink-dim));
+  border-color: color-mix(in srgb, var(--note) 45%, var(--border));
+  background-color: var(--panel);
+}
+
+.chip--s-in-flight {
+  background-color: color-mix(in srgb, var(--note) 24%, var(--panel-2));
+}
+
+.chip--s-parked {
+  opacity: 0.7;
 }
 
 /* F-5: UNPARSED notes can be arbitrarily long — clamp the note span; the
@@ -315,14 +781,18 @@ button:disabled {
   align-items: center;
   min-height: 26px;
   padding: 2px 8px;
-  border-radius: 4px;
+  border-radius: var(--r-s);
   font-size: 14px;
   font-weight: 600;
 }
 
+/* legacy "launch via master" reads as a quiet outline tag (SPEC v2.1 §3/05(b)) */
+
 .legacy-badge {
   border: 1px solid var(--border);
   color: var(--ink-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
 }
 
 .mr-badge {
@@ -349,7 +819,7 @@ button:disabled {
   border: 1px dashed var(--derived);
   color: var(--derived);
   position: relative;    /* F-6: the corner dot anchors to the tag */
-  padding-right: 16px;   /* F-6: dot-reserving, mirroring .chip's L223 treatment */
+  padding-right: 16px;   /* F-6: dot-reserving, mirroring the chip treatment */
 }
 
 /* F-6: the verify? tag gets the dashed-chip corner-dot grammar. */
@@ -368,9 +838,11 @@ button:disabled {
 /* ---- Col 2: VERIFY QUEUE + HUMAN ACTIONS OWED (SPEC 6.2) ---- */
 
 .subpanel-head {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
 }
 
 .verify-row {
@@ -378,7 +850,8 @@ button:disabled {
   padding: 8px;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-left: 3px solid var(--derived); /* round 4: every verify row is "your move" */
+  border-radius: var(--r-m);
 }
 
 .verify-caption {
@@ -396,8 +869,16 @@ button:disabled {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--s2);
   margin-top: 6px;
+}
+
+/* round 4: COPY VERIFY is THE action of the verify queue — the one amber
+ * control; "Bring ZCode forward" stays the quiet secondary */
+
+.copy-verify-btn {
+  border-color: var(--derived);
+  color: var(--derived);
 }
 
 .merge-card {
@@ -405,7 +886,18 @@ button:disabled {
   padding: 8px;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-m);
+}
+
+/* round 4: the card's left edge carries readiness — NOT-ready reads as a
+ * loose end (red edge), ready as a green light, before a single word */
+
+.merge-card--not-ready {
+  border-left: 3px solid var(--stale);
+}
+
+.merge-card--ready {
+  border-left: 3px solid var(--note);
 }
 
 /* MR title + pipeline + repo badge share ONE visual line (SPEC 3.2 human row) */
@@ -451,10 +943,6 @@ button:disabled {
   font-weight: 600;
 }
 
-#nmn-counter {
-  font-weight: 700;
-}
-
 /* jump flash primitive: outline pulse ~1.5 s (class added/removed by the jump) */
 .flash {
   outline: 2px solid var(--attention);
@@ -480,8 +968,13 @@ button:disabled {
   top: 0;
   right: 0;
   bottom: 0;
+  /* border-box so the DRAWN width is min(420px, 92vw) — round 4 (screens
+   * 07-10): content-box made the panel 33px wider than the armed strip's
+   * dock margin, letting the strip's own background clip the panel's first
+   * field rows even with the boxes nominally abutting. */
+  box-sizing: border-box;
   width: min(420px, 92vw);
-  padding: 12px 16px 24px;
+  padding: var(--s3) var(--s4) var(--s5);
   overflow-y: auto;
   background: var(--panel);
   border-left: 1px solid var(--border);
@@ -494,11 +987,27 @@ button:disabled {
   display: block !important;
 }
 
+/* dim click-away curtain under the panel (SPEC v2.1 §3/07); mirrors the
+ * panel's [hidden] + .open mechanism, one z-level below it */
+#panel-backdrop {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: rgba(4, 8, 12, 0.55);
+  z-index: 19;
+}
+
+#panel-backdrop.open {
+  display: block !important;
+}
+
 .launch-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  margin-bottom: var(--s2);
 }
 
 .launch-title {
@@ -506,8 +1015,28 @@ button:disabled {
   font-weight: 700;
 }
 
+.launch-esc {
+  margin-right: var(--s2);
+  color: var(--ink-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+}
+
 .launch-close {
   min-width: 34px;
+}
+
+.launch-section {
+  margin-top: var(--s3);
+}
+
+.launch-section-head {
+  margin-bottom: var(--s1);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
 }
 
 .launch-line {
@@ -526,8 +1055,14 @@ button:disabled {
 
 .launch-btn {
   width: 100%;
-  margin-top: 12px;
+  margin-top: var(--s3);
   padding: 8px;
+}
+
+/* LIVE design-off (AC-34): the lock is CSS-only — never a DOM node, so the
+ * button's own text stays exactly "LAUNCH" (T4-carry pin). */
+#launch-panel .launch-btn:disabled::before {
+  content: "🔒 ";
 }
 
 .launch-note {
@@ -542,8 +1077,54 @@ button:disabled {
   background: var(--note);
 }
 
+/* the LIVE ping ring: reduced-motion-safe (the global reduce rule kills it) */
+
+#live-dot.live::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  left: -3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid var(--note);
+  animation: dot-ping 2.4s ease-out infinite;
+}
+
+@keyframes dot-ping {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.9;
+  }
+
+  70%,
+  100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+}
+
 #live-dot.stale {
   background: var(--stale);
+}
+
+/* round 4 (screen 01b): before the first poll settles we know nothing —
+ * amber "booting", NOT red (red is for measured staleness, not startup) */
+
+#live-dot.booting {
+  background: var(--derived);
+  animation: boot-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes boot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.45;
+  }
 }
 
 #live-dot.frozen {
@@ -576,7 +1157,7 @@ button:disabled {
   min-height: 26px;
   padding: 2px 8px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--r-s);
   font-size: 14px;
   font-weight: 600;
   color: var(--ink-dim);
@@ -587,21 +1168,27 @@ button:disabled {
   color: var(--derived);
 }
 
+/* freeze badge carries the red left edge (SPEC v2.1 §3/15) */
+
 .badge--freeze {
   border-color: var(--stale);
+  border-left-width: 3px;
   color: var(--stale);
 }
 
 /* ---- T5: banner strip (SPEC 8) ---- */
 
 #banner-strip {
-  padding: 8px 16px;
+  padding: var(--s2) var(--s4);
   background: var(--panel);
   border-bottom: 1px solid var(--border);
+  overflow: hidden; /* clean collapse when the last line is dismissed */
 }
 
 .banner-line {
   margin: 2px 0;
+  padding-left: var(--s2);
+  border-left: 3px solid var(--border);
   font-size: 14px;
   font-weight: 600;
   color: var(--ink);
@@ -609,18 +1196,32 @@ button:disabled {
 
 .banner--bad-doc {
   color: var(--stale);
+  border-left-color: var(--stale);
 }
 
 .banner--operator {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--s2);
+  border-left-color: var(--derived);
 }
 
 /* T6: the debounced LIVE poll-failure banner (SPEC 4.3) — stale tone, and it
  * rides the operator layout so its dismiss button aligns. NOT a freeze. */
 .banner--degraded {
   color: var(--stale);
+  border-left-color: var(--stale);
+}
+
+/* companion hint lines are SIBLINGS of the pinned banner line, never children
+ * (AC-4 asserts exact text on the first banner--bad-doc element) */
+
+.banner-hint {
+  margin: 2px 0;
+  padding-left: calc(3px + var(--s2));
+  border-left: 3px solid transparent;
+  color: var(--ink-dim);
+  font-size: 13.5px;
 }
 
 .banner-dismiss {
@@ -630,20 +1231,30 @@ button:disabled {
 /* ---- T5: armed indicator (SPEC 7.3) ---- */
 
 .armed-indicator {
-  display: inline-flex;
+  /* block-level flex: the chip fills the strip, so the in-chip controls can
+   * actually right-align via margin-left:auto (a shrink-to-fit inline-flex
+   * leaves them no free space to absorb — browser-verified round 2). */
+  display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  min-height: 26px;
-  padding: 2px 8px;
-  border-radius: 4px;
+  gap: var(--s2);
+  min-height: 34px;
+  padding: var(--s2) var(--s3);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-s);
   font-size: 14px;
   font-weight: 600;
 }
 
+/* round 4 accent discipline: armed = pending human action = the amber "your
+ * move" family (was cyan, which read as informational while a paste is
+ * actively being awaited) */
+
 .armed--armed {
-  border: 2px solid var(--attention);
-  color: var(--attention);
+  border: 2px solid var(--derived);
+  color: var(--derived);
+  background: color-mix(in srgb, var(--derived) 10%, var(--panel));
 }
 
 .armed--flagged,
@@ -654,6 +1265,15 @@ button:disabled {
 
 .armed--cleared {
   color: var(--ink-dim);
+}
+
+/* in-chip controls right-align inside the armed chip (SPEC v2.1 §3/08): the
+ * FIRST button present takes the auto margin — re-copy on armed states,
+ * cancel on goal-armed, the × alone on cleared/flagged — so the whole
+ * control cluster hugs the strip's right edge in every status. */
+
+.armed-indicator button:first-of-type {
+  margin-left: auto;
 }
 
 .armed-note--server-only {
@@ -723,9 +1343,10 @@ body.frozen .chip--derived {
   padding-bottom: 2px;
   border-bottom: 1px solid var(--border);
   color: var(--ink-dim);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .session-row {
@@ -737,13 +1358,13 @@ body.frozen .chip--derived {
   padding: 4px 6px;
   background: var(--panel-2);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-m);
   font-size: 14px;
   cursor: pointer;
 }
 
 .session-row:hover {
-  border-color: var(--note);
+  border-color: var(--attention);
 }
 
 .session-title {
@@ -756,6 +1377,9 @@ body.frozen .chip--derived {
 
 .session-idle {
   color: var(--ink-dim);
+  /* round 4b: ages hang right so the row reads title-left / telemetry-right */
+  margin-left: auto;
+  white-space: nowrap;
 }
 
 .session-idle.stale {
@@ -778,7 +1402,7 @@ body.frozen .chip--derived {
 }
 
 .idle-sub-head:hover {
-  border-color: var(--note);
+  border-color: var(--attention);
   color: var(--ink);
 }
 
@@ -790,18 +1414,46 @@ body.frozen .chip--derived {
   content: "▸ ";
 }
 
+/* expanded idle rows indent under a guide line (SPEC v2.1 §3/11) */
+
+.idle-sub:not(.collapsed) .session-row {
+  margin-left: 12px;
+  border-left: none;
+  box-shadow: inset 1px 0 0 var(--border);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
 /* bottom strip: unmapped sessions; scrolls internally past 8 rows */
 
 .unmapped-strip {
   margin-top: 14px;
-  padding-top: 8px;
+  padding-top: var(--s2);
   border-top: 1px solid var(--border);
 }
 
 .unmapped-head {
   color: var(--ink-dim);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.unmapped-toggle {
+  margin-left: var(--s2);
+  min-height: 22px;
+  padding: 1px 8px;
+  font-size: 12.5px;
+  color: var(--ink-dim);
+}
+
+.unmapped-toggle::after {
+  content: " ▾";
+}
+
+.unmapped-toggle[aria-expanded="true"]::after {
+  content: " ▴";
 }
 
 .unmapped-rows {
@@ -809,23 +1461,125 @@ body.frozen .chip--derived {
   overflow-y: auto;
 }
 
+/* additive override: the toggle opens the strip past its scroll cap (SPEC
+ * v2.1 §3/02); the base scroll rule above stays byte-identical for its pin */
+
+.unmapped-rows.open {
+  max-height: none;
+}
+
+/* round 4: rows group under their dir (the repo path) — the path renders
+ * ONCE per group; a wall of identical rows becomes a few labeled groups */
+
+.unmapped-group {
+  margin-top: var(--s2);
+}
+
+.unmapped-group-head {
+  margin-bottom: 2px;
+  color: var(--ink-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+/* ---- round 6: background sessions (workflow subagents, side chats) ----
+ * collapsed until the operator asks; the toggle owns the reveal state */
+
+.unmapped-hidden {
+  margin-top: var(--s2);
+}
+
+.unmapped-hidden.collapsed > .unmapped-group {
+  display: none;
+}
+
+.unmapped-hidden-toggle {
+  min-height: 26px;
+  padding: 2px 8px;
+  color: var(--ink-dim);
+  font-size: 13px;
+}
+
+.unmapped-hidden-toggle:hover {
+  border-color: var(--attention);
+  color: var(--ink);
+}
+
+.unmapped-hidden-toggle[aria-expanded="true"]::before {
+  content: "▾ ";
+}
+
+.unmapped-hidden-toggle[aria-expanded="false"]::before {
+  content: "▸ ";
+}
+
 .unmapped-row {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 2px 8px;
+  gap: 2px 10px;
   margin-top: 6px;
-  padding: 4px 6px;
+  padding: 5px 8px;
   background: var(--panel-2);
   border: 1px dashed var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-m);
   font-size: 14px;
-  color: var(--ink-dim);
+  color: var(--ink);
   cursor: pointer;
 }
 
 .unmapped-row:hover {
-  border-color: var(--note);
+  border-color: var(--attention);
+}
+
+/* round 4b: title / age / id are separate segments — the row reads like a
+ * table line at full width (title carries, age and id hang right) */
+
+.unmapped-row .unmapped-title {
+  flex: 1 1 240px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.unmapped-row .unmapped-age {
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+
+.unmapped-row:hover .unmapped-age {
+  color: var(--ink);
+}
+
+/* the trailing dim id span reads as an id: dim monospace micro (SPEC v2.1
+ * §3/01 "path/age micro-mono"; browser-verified round 2 — .dim alone carries
+ * no family) */
+
+.unmapped-row .dim {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+}
+
+/* ---- footer: keyboard shortcuts (SPEC v2.1 §1) ---- */
+
+#kbd-hint {
+  padding: 0 var(--s4) var(--s4);
+  color: var(--ink-dim);
+  font-size: 13px;
+}
+
+.kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-s);
+  background: var(--panel-2);
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
 }
 
 @media (prefers-reduced-motion: reduce) {

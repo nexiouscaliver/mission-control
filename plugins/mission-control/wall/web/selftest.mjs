@@ -1177,7 +1177,7 @@ test("T3-step0: mountQA delegates to normalize — exactly one extract/select pi
   assert.deepEqual(named.sel, { appliedCase: "unparsed", unknownCase: false });
 });
 
-test("AC-9[S]: every lane in every fixture maps to its trust chip class + stamped age", () => {
+test("AC-9[S]: every lane in every fixture maps to its trust chip class; the stamp lives ONCE on the card head", () => {
   const items = loadApp().state.items;
   for (const caseName of NINE_CASES) {
     const doc = parseIndexMocks(readWebFile("index.html"))[caseName];
@@ -1216,15 +1216,16 @@ test("AC-9[S]: every lane in every fixture maps to its trust chip class + stampe
           }
         } else {
           assert.ok(text.indexOf(lane.status_parsed) !== -1, "status word " + lane.status_parsed);
-          if (mtime === 0) {
-            assert.ok(text.indexOf("stamped: unknown") !== -1, "mtime 0 -> stamped: unknown");
-          } else {
-            assert.ok(
-              text.indexOf("stamped " + fixedStampAge(mtime)) !== -1,
-              "chip stamp 'stamped <age>' from note_mtime; got: " + text
-            );
-          }
         }
+        // round 4: the authority stamp is PROGRAM-level (note_mtime identical
+        // on every lane) and renders ONCE on the card head — lane rows carry
+        // NO stamp text at all; the unstamped-note trust demotion stays
+        // class-level (chip--stale, asserted above), not as repeated text.
+        assert.equal(
+          text.indexOf("stamped"),
+          -1,
+          caseName + " " + lane.row_id + ": no stamp text on lane rows (stamp lives on the card head)"
+        );
         // derived chips carry the pinned verbatim inline forms
         const sig = lane.signals;
         if (sig && sig.pushed !== null && (sig.pushed.value === true || sig.pushed.value === false)) {
@@ -1781,20 +1782,36 @@ test("AC-15: merge cards — one inline row, badges, ready/pipeline states, unkn
   assert.ok(collectText(mini.dom.getElementById("panel-human")).indexOf("nothing owed") !== -1);
 });
 
-test("AC-17: mix counter from fixture lengths (4v·2m); 0v·0m disabled + nothing owed title", () => {
+test("AC-17: mix counter from fixture lengths (4 verify · 2 merge); 0-owed idle CTA + nothing owed title", async () => {
   const mocks = parseIndexMocks(readWebFile("index.html"));
   const full = makeQaApp("full");
   const counter = full.dom.getElementById("nmn-counter");
   assert.ok(counter, "counter span exists");
-  const want = mocks.full.verify_queue.length + "v·" + mocks.full.human_actions.length + "m";
-  assert.equal(want, "4v·2m", "full fixture lengths");
-  assert.equal(collectText(counter), want, "counter text is <v>v·<m>m (U+00B7)");
+  const want = mocks.full.verify_queue.length + " verify · " + mocks.full.human_actions.length + " merge";
+  assert.equal(want, "4 verify · 2 merge", "full fixture lengths");
+  assert.equal(collectText(counter), want, "counter text is '<v> verify · <m> merge' (U+00B7)");
   assert.ok(!("disabled" in full.dom.getElementById("needs-me-now").attrs), "enabled when owed");
+  assert.ok(!full.dom.getElementById("needs-me-now").classList.contains("nmn-idle"), "owed CTA is not idle-styled");
   const mini = makeQaApp("minimal");
-  assert.equal(collectText(mini.dom.getElementById("nmn-counter")), "0v·0m");
+  assert.equal(collectText(mini.dom.getElementById("nmn-counter")), "0 verify · 0 merge");
   const mbtn = mini.dom.getElementById("needs-me-now");
-  assert.ok("disabled" in mbtn.attrs, "0 owed -> disabled");
-  assert.equal(mbtn.attrs.title, "nothing owed", "disabled title");
+  assert.equal(mbtn.attrs["aria-disabled"], "true", "0 owed marks the button aria-disabled");
+  assert.ok(mbtn.classList.contains("nmn-idle"), "0 owed carries the idle styling class");
+  assert.ok(!("disabled" in mbtn.attrs), "the idle CTA stays focusable/clickable (never disabled)");
+  assert.equal(mbtn.attrs.title, "nothing owed", "idle title");
+  // the idle click still reaches needsMeNow's guard: zero fetches, and the
+  // transient confirms with its OWN wording (round 4: echoing the persistent
+  // hint's "nothing owed" verbatim read as a duplication bug in the browser)
+  const clock = fakeClock(FIXED_NOW_MS);
+  const fetchMini = fakeFetchScript([]);
+  const idleClick = makeQaApp("minimal", Object.assign({ fetch: fetchMini }, clockDeps(clock)));
+  idleClick.dom.getElementById("needs-me-now").click();
+  await flushMicrotasks();
+  assert.ok(
+    collectText(idleClick.dom.getElementById("topbar")).indexOf("all clear ✓") !== -1,
+    "idle click surfaces the all-clear transient (not an echo of the hint)"
+  );
+  assert.equal(fetchMini.calls.length, 0, "the idle click issues zero fetches");
 });
 
 test("AC-18 LIVE: needs-me-now POST shape; ok-jump / action-null / non-2xx / reject / target-miss", async () => {
@@ -1905,10 +1922,12 @@ test("AC-18 QA/fallback: pinned ordering, verify-head copy, merge-head jump-only
   assert.deepEqual(mtarget.scrollCalls, [{ block: "center" }]);
   assert.equal(fetchQa.calls.length, 0, "merge fallback issues no fetch");
 
-  // 0 owed: disabled + no-op
+  // 0 owed: idle CTA + no-op
   const fetchMini = fakeFetchScript([]);
   const mini = makeQaApp("minimal", Object.assign({ fetch: fetchMini }, clockDeps(clock)));
-  assert.ok("disabled" in mini.dom.getElementById("needs-me-now").attrs);
+  const miniBtn = mini.dom.getElementById("needs-me-now");
+  assert.equal(miniBtn.attrs["aria-disabled"], "true", "0 owed marks the button idle (aria-disabled)");
+  assert.ok(miniBtn.classList.contains("nmn-idle"), "0 owed carries the idle styling class");
   const r4 = await mini.app.needsMeNow();
   assert.deepEqual(r4, { jumped: null, copied: null, note: "nothing owed" });
   assert.equal(fetchMini.calls.length, 0, "0 owed never fetches");
@@ -2122,7 +2141,10 @@ test("T5-carry(b): fake DOM removeAttribute deletes attributes; setDisabled dele
   assert.ok(src.indexOf("delete node.attrs") === -1, "no manual attrs deletion left in app.js");
   // behavior round-trip on rendered controls still holds
   const mini = makeQaApp("minimal");
-  assert.ok("disabled" in mini.dom.getElementById("needs-me-now").attrs, "0 owed disables the button");
+  const miniBtn = mini.dom.getElementById("needs-me-now");
+  assert.equal(miniBtn.attrs["aria-disabled"], "true", "0 owed marks the button idle");
+  assert.ok(miniBtn.classList.contains("nmn-idle"), "0 owed carries the idle styling class");
+  assert.ok(!("disabled" in miniBtn.attrs), "the idle CTA is never disabled (still focusable)");
   const wired = makeQaApp("full");
   const copyBtn = byClass(findByData(wired.dom.getElementById("panel-verify"), "data-row-id", "W3-L1"), "copy-verify-btn")[0];
   assert.ok("disabled" in copyBtn.attrs, "empty verify_cmd disables COPY VERIFY");
@@ -2339,7 +2361,7 @@ test("AC-1[S]: full QA render populates four panel roots + the whole top bar", (
   }
   assert.equal(collectText(dom.getElementById("wordmark")), "MC WALL");
   assert.ok(collectText(dom.getElementById("mode-badge")).indexOf("QA · case: full") !== -1, "mode badge names the QA case");
-  assert.equal(collectText(dom.getElementById("nmn-counter")), "4v·2m");
+  assert.equal(collectText(dom.getElementById("nmn-counter")), "4 verify · 2 merge");
   assert.equal(collectText(dom.getElementById("state-age-caption")), "state 5m", "state age from generated_ts via the injected clock");
   // T7 (C) overturned the old pin: a QA mount runs no poll cycle, so the dot
   // renders neutral — never the LIVE green.
@@ -2419,9 +2441,11 @@ test("AC-20: armed wordings verbatim for every status; attention border; null ab
   // pending null -> indicator absent
   assert.equal(slotOf(makeQaApp("pending-null").dom).children.length, 0, "pending-null case");
   assert.equal(slotOf(makeQaApp("minimal").dom).children.length, 0, "wall.pending null");
-  // attention border CSS maps to the attention token
+  // armed border CSS maps to the DERIVED (amber) token — round 4 accent
+  // discipline: armed is "pending human action" (the your-move family), not
+  // cyan-informational; red stays reserved for blocked/broken
   const armedRule = parseCssRules(readWebFile("style.css")).find((r) => r.selector === ".armed--armed" && r.media === "");
-  assert.ok(armedRule && /var\(--attention\)/.test(armedRule.decls["border"]), "armed border uses the attention token");
+  assert.ok(armedRule && /var\(--derived\)/.test(armedRule.decls["border"]), "armed border uses the amber (your-move) token");
 });
 
 test("AC-20 QA demo: cycle exercises prompt-armed -> goal-armed -> cleared tombstone; x sets null-not-mock", () => {
@@ -2716,7 +2740,7 @@ test("AC-22: all nine cases parse+render with their pinned outcomes", () => {
   assert.ok(collectText(mini.dom.getElementById("panel-verify")).indexOf("nothing to verify") !== -1);
   assert.ok(collectText(mini.dom.getElementById("panel-human")).indexOf("nothing owed") !== -1);
   assert.ok(collectText(mini.dom.getElementById("col3-sessions")).indexOf("no sessions") !== -1);
-  assert.equal(collectText(mini.dom.getElementById("nmn-counter")), "0v·0m");
+  assert.equal(collectText(mini.dom.getElementById("nmn-counter")), "0 verify · 0 merge");
   // pending-null: indicator absent
   assert.equal(makeQaApp("pending-null").dom.getElementById("armed-indicator-slot").children.length, 0);
   // pending-flagged: flag state + reason
@@ -2735,7 +2759,9 @@ test("AC-10: banned word — no /\\bfinished\\b/i in any case's rendered text", 
   for (const name of NINE_CASES) {
     const { dom } = makeQaApp(name);
     let text = "";
-    for (const id of ["topbar", "banner-strip", "grid", "launch-panel"]) {
+    // SPEC v2.1 A1 moved the armed bar out of the topbar into #armed-strip —
+    // the sweep FOLLOWS it, so coverage is strictly extended, never narrowed.
+    for (const id of ["topbar", "armed-strip", "banner-strip", "grid", "launch-panel"]) {
       const n = dom.getElementById(id);
       if (n) text += collectText(n);
     }
@@ -3410,6 +3436,530 @@ test("T7-G clamp: a hung-then-settling poll drains at most ONE catch-up (no T/5 
   bootResolve(); // the hang settles — missed ticks must drain BOUNDED
   await flushMicrotasks();
   assert.equal(calls.length, 2, "clamped drain: exactly ONE catch-up poll, not one per missed tick");
+});
+
+// =====================================================================
+// Tier: SPEC v2.1 — "the operator's wall" redesign (severity grammar,
+// idle CTA, unmapped toggle, empty companions, kbd footer, panel sync).
+// EXTEND-only additions; every pinned check above stays as amended.
+// =====================================================================
+
+test("sev-grammar: every status chip carries its severity modifier; derived chips carry none", () => {
+  // the §2.4 map, restated from the fixture data (the same rules app.js applies)
+  function sevOf(lane, mtime) {
+    const status = lane.status_parsed === "" || lane.status_parsed === undefined ? "UNPARSED" : lane.status_parsed;
+    if (status === "failed") return "chip--sev-blocked";
+    if (status === "partial" || status === "UNPARSED") return "chip--sev-watch";
+    if (lane.stalled !== null) return "chip--sev-watch";
+    if (mtime === 0) return "chip--sev-watch";
+    return "chip--sev-ok";
+  }
+  const items = loadApp().state.items;
+  let statusChips = 0;
+  for (const caseName of NINE_CASES) {
+    const doc = parseIndexMocks(readWebFile("index.html"))[caseName];
+    if (!loadApp().state.validateDoc(doc).ok) continue; // L0 renders no chips
+    const { dom } = makeQaApp(caseName);
+    const col1 = dom.getElementById("col1-programs");
+    for (const prog of items(doc.programs, null).valid) {
+      const mtime = Number.isInteger(prog.note_mtime) ? prog.note_mtime : 0;
+      for (const lane of items(prog.lanes, "row_id").valid) {
+        const laneEl = findByData(col1, "data-row-id", lane.row_id);
+        assert.ok(laneEl, caseName + " " + lane.row_id + " renders");
+        const chips = byClass(laneEl, "chip");
+        const statusChip = chips.find((c) => !c.classList.contains("chip--derived"));
+        assert.ok(statusChip, caseName + " " + lane.row_id + ": status chip found");
+        statusChips += 1;
+        const wantSev = sevOf(lane, mtime);
+        assert.ok(
+          statusChip.classList.contains(wantSev),
+          caseName + " " + lane.row_id + " (" + lane.status_parsed + ", mtime " + mtime + "): expected " + wantSev
+        );
+        const wantProv = lane.status_parsed === "UNPARSED" || mtime === 0 ? "chip--stale" : "chip--note";
+        assert.ok(statusChip.classList.contains(wantProv), caseName + " " + lane.row_id + ": provenance " + wantProv + " kept");
+        for (const c of chips) {
+          const sev = String(c.className).split(/\s+/).filter((k) => k.indexOf("chip--sev-") === 0);
+          if (c.classList.contains("chip--derived")) {
+            assert.equal(sev.length, 0, caseName + " " + lane.row_id + ": derived chips carry NO severity class");
+          } else {
+            assert.equal(sev.length, 1, caseName + " " + lane.row_id + ": exactly one severity class");
+          }
+        }
+      }
+    }
+  }
+  assert.ok(statusChips >= 10, "the sweep saw the full fixture's lanes (got " + statusChips + ")");
+  // screen 16 regression: UNPARSED with a raw note reads watched-stale
+  const up = makeQaApp("unparsed");
+  const upChip = byClass(findByData(up.dom.getElementById("col1-programs"), "data-row-id", "W2-L8"), "chip")[0];
+  assert.ok(upChip.classList.contains("chip--stale") && upChip.classList.contains("chip--sev-watch"), "UNPARSED = stale + watch");
+  // screen 18 regression: launched + unstamped reads uncertain (stale + watch), never failing
+  const np = makeQaApp("null-program");
+  const npChip = byClass(findByData(np.dom.getElementById("col1-programs"), "data-row-id", "W2-L5"), "chip")[0];
+  assert.ok(npChip.classList.contains("chip--stale") && npChip.classList.contains("chip--sev-watch"), "launched + unstamped = stale + watch");
+  // screen 05 regression: failed reads blocked
+  const full = makeQaApp("full");
+  const fChip = byClass(findByData(full.dom.getElementById("col1-programs"), "data-row-id", "W2-L5"), "chip")[0];
+  assert.ok(fChip.classList.contains("chip--sev-blocked") && fChip.classList.contains("chip--note"), "failed = note + blocked");
+});
+
+test("sev-contrast: severity modifier colors resolve to tokens passing 4.5:1 vs all three backgrounds", () => {
+  const css = readWebFile("style.css");
+  const tokens = parseRootTokens(css);
+  const rules = parseCssRules(css);
+  for (const sel of [".chip--sev-ok", ".chip--sev-watch", ".chip--sev-blocked"]) {
+    const rule = rules.find((r) => r.selector === sel && r.media === "");
+    assert.ok(rule, sel + " rule exists (unconditional)");
+    for (const decl of ["color", "border-color"]) {
+      const m = /var\((--[\w-]+)\)/.exec(rule.decls[decl] || "");
+      assert.ok(m, sel + " " + decl + " references a :root token");
+      assert.ok(tokens[m[1]], sel + " " + decl + " token " + m[1] + " is defined");
+      for (const bg of ["--bg", "--panel", "--panel-2"]) {
+        const ratio = contrastRatio(tokens[m[1]], tokens[bg]);
+        assert.ok(ratio >= 4.5, sel + " " + decl + " on " + bg + " = " + ratio.toFixed(2) + ":1 (need 4.5)");
+      }
+    }
+  }
+});
+
+test("nmn-idle: the idle CTA stays focusable; its click surfaces 'nothing owed' with zero fetches", async () => {
+  const clock = fakeClock(FIXED_NOW_MS);
+  const fetchQa = fakeFetchScript([]);
+  const mini = makeQaApp("minimal", Object.assign({ fetch: fetchQa }, clockDeps(clock)));
+  const btn = mini.dom.getElementById("needs-me-now");
+  assert.ok(!("disabled" in btn.attrs), "no disabled attribute — focusable");
+  assert.equal(btn.attrs["aria-disabled"], "true", "aria-disabled marks it idle");
+  assert.ok(btn.classList.contains("nmn-idle"), "idle styling class");
+  assert.equal(btn.attrs.title, "nothing owed", "idle title kept");
+  assert.ok(!("hidden" in mini.dom.getElementById("nmn-hint").attrs), "0 owed shows the companion hint");
+  btn.click();
+  await flushMicrotasks();
+  assert.ok(
+    collectText(mini.dom.getElementById("topbar")).indexOf("nothing owed") !== -1,
+    "the idle click reaches needsMeNow's guard and shows the note"
+  );
+  assert.equal(fetchQa.calls.length, 0, "the idle click issues zero fetches");
+  // owed CTA: lit, shortcut-titled, hint hidden (POST shape stays AC-18's pin)
+  const full = makeQaApp("full");
+  const owedBtn = full.dom.getElementById("needs-me-now");
+  assert.ok(!owedBtn.classList.contains("nmn-idle"), "owed CTA is not idle-styled");
+  assert.ok(!("aria-disabled" in owedBtn.attrs), "owed CTA has no aria-disabled");
+  assert.equal(owedBtn.attrs.title, "shortcut: n", "owed title names the shortcut");
+  assert.ok("hidden" in full.dom.getElementById("nmn-hint").attrs, "owed hides the companion hint");
+});
+
+test("unmapped-toggle: show-all flips aria-expanded + .open; rows stay in the DOM; scroll rules hold", () => {
+  const { dom } = makeQaApp("full");
+  const strip = byClass(dom.getElementById("col3-sessions"), "unmapped-strip")[0];
+  const toggle = byClass(strip, "unmapped-toggle")[0];
+  assert.ok(toggle, "the strip head carries a show-all toggle");
+  assert.equal(toggle.attrs["aria-expanded"], "false", "collapsed by default");
+  assert.equal(toggle.attrs["aria-controls"], "unmapped-rows", "aria-controls names the rows container");
+  const rows = dom.getElementById("unmapped-rows");
+  assert.ok(rows, "the rows container carries the aria-controls id");
+  const rowCount = byClass(rows, "unmapped-row").length;
+  assert.equal(rowCount, 2, "full carries two unmapped rows");
+  toggle.click();
+  assert.equal(toggle.attrs["aria-expanded"], "true", "click expands");
+  assert.ok(rows.classList.contains("open"), "rows container opens");
+  assert.equal(byClass(rows, "unmapped-row").length, rowCount, "rows stay in the DOM when open");
+  toggle.click();
+  assert.equal(toggle.attrs["aria-expanded"], "false", "click collapses again");
+  assert.ok(!rows.classList.contains("open"), "rows container closes");
+  // the pinned base scroll rule + the additive open override both parse
+  const rules = parseCssRules(readWebFile("style.css"));
+  const base = rules.find((r) => r.selector === ".unmapped-rows" && r.media === "");
+  assert.ok(base && base.decls["max-height"] && base.decls["overflow-y"] === "auto", "base internal scroll kept");
+  const open = rules.find((r) => r.selector === ".unmapped-rows.open" && r.media === "");
+  assert.ok(open && open.decls["max-height"] === "none", "the open override lifts the scroll cap");
+});
+
+test("unmapped-strip-state: copy note lands IN the clicked row; expansion survives poll rebuilds", async () => {
+  const copied = [];
+  const clock = fakeClock(FIXED_NOW_MS);
+  const t = makeQaApp("full", Object.assign({ clipboard: stubClipboard(copied) }, clockDeps(clock)));
+  const col3 = t.dom.getElementById("col3-sessions");
+  const rows = t.dom.getElementById("unmapped-rows");
+  const firstRow = byClass(rows, "unmapped-row")[0];
+  // round 3 (screen 01): the copy confirmation renders INSIDE the clicked
+  // row — the strip's rows container scrolls internally, so a note appended
+  // after the last row sits out of sight below the fold and the copy reads
+  // as silent. The clicked row is the only guaranteed-visible host.
+  firstRow.click();
+  await flushMicrotasks();
+  const notes = byClass(firstRow, "inline-note");
+  assert.equal(notes.length, 1, "the note lives inside the clicked row");
+  assert.equal(collectText(notes[0]), "id copied", "note wording");
+  assert.deepEqual(copied, ["s-unmapped-1"], "the id was still copied");
+  clock.advance(2000);
+  assert.equal(byClass(firstRow, "inline-note").length, 0, "the note clears after ~2s");
+  // round 3 (screen 02): live ages tick on every poll, so the churn guard
+  // rebuilds the strip — the expanded state must survive that rebuild.
+  const strip = byClass(col3, "unmapped-strip")[0];
+  const toggle = byClass(strip, "unmapped-toggle")[0];
+  toggle.click();
+  assert.ok(rows.classList.contains("open"), "expanded");
+  const mocks = parseIndexMocks(readWebFile("index.html"));
+  const d2 = JSON.parse(JSON.stringify(mocks.full));
+  d2.sessions_unmapped[0].last_active_ago_s += 5; // exactly what a live poll changes
+  t.app.setDocument(d2);
+  t.app.render(); // manual render = unconditional swap — stricter than a poll
+  const rows2 = t.dom.getElementById("unmapped-rows");
+  assert.ok(rows2 && rows2.classList.contains("open"), "the rebuilt strip stays open");
+  const toggle2 = byClass(byClass(col3, "unmapped-strip")[0], "unmapped-toggle")[0];
+  assert.equal(toggle2.attrs["aria-expanded"], "true", "the rebuilt toggle re-asserts its state");
+  toggle2.click();
+  assert.ok(!rows2.classList.contains("open"), "collapsing still works");
+  t.app.render();
+  const rows3 = t.dom.getElementById("unmapped-rows");
+  assert.ok(rows3 && !rows3.classList.contains("open"), "the collapsed state survives the rebuild too");
+  const toggle3 = byClass(byClass(col3, "unmapped-strip")[0], "unmapped-toggle")[0];
+  assert.equal(toggle3.attrs["aria-expanded"], "false");
+  // a fresh mount resets the strip state (a view preference, not data)
+  t.app.mountQA("full");
+  const rows4 = t.dom.getElementById("unmapped-rows");
+  assert.ok(rows4 && !rows4.classList.contains("open"), "mountQA resets the strip state");
+});
+
+test("empty-hints: valid-doc empty panels carry their companion lines; L0 keeps one child + a sibling hint", () => {
+  const mini = makeQaApp("minimal");
+  const pairs = [
+    ["col1-programs", "no programs", "Programs appear here once the tower registers one"],
+    ["panel-verify", "nothing to verify", "When a lane finishes, its COPY VERIFY command lands here"],
+    ["panel-human", "nothing owed", "Merge requests waiting on you will appear here"],
+    ["col3-sessions", "no sessions", "Sessions working on a lane appear here, grouped by repo"],
+  ];
+  for (const [id, note, hint] of pairs) {
+    const root = mini.dom.getElementById(id);
+    const text = collectText(root);
+    assert.ok(text.indexOf(note) !== -1, id + " keeps the pinned note");
+    assert.ok(text.indexOf(hint) !== -1, id + " carries its companion hint");
+    assert.equal(byClass(root, "empty-hint").length, 1, id + " renders exactly one hint");
+  }
+  // empty-lanes: the lane-level pair
+  const elc = makeQaApp("empty-lanes");
+  const col1e = elc.dom.getElementById("col1-programs");
+  assert.ok(collectText(col1e).indexOf("no lanes") !== -1, "pinned lane note");
+  assert.ok(collectText(col1e).indexOf("No lanes are open for this program yet.") !== -1, "lane hint");
+  // L0: blank panels keep exactly one child; the bad-doc hint is a strip SIBLING
+  const bad = makeQaApp("no-schema-version");
+  for (const id of ["col1-programs", "panel-verify", "panel-human", "col3-sessions"]) {
+    assert.equal(bad.dom.getElementById(id).children.length, 1, id + " blank panel stays single-child");
+  }
+  const strip = bad.dom.getElementById("banner-strip");
+  const lines = byClass(strip, "banner-line");
+  const hints = byClass(strip, "banner-hint");
+  assert.equal(lines.length, 1, "the L0 strip carries one pinned line");
+  assert.equal(hints.length, 1, "the L0 strip carries one sibling hint");
+  assert.equal(collectText(lines[0]), "wall: bad state document (schema)", "pinned line keeps its exact own text");
+  assert.equal(lines[0].children.length, 0, "the hint is NEVER a child of the pinned line");
+  assert.ok(
+    collectText(hints[0]).indexOf("Panels stay blank until a valid state document arrives") !== -1,
+    "sibling hint wording"
+  );
+});
+
+test("kbd-hint: the footer names the three shortcuts and runs its own banned-word/URL sweep", () => {
+  const { dom } = makeQaApp("full");
+  const footer = dom.getElementById("kbd-hint");
+  assert.ok(footer, "ensureShell builds the footer");
+  const text = collectText(footer);
+  assert.ok(text.indexOf("n needs-me-now") !== -1, "names n");
+  assert.ok(text.indexOf("r refresh") !== -1, "names r");
+  assert.ok(text.indexOf("esc close panel") !== -1, "names esc");
+  assert.equal(byClass(footer, "kbd").length, 3, "three .kbd key spans");
+  // AC-10's sweep does NOT scan this footer — so this test performs its own.
+  assert.ok(!/\bfinished\b/i.test(text), "kbd-hint banned-word sweep");
+  assert.deepEqual(scanExternalUrls(text), [], "kbd-hint external-URL sweep");
+  // index.html ships the same footer statically
+  const html = readWebFile("index.html");
+  assert.ok(html.includes('id="kbd-hint"'), "index.html carries the footer");
+  assert.ok(html.includes('class="kbd"'), "index.html keys carry .kbd");
+});
+
+test("panel-sync: one qaArmCycle re-renders the open panel (pending + LAUNCH focus); backdrop click closes", () => {
+  const { app, dom } = makeQaApp("full");
+  assert.strictEqual(app.openLaunchPanel("W2-L7"), true, "panel opens");
+  const panel = dom.getElementById("launch-panel");
+  assert.ok(panel.classList.contains("open"), "open class on the panel");
+  assert.ok(dom.body.classList.contains("panel-open"), "panel-open marks the body while the panel is open");
+  assert.ok(collectText(panel).indexOf("pending: prompt-armed") !== -1, "the panel mirrors the mock pending");
+  const btnBefore = byClass(panel, "launch-btn")[0];
+  const backdrop = dom.getElementById("panel-backdrop");
+  assert.ok(backdrop.classList.contains("open"), "the backdrop opens with the panel");
+  assert.equal(app.qaArmCycle(), "prompt-armed", "first cycle sets the override");
+  const btnMid = byClass(dom.getElementById("launch-panel"), "launch-btn")[0];
+  assert.notEqual(btnMid, btnBefore, "the open panel re-rendered on the cycle");
+  assert.ok((btnMid.focusCount || 0) >= 1, "focus moved to the fresh LAUNCH node");
+  assert.equal(app.qaArmCycle(), "goal-armed", "second cycle flips the strip to goal-armed");
+  assert.ok(
+    collectText(dom.getElementById("armed-indicator-slot")).indexOf("goal copied") !== -1,
+    "the armed strip flipped to goal-armed"
+  );
+  const panelAfter = dom.getElementById("launch-panel");
+  assert.ok(
+    collectText(panelAfter).indexOf("pending: goal-armed") !== -1,
+    "the open panel re-rendered in the same tick"
+  );
+  const btnAfter = byClass(panelAfter, "launch-btn")[0];
+  assert.notEqual(btnAfter, btnBefore, "a fresh LAUNCH node replaced the old one");
+  assert.ok((btnAfter.focusCount || 0) >= 1, "focus stays on the new LAUNCH node");
+  // backdrop click closes both layers and restores focus to the trigger
+  backdrop.click();
+  assert.ok(!panelAfter.classList.contains("open"), "backdrop click closes the panel");
+  assert.ok(!dom.getElementById("panel-backdrop").classList.contains("open"), "the backdrop closes too");
+  assert.ok(!dom.body.classList.contains("panel-open"), "closing clears the panel-open body class");
+  const trigger = findByData(dom.getElementById("col1-programs"), "data-row-id", "W2-L7");
+  assert.ok((trigger.focusCount || 0) >= 1, "focus restored to the triggering lane");
+  // round 3 (screen 10): the armed strip rides ABOVE the panel stack so the
+  // strip's controls are clickable; round 4 (screens 07-10): the dock is an
+  // even right MARGIN — the old padding-right hack kept the full-width strip
+  // box painting its border over the panel's first field row
+  const rules = parseCssRules(readWebFile("style.css"));
+  const stripRule = rules.find((r) => r.selector === "#armed-strip" && r.media === "");
+  assert.ok(stripRule && stripRule.decls["z-index"] === "25", "armed strip sits above the panel/backdrop stack");
+  const dockRule = rules.find((r) => r.selector === "body.panel-open #armed-strip" && r.media === "");
+  assert.ok(
+    dockRule && /min\(420px, 92vw\)/.test(dockRule.decls["margin-right"] || ""),
+    "the armed chip docks beside the open panel (margin shrinks the BOX, not just padding)"
+  );
+});
+
+// ---------------- round 4: the operator contract ----------------
+
+test("round 4: severity triage order — blocked first, watch second, healthy last (stable inside a tier)", () => {
+  const { dom } = makeQaApp("full");
+  const col1 = dom.getElementById("col1-programs");
+  const secfixCard = byClass(col1, "program-card")[0];
+  const laneIds = byClass(secfixCard, "lane").map((l) => l.attrs["data-row-id"]);
+  // served order was L1..L10; triage order is:
+  //   blocked:  L5 (failed)
+  //   watch:    L4 (partial), L8 (UNPARSED), L9 (stalled), L10 (UNPARSED)
+  //   healthy:  L1, L2, L3, L6, L7 (served order kept inside the tier)
+  assert.deepEqual(
+    laneIds,
+    ["W2-L5", "W2-L4", "W2-L8", "W2-L9", "W2-L10", "W2-L1", "W2-L2", "W2-L3", "W2-L6", "W2-L7"],
+    "a parked/healthy lane may never render above a failed one"
+  );
+});
+
+test("round 4: verify queue renders oldest-first (same order the needs-me-now jump walks)", () => {
+  const { dom } = makeQaApp("full");
+  const verifyIds = byClass(dom.getElementById("panel-verify"), "verify-row").map((r) => r.attrs["data-row-id"]);
+  assert.deepEqual(
+    verifyIds,
+    ["W2-L3", "W2-L4", "W2-L99", "W3-L1"],
+    "finished_ago_s DESC — panel head == jump head (AC-18 fallback walks the same order)"
+  );
+});
+
+test("round 4: NOT-ready merges float above ready ones; readiness rides the card's left edge", () => {
+  const { dom } = makeQaApp("full");
+  const human = dom.getElementById("panel-human");
+  const mergeRefs = byClass(human, "merge-card").map((c) => c.attrs["data-row-id"]);
+  assert.deepEqual(mergeRefs, ["#56", "!34"], "NOT-ready first, stable");
+  assert.ok(byClass(human, "merge-card--not-ready")[0], "not-ready class present");
+  const rules = parseCssRules(readWebFile("style.css"));
+  const notReady = rules.find((r) => r.selector === ".merge-card--not-ready" && r.media === "");
+  const ready = rules.find((r) => r.selector === ".merge-card--ready" && r.media === "");
+  assert.ok(notReady && /var\(--stale\)/.test(notReady.decls["border-left"]), "not-ready edge is red");
+  assert.ok(ready && /var\(--note\)/.test(ready.decls["border-left"]), "ready edge is green");
+});
+
+test("round 4: LIVE boot dot is 'booting' (amber) before the first poll settles — never red", () => {
+  const w = makeLiveWall([], {
+    fetch: function () {
+      return new Promise(function () {}); // never settles: the boot window
+    },
+  });
+  assert.equal(w.app.diagnostics().dot, "booting");
+  const dot = w.dom.getElementById("live-dot");
+  assert.ok(dot.classList.contains("booting"), "booting dot class at boot");
+  assert.ok(!dot.classList.contains("stale"), "no red during a normal boot");
+  const rules = parseCssRules(readWebFile("style.css"));
+  const bootRule = rules.find((r) => r.selector === "#live-dot.booting" && r.media === "");
+  assert.ok(bootRule && /var\(--derived\)/.test(bootRule.decls["background"]), "booting dot is amber, not red");
+});
+
+test("round 4b: hero forms — big on a fully-empty wall, slim with no programs but content, hidden otherwise", () => {
+  const mini = makeQaApp("minimal");
+  const hero = mini.dom.getElementById("empty-hero");
+  assert.ok(hero, "hero shell exists");
+  assert.ok(collectText(hero).indexOf("All clear — nothing needs you right now.") !== -1, "hero line");
+  assert.ok(!hero.attrs.hidden, "hero visible on a fully-empty wall");
+  assert.ok(hero.classList.contains("hero--big"), "big form on a fully-empty wall");
+  assert.ok(mini.dom.getElementById("grid").classList.contains("is-empty"), "grid hides when empty");
+  // the per-panel notes still render underneath (the minimal-case pins read them)
+  assert.ok(collectText(mini.dom.getElementById("panel-verify")).indexOf("nothing to verify") !== -1);
+  const full = makeQaApp("full");
+  assert.ok("hidden" in full.dom.getElementById("empty-hero").attrs, "hero hidden when there is data");
+  assert.ok(!full.dom.getElementById("grid").classList.contains("is-empty"));
+  assert.ok(full.dom.getElementById("grid").classList.contains("has-programs"), "full wall tags all three columns");
+  assert.ok(full.dom.getElementById("grid").classList.contains("has-sessions"));
+});
+
+test("round 4b: adaptive grid — sole content goes full width; empty columns leave the template; CSS templates pinned", () => {
+  // The default live wall shape: no programs, nothing owed, sessions only.
+  const doc = JSON.parse(JSON.stringify(parseIndexMocks(readWebFile("index.html")).minimal));
+  doc.sessions_unmapped = [
+    { id: "s-u1", title: "scratch", dir: "~/repo/a", last_active_ago_s: 60 },
+    { id: "s-u2", title: "", dir: "~/repo/a", last_active_ago_s: 120 },
+    { id: "s-u3", title: "other", dir: "~/repo/b", last_active_ago_s: 30 },
+  ];
+  const dom = buildMockDom(parseIndexMocks(readWebFile("index.html")));
+  const MCW = loadApp();
+  const deps = MCW.createDeps({ document: dom, now: () => FIXED_NOW_MS, location: fakeLocation({}) });
+  const app = MCW.createApp(deps);
+  app.setDocument(doc);
+  app.render();
+  const grid = dom.getElementById("grid");
+  for (const cls of ["no-programs", "no-owed", "has-sessions", "one-col"]) {
+    assert.ok(grid.classList.contains(cls), "grid carries " + cls);
+  }
+  assert.ok(!grid.classList.contains("is-empty"), "sessions exist — not the empty hero");
+  const hero = dom.getElementById("empty-hero");
+  assert.ok(hero.classList.contains("hero--slim"), "slim hero form");
+  assert.ok(collectText(hero).indexOf("3 unmapped sessions below") !== -1, "slim hero names the count");
+  // CSS: the sessions-only template + full-empty hide are pinned
+  const rules = parseCssRules(readWebFile("style.css"));
+  const solo = rules.find((r) => r.selector === "#grid.no-programs.no-owed.has-sessions" && r.media === "");
+  assert.ok(solo && /sessions/.test(solo.decls["grid-template-areas"] || ""), "sessions-only template pinned");
+  const emptyHide = rules.find((r) => r.selector === "#grid.is-empty" && r.media === "");
+  assert.ok(emptyHide && emptyHide.decls["display"] === "none", "fully-empty grid hides behind the big hero");
+  // dangling-area columns must be REMOVED from placement, or their implicit
+  // auto-placed tracks garble the template (round 4b browser finding)
+  const hideIdle = rules.find(
+    (r) => r.selector === "#grid.no-programs.no-owed #col1-programs, #grid.no-programs.no-owed #col2" && r.media === ""
+  );
+  assert.ok(hideIdle && hideIdle.decls["display"] === "none", "contentless columns leave the grid entirely");
+});
+
+test("round 4: unmapped rows group by dir — heads show the project NAME, full path hover-only; id demoted to a copy handle", () => {
+  const { dom } = makeQaApp("full");
+  const strip = byClass(dom.getElementById("col3-sessions"), "unmapped-strip")[0];
+  const groups = byClass(strip, "unmapped-group");
+  assert.equal(groups.length, 2, "two distinct dirs -> two groups");
+  const head0 = byClass(groups[0], "unmapped-group-head")[0];
+  assert.ok(collectText(head0).indexOf("s-unmapped-1") !== -1, "head shows the project NAME");
+  assert.equal(collectText(head0).indexOf("/.zcode"), -1, "full path is never printed");
+  assert.equal(head0.attrs["title"], "~/.zcode/s-unmapped-1", "full path on hover");
+  const row0 = collectText(byClass(groups[0], "unmapped-row")[0]);
+  assert.ok(row0.indexOf("scratch: rebase experiment") !== -1, "row still carries the title");
+  assert.equal(row0.indexOf("~/.zcode/s-unmapped-1"), -1, "the path renders once per group, not per row");
+  assert.ok(collectText(byClass(groups[0], "unmapped-row")[0]).indexOf("s-unmapped-1") !== -1, "short id tail present");
+});
+
+test("round 5: WALL/PROJECTS switcher — projects view groups every session by project, newest-first, sortable", () => {
+  const full = makeQaApp("full");
+  const grid = full.dom.getElementById("grid");
+  const projEl = full.dom.getElementById("projects-view");
+  assert.ok(!("hidden" in grid.attrs), "wall is the default view");
+  assert.ok("hidden" in projEl.attrs, "projects view ships hidden");
+  assert.equal(full.dom.getElementById("view-wall").attrs["aria-pressed"], "true");
+
+  full.app.setView("projects");
+  assert.ok("hidden" in grid.attrs, "grid hides on the projects view");
+  assert.ok(!("hidden" in projEl.attrs), "projects view visible");
+  assert.equal(full.dom.getElementById("view-projects").attrs["aria-pressed"], "true");
+
+  const cards = byClass(projEl, "project-card");
+  // cleo (4: s-101, s-105, s-107 + master s-master-1) + two unmapped dirs
+  assert.equal(cards.length, 3, "three project groups from the full fixture");
+  const names = cards.map((c) => collectText(byClass(c, "project-name")[0]));
+  // recent-first: cleo (newest 95s) then s-unmapped-2 (300s) then s-unmapped-1 (2d)
+  assert.deepEqual(names, ["cleo", "s-unmapped-2", "s-unmapped-1"], "projects sort by recent activity");
+  const cleo = cards[0];
+  assert.ok(collectText(cleo).indexOf("secfix: join hardening") !== -1, "lane sessions listed under their project");
+  assert.ok(collectText(cleo).indexOf("mission-control tower") !== -1, "master row folded into its project");
+  const unmappedCard = byClass(projEl, "project-card")[2];
+  assert.equal(
+    byClass(unmappedCard, "project-name")[0].attrs["title"],
+    "~/.zcode/s-unmapped-1",
+    "project name carries the full path as hover-only title"
+  );
+
+  // sort toggle flips group order (name A..Z: cleo, s-unmapped-1, s-unmapped-2)
+  byClass(projEl, "projects-sort")[0].click();
+  const namesAfter = byClass(projEl, "project-card").map((c) => collectText(byClass(c, "project-name")[0]));
+  assert.deepEqual(namesAfter, ["cleo", "s-unmapped-1", "s-unmapped-2"], "name sort reorders the groups");
+
+  full.app.setView("wall");
+  assert.ok(!("hidden" in grid.attrs), "switching back restores the wall");
+});
+
+test("round 5: reading state survives poll rebuilds — expanded idle>24h groups stay expanded", () => {
+  const { app, dom } = makeQaApp("full");
+  const col3 = dom.getElementById("col3-sessions");
+  const idleHead = byClass(col3, "idle-sub-head")[0];
+  assert.ok(idleHead, "full fixture has an idle>24h group (s-103 at 250000s)");
+  idleHead.click();
+  assert.equal(idleHead.attrs["aria-expanded"], "true", "expanded on click");
+  app.render(); // a poll-driven rebuild (ages ticked)
+  const idleHeadAfter = byClass(dom.getElementById("col3-sessions"), "idle-sub-head")[0];
+  assert.equal(idleHeadAfter.attrs["aria-expanded"], "true", "still expanded after the rebuild");
+});
+
+test("round 6: background sessions — workflow subagents + side chats hidden by default, clustered per run, revealable", () => {
+  const doc = JSON.parse(JSON.stringify(parseIndexMocks(readWebFile("index.html")).minimal));
+  doc.sessions_unmapped = [
+    { id: "s-main-1", title: "real work", dir: "~/repo/a", last_active_ago_s: 60 },
+    {
+      id: "sess_dwf-dwfrun-abcdef12-3456-7890-abcd-ef1234567890-actor_1_1",
+      title: "workflow subagent actor#@1@1",
+      dir: "~/repo/a",
+      last_active_ago_s: 100,
+    },
+    {
+      id: "sess_dwf-dwfrun-abcdef12-3456-7890-abcd-ef1234567890-actor_2_1",
+      title: "workflow subagent actor#@2@1",
+      dir: "~/repo/a",
+      last_active_ago_s: 200,
+    },
+    { id: "s-chat-1", title: "Selection side chat", dir: "~/repo/a", last_active_ago_s: 300 },
+  ];
+  const dom = buildMockDom(parseIndexMocks(readWebFile("index.html")));
+  const MCW = loadApp();
+  const deps = MCW.createDeps({ document: dom, now: () => FIXED_NOW_MS, location: fakeLocation({}) });
+  const app = MCW.createApp(deps);
+  app.setDocument(doc);
+  app.render();
+  const strip = byClass(dom.getElementById("col3-sessions"), "unmapped-strip")[0];
+  assert.ok(
+    collectText(byClass(strip, "unmapped-head")[0]).indexOf("unmapped (1 · 3 hidden)") !== -1,
+    "strip head counts visible vs hidden"
+  );
+  const toggle = byClass(strip, "unmapped-hidden-toggle")[0];
+  assert.ok(toggle, "hidden-section toggle present");
+  assert.ok(collectText(toggle).indexOf("2 workflow subagents") !== -1, "toggle names the counts");
+  const hiddenEl = byClass(strip, "unmapped-hidden")[0];
+  assert.ok(hiddenEl.classList.contains("collapsed"), "hidden section ships collapsed");
+  const rules = parseCssRules(readWebFile("style.css"));
+  const hiddenRule = rules.find(
+    (r) => r.selector === ".unmapped-hidden.collapsed > .unmapped-group" && r.media === ""
+  );
+  assert.ok(hiddenRule && hiddenRule.decls["display"] === "none", "collapsed groups are CSS-hidden, not absent");
+  toggle.click();
+  assert.ok(!hiddenEl.classList.contains("collapsed"), "toggle reveals the section");
+  const text = collectText(byClass(dom.getElementById("col3-sessions"), "unmapped-strip")[0]);
+  assert.ok(text.indexOf("workflow run abcdef12 · 2") !== -1, "actors cluster under their run label");
+  assert.ok(text.indexOf("side chats · 1") !== -1, "side chats get their own group");
+  assert.ok(text.indexOf("workflow subagent actor#@1@1") !== -1, "rows present once revealed");
+  app.render(); // poll tick: the reveal survives the rebuild
+  const stripAfter = byClass(dom.getElementById("col3-sessions"), "unmapped-strip")[0];
+  assert.equal(
+    byClass(stripAfter, "unmapped-hidden-toggle")[0].attrs["aria-expanded"],
+    "true",
+    "reveal state survives the poll rebuild"
+  );
+  // projects view: excluded until shown, tagged when shown
+  app.setView("projects");
+  const projEl = dom.getElementById("projects-view");
+  assert.ok(collectText(projEl).indexOf("actor#@2@1") === -1, "projects exclude background by default");
+  assert.ok(collectText(projEl).indexOf("real work") !== -1, "main sessions stay listed");
+  byClass(projEl, "projects-bg")[0].click();
+  const projText = collectText(dom.getElementById("projects-view"));
+  assert.ok(projText.indexOf("actor#@2@1") !== -1, "background appears when shown");
+  assert.ok(projText.indexOf("workflow") !== -1, "kind tag on the row");
 });
 
 // ---------------- runner ----------------
