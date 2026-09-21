@@ -23,20 +23,29 @@ def mcwallt_make_note(tmp_path, name, lines):
     return str(p)
 
 
-def mcwallt_make_db(tmp_path, name="mcwallt_sessions.db", sessions=(), inputs=(), drop_input=False):
+def mcwallt_make_db(tmp_path, name="mcwallt_sessions.db", sessions=(), inputs=(),
+                    drop_input=False, parent_column=True):
     """Temp zcode session db (live column shape). sessions: dicts with id,
-    time_updated, time_created and optional title/directory/time_archived;
-    inputs: dicts with session_id, payload, time_created (+ optional kind)."""
+    time_updated, time_created and optional title/directory/time_archived/
+    parent_id; inputs: dicts with session_id, payload, time_created (+
+    optional kind). parent_column=False builds the PRE-parent_id schema (the
+    degrade-to-null path: an older db reads every parent as null)."""
     p = tmp_path / name
     con = sqlite3.connect(p)
-    con.executescript("""
-      CREATE TABLE session (id TEXT PRIMARY KEY, parent_id TEXT, title TEXT, title_source TEXT,
+    parent_col = "parent_id TEXT, " if parent_column else ""
+    con.executescript(f"""
+      CREATE TABLE session (id TEXT PRIMARY KEY, {parent_col}title TEXT, title_source TEXT,
         directory TEXT, task_type TEXT, time_updated INTEGER, time_created INTEGER, time_archived INTEGER);
       CREATE TABLE session_input (session_id TEXT, kind TEXT, payload TEXT, delivery TEXT,
         status TEXT, time_created INTEGER);""")
-    con.executemany("INSERT INTO session VALUES (?,?,?,?,?,?,?,?,?)",
-        [(s["id"], None, s.get("title"), None, s.get("directory", ""), None,
-          s["time_updated"], s["time_created"], s.get("time_archived")) for s in sessions])
+    if parent_column:
+        con.executemany("INSERT INTO session VALUES (?,?,?,?,?,?,?,?,?)",
+            [(s["id"], s.get("parent_id"), s.get("title"), None, s.get("directory", ""), None,
+              s["time_updated"], s["time_created"], s.get("time_archived")) for s in sessions])
+    else:
+        con.executemany("INSERT INTO session VALUES (?,?,?,?,?,?,?,?)",
+            [(s["id"], s.get("title"), None, s.get("directory", ""), None,
+              s["time_updated"], s["time_created"], s.get("time_archived")) for s in sessions])
     con.executemany("INSERT INTO session_input VALUES (?,?,?,?,?,?)",
         [(i["session_id"], i.get("kind", "sendText"), i["payload"], None, None, i["time_created"]) for i in inputs])
     if drop_input:

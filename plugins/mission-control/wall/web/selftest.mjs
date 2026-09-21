@@ -741,7 +741,7 @@ const FROZEN_MANIFEST = {
   master: ["session_id", "title", "last_active_ago_s"],
   lane: ["row_id", "repo", "branch", "slug", "status_note", "status_parsed", "manifest", "session", "goal", "signals", "suggest_verify", "stalled"],
   manifest: ["path", "prompt_md", "goal_md", "precondition_mrs", "stall_t_hours"],
-  session: ["id", "title", "title_pending", "dir", "last_active_ago_s"],
+  session: ["id", "title", "title_pending", "dir", "last_active_ago_s", "parent_session_id"],
   goal: ["state", "queue_tail", "budget"],
   signals: ["pushed", "mr"],
   signalsPushed: ["value", "age_s"],
@@ -750,7 +750,7 @@ const FROZEN_MANIFEST = {
   stalled: ["because", "last_event"],
   verifyRow: ["row_id", "program", "finished_ago_s", "master_hint", "verify_cmd"],
   humanRow: ["kind", "ref", "repo", "repo_host", "title", "pipeline", "ready"],
-  unmappedRow: ["id", "title", "dir", "last_active_ago_s"],
+  unmappedRow: ["id", "title", "dir", "last_active_ago_s", "parent_session_id", "parent_title"],
   wall: ["pending"],
   wallPending: ["version", "status", "flag", "reason", "row_id", "lane_tag", "repo_root", "prompt_sha256", "launch_click_ms", "matched_session_id", "matched_at_ms", "last_eval_ms", "advisory_120s_fired", "canary_fired", "updated_at_ms"],
 };
@@ -3941,7 +3941,10 @@ test("round 6: background sessions — workflow subagents + side chats hidden by
   toggle.click();
   assert.ok(!hiddenEl.classList.contains("collapsed"), "toggle reveals the section");
   const text = collectText(byClass(dom.getElementById("col3-sessions"), "unmapped-strip")[0]);
-  assert.ok(text.indexOf("workflow run abcdef12 · 2") !== -1, "actors cluster under their run label");
+  // round 8 hierarchy: the run LEAD is "workflow run <first8>" (parentless
+  // fixture rows), the meta line carries project · actor count
+  assert.ok(text.indexOf("workflow run abcdef12") !== -1, "parentless run keeps the run label as its lead");
+  assert.ok(text.indexOf("a · 2 actors") !== -1, "meta line carries project + actor count");
   assert.ok(text.indexOf("side chats · 1") !== -1, "side chats get their own group");
   assert.ok(text.indexOf("workflow subagent actor#@1@1") !== -1, "rows present once revealed");
   app.render(); // poll tick: the reveal survives the rebuild
@@ -3960,6 +3963,243 @@ test("round 6: background sessions — workflow subagents + side chats hidden by
   const projText = collectText(dom.getElementById("projects-view"));
   assert.ok(projText.indexOf("actor#@2@1") !== -1, "background appears when shown");
   assert.ok(projText.indexOf("workflow") !== -1, "kind tag on the row");
+});
+
+test("round 8: glanceable parent lineage — parent title leads the cluster with project · run · count meta; side chats name parent + project; projects view shows lineage", () => {
+  const doc = JSON.parse(JSON.stringify(parseIndexMocks(readWebFile("index.html")).minimal));
+  const PARENT_IN_DOC = "s-parent-1";
+  const PARENT_DANGLING = "sess_5eed0000-0000-4000-8000-0000000000dd";
+  doc.sessions_unmapped = [
+    // the spawning chat itself is ON the page (a main unmapped row)
+    { id: PARENT_IN_DOC, title: "the spawning chat", dir: "~/repo/a", last_active_ago_s: 60, parent_session_id: null, parent_title: null },
+    {
+      id: "sess_dwf-dwfrun-abcdef12-3456-7890-abcd-ef1234567890-actor_1_1",
+      title: "workflow subagent actor#@1@1",
+      dir: "~/repo/a",
+      last_active_ago_s: 100,
+      parent_session_id: PARENT_IN_DOC,
+      parent_title: null, // server could not resolve (old tower); in-doc index covers it
+    },
+    {
+      id: "sess_dwf-dwfrun-abcdef12-3456-7890-abcd-ef1234567890-actor_2_1",
+      title: "workflow subagent actor#@2@1",
+      dir: "~/repo/a",
+      last_active_ago_s: 200,
+      parent_session_id: PARENT_IN_DOC,
+      parent_title: "the spawning chat", // server-resolved path
+    },
+    {
+      // dangling parent (out of doc window) but the SERVER resolved its title
+      id: "sess_dwf-dwfrun-99999999-3456-7890-abcd-ef1234567890-actor_1_1",
+      title: "workflow subagent actor#@1@1",
+      dir: "~/repo/b",
+      last_active_ago_s: 150,
+      parent_session_id: PARENT_DANGLING,
+      parent_title: "an older chat about X",
+    },
+    {
+      // dangling parent, no title anywhere -> short id fallback
+      id: "sess_dwf-dwfrun-88888888-3456-7890-abcd-ef1234567890-actor_1_1",
+      title: "workflow subagent actor#@1@1",
+      dir: "~/repo/b",
+      last_active_ago_s: 160,
+      parent_session_id: PARENT_DANGLING,
+      parent_title: null,
+    },
+    {
+      // multi-parent run: one actor per parent -> per-parent sub-heads
+      id: "sess_dwf-dwfrun-77777777-3456-7890-abcd-ef1234567890-actor_1_1",
+      title: "workflow subagent actor#@1@1",
+      dir: "~/repo/a",
+      last_active_ago_s: 120,
+      parent_session_id: PARENT_IN_DOC,
+      parent_title: null,
+    },
+    {
+      id: "sess_dwf-dwfrun-77777777-3456-7890-abcd-ef1234567890-actor_2_1",
+      title: "workflow subagent actor#@2@1",
+      dir: "~/repo/a",
+      last_active_ago_s: 130,
+      parent_session_id: PARENT_DANGLING,
+      parent_title: null,
+    },
+    { id: "s-chat-1", title: "Selection side chat", dir: "~/repo/a", last_active_ago_s: 300, parent_session_id: PARENT_IN_DOC, parent_title: null },
+    { id: "s-chat-2", title: "Selection side chat", dir: "~/repo/b", last_active_ago_s: 400, parent_session_id: PARENT_DANGLING, parent_title: "an older chat about X" },
+    { id: "s-chat-3", title: "Selection side chat", dir: "~/repo/b", last_active_ago_s: 500, parent_session_id: 42, parent_title: null },
+  ];
+  const dom = buildMockDom(parseIndexMocks(readWebFile("index.html")));
+  const MCW = loadApp();
+  const deps = MCW.createDeps({ document: dom, now: () => FIXED_NOW_MS, location: fakeLocation({}) });
+  const app = MCW.createApp(deps);
+  app.setDocument(doc);
+  app.render();
+  const col3 = dom.getElementById("col3-sessions");
+  const strip = byClass(col3, "unmapped-strip")[0];
+  assert.ok(
+    collectText(byClass(strip, "unmapped-head")[0]).indexOf("unmapped (1 · 9 hidden)") !== -1,
+    "strip head counts one visible main row vs nine hidden"
+  );
+  byClass(strip, "unmapped-hidden-toggle")[0].click();
+
+  const titles = byClass(col3, "unmapped-group-title").map((h) => collectText(h));
+  const metas = byClass(col3, "unmapped-group-meta").map((h) => collectText(h));
+  const titleNode = (txt) => byClass(col3, "unmapped-group-title").find((h) => collectText(h) === txt);
+  // single-parent run: the PARENT TITLE leads; meta carries project · run · count
+  assert.ok(titles.indexOf("the spawning chat") !== -1, "parent title leads the single-parent run cluster");
+  assert.ok(
+    metas.some((m) => m === "a · run abcdef12 · 2 actors"),
+    "meta line reads project · run id · actor count"
+  );
+  const lead = titleNode("the spawning chat");
+  assert.ok(
+    (lead.attrs["title"] || "").indexOf("parent " + PARENT_IN_DOC) !== -1 &&
+      (lead.attrs["title"] || "").indexOf("workflow run abcdef12-3456") !== -1,
+    "cluster lead hover carries the full run id + full parent id"
+  );
+  // server-resolved dangling title leads its cluster; no-title dangling -> short id
+  assert.ok(titles.indexOf("an older chat about X") !== -1, "server-resolved dangling parent title leads the cluster");
+  assert.ok(titles.indexOf("sess_5eed0000…") !== -1, "unresolvable parent degrades to the short id lead");
+  assert.ok(
+    metas.some((m) => m === "b · run 88888888 · 1 actor"),
+    "meta uses singular 'actor' for a one-actor run"
+  );
+  // multi-parent run: run label leads, sub-heads per parent
+  assert.ok(titles.indexOf("workflow run 77777777") !== -1, "multi-parent run keeps the run label lead");
+  const subHeads = byClass(col3, "unmapped-subgroup-head").map((h) => collectText(h));
+  assert.deepEqual(
+    subHeads,
+    ["↳ the spawning chat", "↳ sess_5eed0000…"],
+    "per-parent sub-heads in first-seen order"
+  );
+  // side chats: parent (title-resolved) + project segments; wrong-typed -> none
+  const chatRows = byClass(col3, "unmapped-row").filter((r) => (r.attrs["data-session-id"] || "").indexOf("s-chat-") === 0);
+  assert.equal(chatRows.length, 3, "three side-chat rows");
+  const chat1 = collectText(chatRows[0]);
+  assert.ok(chat1.indexOf("↳ the spawning chat") !== -1, "side chat names its in-doc parent");
+  assert.ok(chat1.indexOf("a") !== -1, "side chat row shows the project");
+  assert.ok(
+    (byClass(chatRows[0], "unmapped-parent")[0].attrs["title"] || "").indexOf("parent session " + PARENT_IN_DOC) !== -1,
+    "side-chat parent tag hover carries the full id"
+  );
+  assert.ok(collectText(chatRows[1]).indexOf("↳ an older chat about X") !== -1, "side chat shows the server-resolved dangling parent title");
+  assert.ok(collectText(chatRows[1]).indexOf("b") !== -1, "side chat project segment present");
+  assert.ok(collectText(chatRows[2]).indexOf("↳") === -1, "wrong-typed parent_session_id reads as no parent");
+
+  // poll rebuild keeps the reveal and the lineage labels together
+  app.render();
+  const col3After = dom.getElementById("col3-sessions");
+  const textAfter = collectText(byClass(col3After, "unmapped-strip")[0]);
+  assert.ok(textAfter.indexOf("an older chat about X") !== -1, "lineage labels survive the poll rebuild");
+  assert.equal(
+    byClass(col3After, "unmapped-hidden-toggle")[0].attrs["aria-expanded"],
+    "true",
+    "reveal state survives the poll rebuild"
+  );
+
+  // projects view: parent lineage is VISIBLE on the row (not hover-only)
+  app.setView("projects");
+  const projEl = dom.getElementById("projects-view");
+  byClass(projEl, "projects-bg")[0].click();
+  const projRows = byClass(dom.getElementById("projects-view"), "project-row");
+  const chat1Row = projRows.find((r) => r.attrs["data-session-id"] === "s-chat-1");
+  assert.ok(chat1Row, "background row present once shown");
+  assert.ok(
+    collectText(byClass(chat1Row, "project-row-parent")[0]).indexOf("↳ the spawning chat") !== -1,
+    "project row shows the parent lineage inline"
+  );
+  const chat2Row = projRows.find((r) => r.attrs["data-session-id"] === "s-chat-2");
+  assert.ok(
+    collectText(byClass(chat2Row, "project-row-parent")[0]).indexOf("↳ an older chat about X") !== -1,
+    "project row shows the server-resolved dangling parent title"
+  );
+  assert.equal(
+    chat2Row.attrs["title"],
+    "parent: an older chat about X — " + PARENT_DANGLING,
+    "row hover still carries the full parent id"
+  );
+  const plainRow = projRows.find((r) => r.attrs["data-session-id"] === PARENT_IN_DOC);
+  assert.equal(byClass(plainRow, "project-row-parent").length, 0, "rows without a parent carry no lineage segment");
+});
+
+test("round 9: projects view — same-run workflow actors collapse into ONE expandable row; expansion survives polls", () => {
+  const doc = JSON.parse(JSON.stringify(parseIndexMocks(readWebFile("index.html")).minimal));
+  doc.sessions_unmapped = [
+    { id: "s-main-1", title: "real work", dir: "~/repo/a", last_active_ago_s: 60, parent_session_id: null, parent_title: null },
+    {
+      id: "sess_dwf-dwfrun-abcdef12-3456-7890-abcd-ef1234567890-actor_1_1",
+      title: "workflow subagent actor#@1@1",
+      dir: "~/repo/a",
+      last_active_ago_s: 100,
+      parent_session_id: "s-parent-0",
+      parent_title: "the spawning chat",
+    },
+    {
+      id: "sess_dwf-dwfrun-abcdef12-3456-7890-abcd-ef1234567890-actor_2_1",
+      title: "workflow subagent actor#@2@1",
+      dir: "~/repo/a",
+      last_active_ago_s: 200,
+      parent_session_id: "s-parent-0",
+      parent_title: "the spawning chat",
+    },
+    {
+      // a second, single-actor run in the same project (no parent at all)
+      id: "sess_dwf-dwfrun-dddddddd-3456-7890-abcd-ef1234567890-actor_1_1",
+      title: "workflow subagent actor#@1@1",
+      dir: "~/repo/a",
+      last_active_ago_s: 150,
+      parent_session_id: null,
+      parent_title: null,
+    },
+  ];
+  const dom = buildMockDom(parseIndexMocks(readWebFile("index.html")));
+  const MCW = loadApp();
+  const deps = MCW.createDeps({ document: dom, now: () => FIXED_NOW_MS, location: fakeLocation({}) });
+  const app = MCW.createApp(deps);
+  app.setDocument(doc);
+  app.render();
+  app.setView("projects");
+  const projEl = dom.getElementById("projects-view");
+  byClass(projEl, "projects-bg")[0].click();
+
+  // two runs -> exactly two run rows; the shared-parent one leads with the
+  // parent conversation (what the workflow DID), not the run id
+  const runHeads = byClass(projEl, "project-run-head");
+  assert.equal(runHeads.length, 2, "one run row per distinct workflow run");
+  const sharedHead = runHeads.find((h) => collectText(h).indexOf("the spawning chat") !== -1);
+  assert.ok(sharedHead, "run row leads with the common parent conversation title");
+  assert.ok(collectText(sharedHead).indexOf("2 actors") !== -1, "actor count on the run row");
+  assert.ok(collectText(sharedHead).indexOf("run abcdef12") !== -1, "run id demoted to the dim tail");
+  assert.equal(sharedHead.attrs["aria-expanded"], "false", "run row ships collapsed");
+  const parentlessHead = runHeads.find((h) => h !== sharedHead);
+  assert.ok(
+    collectText(parentlessHead).indexOf("workflow run dddddddd") !== -1,
+    "parentless run keeps the run label as its lead"
+  );
+
+  // actors stay in the DOM under the collapsed container (CSS-hidden, not absent)
+  const actorsEl = byClass(sharedHead.parentNode, "project-run-actors")[0];
+  assert.ok(actorsEl.classList.contains("collapsed"), "actor rows collapsed via class");
+  assert.ok(collectText(actorsEl).indexOf("actor#@1@1") !== -1, "actor rows present in the DOM");
+  assert.equal(byClass(actorsEl, "project-row").length, 2, "two actor rows inside the group");
+
+  // card meta counts every actor session: 1 main + 2 + 1 = 4
+  const meta = collectText(byClass(projEl, "project-meta")[0]);
+  assert.ok(meta.indexOf("4 sessions") !== -1, "card meta counts run-group actors via weight");
+
+  // expand in place; expansion survives a poll rebuild
+  sharedHead.click();
+  assert.equal(sharedHead.attrs["aria-expanded"], "true", "expands on click");
+  assert.ok(!actorsEl.classList.contains("collapsed"), "actor rows revealed");
+  app.render(); // poll tick — ages change, the view rebuilds
+  const headAfter = byClass(dom.getElementById("projects-view"), "project-run-head").find(
+    (h) => collectText(h).indexOf("the spawning chat") !== -1
+  );
+  assert.equal(headAfter.attrs["aria-expanded"], "true", "expansion survives the poll rebuild");
+  const actorsAfter = byClass(headAfter.parentNode, "project-run-actors")[0];
+  assert.ok(!actorsAfter.classList.contains("collapsed"), "actor rows still revealed after rebuild");
+  // collapsed sibling run stays collapsed
+  const otherAfter = byClass(dom.getElementById("projects-view"), "project-run-head").find((h) => h !== headAfter);
+  assert.equal(otherAfter.attrs["aria-expanded"], "false", "unexpanded run stays collapsed");
 });
 
 // ---------------- runner ----------------

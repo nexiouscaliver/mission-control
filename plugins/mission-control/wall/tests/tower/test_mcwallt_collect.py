@@ -444,7 +444,7 @@ def test_mcwallt_e2e_full_fixture_world(tmp_path, monkeypatch):
     assert l1["repo"] == "mcwallt-repo"
     assert l1["session"] == {"id": MCWALLT_WORLD_LANE, "title": "mcwallt lane",
                              "title_pending": False, "dir": "/mcwallt/l",
-                             "last_active_ago_s": 400}
+                             "last_active_ago_s": 400, "parent_session_id": None}
     assert l1["goal"] == {"state": "active", "queue_tail": "q-last",
                           "budget": {"slug": "mcwallt-slug", "whole_run": 3,
                                      "gates": ["python-test"]}}
@@ -486,7 +486,8 @@ def test_mcwallt_e2e_full_fixture_world(tmp_path, monkeypatch):
     # lane session, and the subagent child.
     assert state["sessions_unmapped"] == [
         {"id": MCWALLT_WORLD_UNMAPPED, "title": "mcwallt unmapped",
-         "dir": "/mcwallt/u", "last_active_ago_s": 50}]
+         "dir": "/mcwallt/u", "last_active_ago_s": 50,
+         "parent_session_id": None, "parent_title": None}]
     assert state["launch_pending"] == {"slug": "mcwall-tower", "n": 3}
 
     # The ready variant: same world, fresh cache, !8 now resolvable (merged)

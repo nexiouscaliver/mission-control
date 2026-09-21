@@ -134,7 +134,7 @@ def test_mcwallt_contract_exact_keys_all_levels(tmp_path, monkeypatch):
     assert list(lane["manifest"].keys()) == ["path", "prompt_md", "goal_md",
                                              "precondition_mrs", "stall_t_hours"]
     assert list(lane["session"].keys()) == ["id", "title", "title_pending", "dir",
-                                            "last_active_ago_s"]
+                                            "last_active_ago_s", "parent_session_id"]
     assert list(lane["goal"].keys()) == ["state", "queue_tail", "budget"]
     assert list(lane["signals"].keys()) == ["pushed", "mr"]
     assert list(lane["signals"]["pushed"].keys()) == ["value", "age_s"]
@@ -147,7 +147,9 @@ def test_mcwallt_contract_exact_keys_all_levels(tmp_path, monkeypatch):
     assert list(state["human_actions"][0].keys()) == ["kind", "ref", "repo", "repo_host",
                                                       "title", "pipeline", "ready"]
     assert list(state["sessions_unmapped"][0].keys()) == ["id", "title", "dir",
-                                                          "last_active_ago_s"]
+                                                          "last_active_ago_s",
+                                                          "parent_session_id",
+                                                          "parent_title"]
 
 
 def test_mcwallt_tower_stdlib_only():

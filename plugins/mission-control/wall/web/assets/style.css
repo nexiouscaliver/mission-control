@@ -422,6 +422,52 @@ body.panel-open #armed-strip {
   font-weight: 600;
 }
 
+/* round 8: visible parent lineage on a project row ("↳ <parent>") — hover-only
+ * was not enough; this view is where operators browse by project */
+
+.project-row-parent {
+  flex: 0 1 220px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-dim);
+  font-size: 12.5px;
+}
+
+.project-row:hover .project-row-parent {
+  color: var(--ink);
+}
+
+/* round 9: one expandable row per workflow run — the run row reads like a
+ * project row (plus actor count + chevron); the actor rows stay in the DOM
+ * under it (collapsed via class, never absence) and indent one level */
+
+.project-run-actors.collapsed {
+  display: none;
+}
+
+.project-run-actors .project-row {
+  margin-left: 16px;
+}
+
+.project-run-count {
+  color: var(--ink-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.project-run-head[aria-expanded="true"]::after {
+  content: " ▴";
+  color: var(--ink-dim);
+}
+
+.project-run-head[aria-expanded="false"]::after {
+  content: " ▾";
+  color: var(--ink-dim);
+}
+
 .project-row-age {
   color: var(--ink-dim);
   white-space: nowrap;
@@ -1561,6 +1607,69 @@ body.frozen .chip--derived {
 .unmapped-row .dim {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12.5px;
+}
+
+/* round 7: parent lineage — the "↳ <parent>" segment on a side-chat row (a
+ * dim annotation between title and age, clamped so a long parent title can
+ * not blow out the row) and the per-parent sub-head inside the rare
+ * multi-parent run cluster */
+
+.unmapped-row .unmapped-parent {
+  flex: 0 1 auto;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-dim);
+  font-size: 12.5px;
+}
+
+.unmapped-row:hover .unmapped-parent {
+  color: var(--ink);
+}
+
+.unmapped-subgroup-head {
+  margin: 4px 0 0 10px;
+  color: var(--ink-dim);
+  font-size: 12.5px;
+}
+
+/* round 8: glanceable background clusters — the parent conversation LEADS
+ * (it is the task; operators do not memorize run ids), with a dim meta line
+ * for project · run id · actor count. The old single dim-mono head inverted
+ * the hierarchy: the most informative line was the least visible one. */
+
+.unmapped-group-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.unmapped-group-meta {
+  margin-top: 1px;
+  color: var(--ink-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+/* the project segment on a side-chat row (basename; full dir on hover) */
+
+.unmapped-row .unmapped-project {
+  flex: 0 1 auto;
+  max-width: 24%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.unmapped-row:hover .unmapped-project {
+  color: var(--ink);
 }
 
 /* ---- footer: keyboard shortcuts (SPEC v2.1 §1) ---- */
