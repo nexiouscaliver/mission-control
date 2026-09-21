@@ -22,7 +22,7 @@ CONTRACT_EXAMPLE = json.loads(r'''{"schema_version":1,"server":{"uptime_s":0,"ge
      "suggest_verify":null,"stalled":null}]}],
  "verify_queue":[{"row_id":"","program":"","finished_ago_s":0,"master_hint":"","verify_cmd":""}],
  "human_actions":[{"kind":"merge","ref":"","repo":"","repo_host":"","title":"","pipeline":"","ready":true}],
- "sessions_unmapped":[{"id":"","title":"","dir":"","last_active_ago_s":0,"parent_session_id":null}],
+ "sessions_unmapped":[{"id":"","title":"","dir":"","last_active_ago_s":0,"parent_session_id":null,"parent_title":null}],
  "launch_pending":null}''')
 
 # Declarative shape spec, checked recursively by assert_shape:
@@ -70,7 +70,7 @@ SHAPES = {
     "human_action_row": {"kind": STR, "ref": STR, "repo": STR, "repo_host": STR,
                          "title": STR, "pipeline": STR, "ready": bool},
     "unmapped_row": {"id": STR, "title": STR, "dir": STR, "last_active_ago_s": INT,
-                     "parent_session_id": NULSTR},
+                     "parent_session_id": NULSTR, "parent_title": NULSTR},
 }
 
 _PRIMITIVES = {"str": str, "int": int, "float": float, "bool": bool, "None": type(None)}

@@ -116,7 +116,7 @@ def test_mcwallt_db_ms_normalization(tmp_path, monkeypatch):
 
     expected_unmapped = [{"id": unmapped_id, "title": "mcwallt unmapped",
                           "dir": "/mcwallt/u", "last_active_ago_s": 50,
-                          "parent_session_id": None}]
+                          "parent_session_id": None, "parent_title": None}]
     assert s1["sessions_unmapped"] == expected_unmapped
     assert s2["sessions_unmapped"] == expected_unmapped
     assert s1["programs"][0]["master"]["last_active_ago_s"] == 100
@@ -236,7 +236,7 @@ def test_mcwallt_join_directory_never_used(tmp_path):
     # No tag line anywhere: directory membership never joins -> unmapped.
     assert state["sessions_unmapped"] == [
         {"id": sid, "title": "mcwallt dirful", "dir": repo_path + "/lane-dir",
-         "last_active_ago_s": 90, "parent_session_id": None}]
+         "last_active_ago_s": 90, "parent_session_id": None, "parent_title": None}]
     assert state["server"]["degraded"] == []
 
 
@@ -339,7 +339,7 @@ def test_mcwallt_join_unconfigured_tag_unmapped(tmp_path):
     state = collect_state(cfg)
     assert state["sessions_unmapped"] == [
         {"id": sid, "title": "mcwallt uncfg", "dir": "/mcwallt/uncfg",
-         "last_active_ago_s": 60, "parent_session_id": None}]
+         "last_active_ago_s": 60, "parent_session_id": None, "parent_title": None}]
     assert state["server"]["degraded"] == []  # unmatched tag is absence, not failure
 
 
@@ -380,13 +380,13 @@ def test_mcwallt_unmapped_rows_and_order(tmp_path):
     # last_active desc (newest = smallest ago first), tie id asc.
     assert state["sessions_unmapped"] == [
         {"id": ids["u2"], "title": "u2", "dir": "/mcwallt/u2", "last_active_ago_s": 500,
-         "parent_session_id": None},
+         "parent_session_id": None, "parent_title": None},
         {"id": ids["tie1"], "title": "tie1", "dir": "/mcwallt/tie1", "last_active_ago_s": 700,
-         "parent_session_id": None},
+         "parent_session_id": None, "parent_title": None},
         {"id": ids["tie2"], "title": "tie2", "dir": "/mcwallt/tie2", "last_active_ago_s": 700,
-         "parent_session_id": None},
+         "parent_session_id": None, "parent_title": None},
         {"id": ids["u1"], "title": "u1", "dir": "/mcwallt/u1", "last_active_ago_s": 1000,
-         "parent_session_id": None},
+         "parent_session_id": None, "parent_title": None},
     ]
     assert state["server"]["degraded"] == []
 
@@ -432,6 +432,40 @@ def test_mcwallt_db_parent_id_threaded(tmp_path):
     contract.assert_shape(state)
 
 
+def test_mcwallt_db_parent_title_resolved_out_of_window(tmp_path):
+    # The operator complaint that drove round 8: a bare parent id says nothing
+    # ("i dont remember all the sessions"). The parent chat is usually OLDER
+    # than the session window — work moved on — so its title must resolve from
+    # the db by id, UNWINDOWED, exactly when client-side resolution fails.
+    # The parent itself stays excluded from unmapped (below the window); a
+    # deleted parent row keeps the null title (client shows the short id).
+    parent_id = "sess_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    gone_id = "sess_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    child1 = "sess_dwf-dwfrun-cccccccc-cccc-4ccc-8ccc-cccccccccccc-actor_1_1"
+    child2 = "sess_dwf-dwfrun-cccccccc-cccc-4ccc-8ccc-cccccccccccc-actor_2_1"
+    db = mcwallt_make_db(tmp_path, sessions=[
+        {"id": parent_id, "title": "the old planning chat", "directory": "/mcwallt/p",
+         "time_updated": ms_ago(200000), "time_created": ms_ago(200000)},
+        {"id": child1, "title": "workflow subagent actor#1@1", "directory": "/mcwallt/c",
+         "parent_id": parent_id, "time_updated": ms_ago(10), "time_created": ms_ago(10)},
+        {"id": child2, "title": "Selection side chat", "directory": "/mcwallt/c",
+         "parent_id": gone_id, "time_updated": ms_ago(20), "time_created": ms_ago(20)},
+    ])
+    cfg = TowerConfig(db_path=db,
+                      programs=(ProgramConfig(program="secfix", tag="secfix",
+                                              note_glob=mcwallt_empty_note(tmp_path)),),
+                      now_s=mcwallt_clock(NOW))
+    state = collect_state(cfg)
+    assert state["server"]["degraded"] == []
+    rows = {r["id"]: r for r in state["sessions_unmapped"]}
+    assert parent_id not in rows  # out-of-window parent never enumerates itself
+    assert rows[child1]["parent_session_id"] == parent_id
+    assert rows[child1]["parent_title"] == "the old planning chat"
+    assert rows[child2]["parent_session_id"] == gone_id
+    assert rows[child2]["parent_title"] is None  # deleted parent: null, never a crash
+    contract.assert_shape(state)
+
+
 def test_mcwallt_db_parent_column_missing_degrades_to_null(tmp_path):
     # An older db WITHOUT session.parent_id must not degrade the store: every
     # parent reads as null and the collect stays clean — the column is
@@ -449,7 +483,7 @@ def test_mcwallt_db_parent_column_missing_degrades_to_null(tmp_path):
     assert state["server"]["degraded"] == []
     assert state["sessions_unmapped"] == [
         {"id": sid, "title": "mcwallt oldschema", "dir": "/mcwallt/os",
-         "last_active_ago_s": 100, "parent_session_id": None}]
+         "last_active_ago_s": 100, "parent_session_id": None, "parent_title": None}]
     contract.assert_shape(state)
 
 
@@ -550,7 +584,7 @@ def test_mcwallt_drift_null_payload(tmp_path):
     assert state["server"]["degraded"] == []  # no entry 1: the row is skipped, tolerated
     assert state["sessions_unmapped"] == [
         {"id": sid, "title": "null-payload", "dir": "/mcwallt/nullpayload",
-         "last_active_ago_s": 100, "parent_session_id": None}]
+         "last_active_ago_s": 100, "parent_session_id": None, "parent_title": None}]
     contract.assert_shape(state)
 
 

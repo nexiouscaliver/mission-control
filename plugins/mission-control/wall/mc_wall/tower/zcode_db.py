@@ -187,6 +187,19 @@ def session_rows(cur, ids: list[str]) -> dict[str, dict]:
     return out
 
 
+def parent_titles(cur, ids) -> dict[str, str | None]:
+    """By-id, UNWINDOWED title resolution for parent sessions (the session_rows
+    pattern, one column): the parent of an in-window child is often itself
+    older than the session window, so its title must come from the db, not the
+    doc. A missing parent row, a SQL-NULL title, or an empty one maps to None —
+    the client falls back to its in-doc index, then the short id."""
+    out: dict[str, str | None] = {}
+    for pid in set(ids):
+        row = cur.execute("SELECT title FROM session WHERE id = ?", (pid,)).fetchone()
+        out[pid] = row[0] if row is not None and isinstance(row[0], str) and row[0] != "" else None
+    return out
+
+
 def lane_join(cur, token: str) -> tuple[dict | None, bool]:
     """Token-prefix join (§5): exactly 1 hit -> ({id, title, dir,
     time_updated_epoch_s, parent_session_id}, False); 0 hits -> (None, False);
@@ -238,6 +251,13 @@ def unmapped_rows(cur, now_s: float, factor: int, session_window_s: int,
                     # contract requires int; 0 is the spec's unknown-age convention
                     "last_active_ago_s": max(0, int(now_s - ts)) if ts is not None else 0,
                     "parent_session_id": _as_parent_id(parent_id)})
+    # The parent's NAME rides the row: an id alone told the operator nothing
+    # (they do not memorize session ids), and the parent chat is usually older
+    # than the window, so client-side resolution fails exactly when it matters.
+    titles = parent_titles(cur, [r["parent_session_id"] for r in out
+                                 if r["parent_session_id"] is not None])
+    for r in out:
+        r["parent_title"] = titles.get(r["parent_session_id"]) if r["parent_session_id"] is not None else None
     out.sort(key=lambda r: (r["last_active_ago_s"], r["id"]))
     return out
 

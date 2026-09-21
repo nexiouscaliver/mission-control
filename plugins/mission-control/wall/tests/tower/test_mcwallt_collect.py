@@ -486,7 +486,8 @@ def test_mcwallt_e2e_full_fixture_world(tmp_path, monkeypatch):
     # lane session, and the subagent child.
     assert state["sessions_unmapped"] == [
         {"id": MCWALLT_WORLD_UNMAPPED, "title": "mcwallt unmapped",
-         "dir": "/mcwallt/u", "last_active_ago_s": 50, "parent_session_id": None}]
+         "dir": "/mcwallt/u", "last_active_ago_s": 50,
+         "parent_session_id": None, "parent_title": None}]
     assert state["launch_pending"] == {"slug": "mcwall-tower", "n": 3}
 
     # The ready variant: same world, fresh cache, !8 now resolvable (merged)

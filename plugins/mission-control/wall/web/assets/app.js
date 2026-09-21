@@ -1338,14 +1338,25 @@
       return idx;
     }
 
-    // The parent's display label: its title when the parent is in the doc,
-    // else the short id form (first 13 chars + ellipsis; the full id rides
-    // the hover title). null when the row has no parent at all.
-    function parentLabel(pid, idx) {
+    // The parent's display info for a row: the server-resolved title first
+    // (parent_title — resolved from the db BY ID, unwindowed, so it survives
+    // the parent chat aging out of the session window), then the in-doc
+    // index, then the short id. null when the row has no parent at all.
+    function parentInfoFor(row, idx) {
+      var pid = parentOf(row);
       if (pid === null) return null;
-      var label = Object.prototype.hasOwnProperty.call(idx, pid) ? idx[pid] : "";
+      var label = typeof row.parent_title === "string" && row.parent_title !== "" ? row.parent_title : "";
+      if (label === "" && Object.prototype.hasOwnProperty.call(idx, pid)) label = idx[pid];
       if (label === "") label = pid.length > 13 ? pid.slice(0, 13) + "…" : pid;
       return { label: label, fullId: pid };
+    }
+
+    // The project a background row belongs to: the basename of its dir (the
+    // unmapped dir IS where the work ran). "(no path)" / empty -> null.
+    function rowProject(row) {
+      var dir = typeof row.dir === "string" ? row.dir : "";
+      if (dir === "" || dir === "(no path)") return null;
+      return baseName(dir);
     }
 
     // Disabled toggling through the shared DOM surface: setAttribute on
@@ -2464,13 +2475,13 @@
       return res.valid.length;
     }
 
-    // Round 6 + round 7: workflow subagents + side chats collapse into ONE
-    // revealable section. Workflow rows cluster under their run's label, and
-    // the run head carries the LINK to the conversation that spawned it:
-    // "workflow run <first8> · N → <parent>". The common case (every actor of
-    // a run shares one parent) names the parent ONCE on the head; the rare
-    // multi-parent run falls back to per-parent sub-heads. Side chats each
-    // carry their own "↳ <parent>" tag — their parents vary by row.
+    // Round 6 + rounds 7/8: workflow subagents + side chats collapse into ONE
+    // revealable section. Glance hierarchy (operator feedback: "understand it
+    // in a single glance"): the PARENT CONVERSATION leads the cluster — it is
+    // the task the actors worked — with a dim meta line carrying the project,
+    // the run id, and the actor count; the run id never leads (operators do
+    // not memorize run ids either). Side-chat rows name their parent (title
+    // server-resolved) + the project the chat opened in.
     function renderBackgroundSection(rowsEl, split) {
       var parentIdx = buildParentTitleIndex();
       var hiddenEl = el("div");
@@ -2503,11 +2514,15 @@
       for (var r = 0; r < sortedRuns.length; r += 1) {
         var runKey = sortedRuns[r];
         var runRows = split.workflow[runKey];
-        // Distinct parents of this run, first-seen order (null = no link).
+        // Distinct parents (first-seen order; null = no link) and distinct
+        // projects of this run.
         var runParents = [];
         var byParent = {};
         var noParent = [];
+        var projects = [];
         for (var p = 0; p < runRows.length; p += 1) {
+          var proj = rowProject(runRows[p]);
+          if (proj !== null && projects.indexOf(proj) === -1) projects.push(proj);
           var pid = parentOf(runRows[p]);
           if (pid === null) {
             noParent.push(runRows[p]);
@@ -2519,26 +2534,42 @@
           }
           byParent[pid].push(runRows[p]);
         }
+        var projectTxt =
+          projects.length === 0 ? "" : projects.length === 1 ? projects[0] : projects.length + " projects";
         var group = el("div");
         group.classList.add("unmapped-group");
-        var runHead = el("div");
-        runHead.classList.add("unmapped-group-head");
-        var headText = "workflow run " + runKey.slice(0, 8) + " · " + runRows.length;
+        // Lead line: the parent conversation when there is exactly one (the
+        // common case), else the run label. Hover always carries both full ids.
         var headTitle = "workflow run " + runKey + " — every actor session launched by this run";
+        var leadText = "workflow run " + runKey.slice(0, 8);
         if (runParents.length === 1) {
-          var only = parentLabel(runParents[0], parentIdx);
-          headText += " → " + only.label;
+          var only = parentInfoFor(byParent[runParents[0]][0], parentIdx);
+          leadText = only.label;
           headTitle += "; parent " + only.fullId;
         }
-        runHead.setText(headText);
-        runHead.setAttribute("title", headTitle);
-        group.appendChild(runHead);
+        var lead = el("div");
+        lead.classList.add("unmapped-group-title");
+        lead.setText(leadText);
+        lead.setAttribute("title", headTitle);
+        group.appendChild(lead);
+        // Meta line: project · run id · count — run id demoted to metadata,
+        // and skipped when the lead already IS the run label (parentless /
+        // multi-parent runs).
+        var metaParts = [];
+        if (projectTxt !== "") metaParts.push(projectTxt);
+        if (runParents.length === 1) metaParts.push("run " + runKey.slice(0, 8));
+        metaParts.push(runRows.length + " actor" + (runRows.length === 1 ? "" : "s"));
+        var meta = el("div");
+        meta.classList.add("unmapped-group-meta");
+        meta.setText(metaParts.join(" · "));
+        meta.setAttribute("title", headTitle);
+        group.appendChild(meta);
         for (var nr = 0; nr < noParent.length; nr += 1) renderUnmappedRow(group, noParent[nr]);
         for (var sp = 0; sp < runParents.length; sp += 1) {
           if (runParents.length > 1) {
             var subHead = el("div");
             subHead.classList.add("unmapped-subgroup-head");
-            var sub = parentLabel(runParents[sp], parentIdx);
+            var sub = parentInfoFor(byParent[runParents[sp]][0], parentIdx);
             subHead.setText("↳ " + sub.label);
             subHead.setAttribute("title", "parent " + sub.fullId);
             group.appendChild(subHead);
@@ -2556,7 +2587,8 @@
         chatHead.setText("side chats · " + split.sidechat.length);
         chatGroup.appendChild(chatHead);
         for (var c = 0; c < split.sidechat.length; c += 1) {
-          renderUnmappedRow(chatGroup, split.sidechat[c], parentLabel(parentOf(split.sidechat[c]), parentIdx));
+          renderUnmappedRow(chatGroup, split.sidechat[c],
+            parentInfoFor(split.sidechat[c], parentIdx), rowProject(split.sidechat[c]));
         }
         hiddenEl.appendChild(chatGroup);
       }
@@ -2602,10 +2634,10 @@
     // Round 4b: the row is three SEGMENTS (title / age / id) so CSS can align
     // it like a table row at full width — the old single text node wrapped
     // unpredictably. Own text per segment keeps collectText() pins intact.
-    // Round 7: side-chat rows take a parentTag ({label, fullId} | null) — a
-    // "↳ <parent>" segment between title and age; workflow rows name their
-    // parent on the run head instead, so they pass no tag.
-    function renderUnmappedRow(rowsEl, u, parentTag) {
+    // Round 7/8: side-chat rows take parentTag ({label, fullId} | null) and
+    // projectLabel (string | null) — "↳ <parent>" and "<project>" segments
+    // between title and age (operator feedback: an id alone says nothing).
+    function renderUnmappedRow(rowsEl, u, parentTag, projectLabel) {
       var row = el("div");
       row.classList.add("unmapped-row");
       row.setAttribute("data-session-id", u.id);
@@ -2620,6 +2652,13 @@
         parentSpan.setText("↳ " + parentTag.label);
         parentSpan.setAttribute("title", "parent session " + parentTag.fullId);
         row.appendChild(parentSpan);
+      }
+      if (projectLabel !== null && projectLabel !== undefined) {
+        var projSpan = el("span");
+        projSpan.classList.add("unmapped-project");
+        projSpan.setText(projectLabel);
+        if (typeof u.dir === "string" && u.dir !== "") projSpan.setAttribute("title", u.dir);
+        row.appendChild(projSpan);
       }
       var ageSpan = el("span");
       ageSpan.classList.add("unmapped-age");
@@ -2720,7 +2759,7 @@
               title: sessionDisplayTitle(ses),
               age: isInt(ses.last_active_ago_s) ? ses.last_active_ago_s : 0,
               id: ses.id,
-              parent: parentLabel(parentOf(ses), pIdx),
+              parent: parentInfoFor(ses, pIdx),
             });
           }
           var master = nullable(progs[i].master);
@@ -2744,7 +2783,7 @@
             title: typeof unmapped[u].title === "string" && unmapped[u].title !== "" ? unmapped[u].title : "title pending",
             age: isInt(unmapped[u].last_active_ago_s) ? unmapped[u].last_active_ago_s : 0,
             id: typeof unmapped[u].id === "string" ? unmapped[u].id : "",
-            parent: parentLabel(parentOf(unmapped[u]), pIdx),
+            parent: parentInfoFor(unmapped[u], pIdx),
           });
         }
       }
@@ -2788,6 +2827,15 @@
       title.classList.add("project-row-title");
       title.setText(item.title);
       row.appendChild(title);
+      // Round 8: the parent lineage is VISIBLE here too (hover-only was not
+      // enough — the projects view is where operators browse by project).
+      if (item.parent) {
+        var parSpan = el("span");
+        parSpan.classList.add("project-row-parent");
+        parSpan.setText("↳ " + item.parent.label);
+        parSpan.setAttribute("title", "parent: " + item.parent.label + " — " + item.parent.fullId);
+        row.appendChild(parSpan);
+      }
       var age = el("span");
       age.classList.add("project-row-age");
       age.setText(MCW.util.humanizeAge(item.age));
@@ -3112,7 +3160,7 @@
     stalled: ["because", "last_event"],
     verifyRow: ["row_id", "program", "finished_ago_s", "master_hint", "verify_cmd"],
     humanRow: ["kind", "ref", "repo", "repo_host", "title", "pipeline", "ready"],
-    unmappedRow: ["id", "title", "dir", "last_active_ago_s", "parent_session_id"],
+    unmappedRow: ["id", "title", "dir", "last_active_ago_s", "parent_session_id", "parent_title"],
     wall: ["pending"],
     wallPending: ["version", "status", "flag", "reason", "row_id", "lane_tag", "repo_root", "prompt_sha256", "launch_click_ms", "matched_session_id", "matched_at_ms", "last_eval_ms", "advisory_120s_fired", "canary_fired", "updated_at_ms"],
   };

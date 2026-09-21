@@ -148,7 +148,8 @@ def test_mcwallt_contract_exact_keys_all_levels(tmp_path, monkeypatch):
                                                       "title", "pipeline", "ready"]
     assert list(state["sessions_unmapped"][0].keys()) == ["id", "title", "dir",
                                                           "last_active_ago_s",
-                                                          "parent_session_id"]
+                                                          "parent_session_id",
+                                                          "parent_title"]
 
 
 def test_mcwallt_tower_stdlib_only():
