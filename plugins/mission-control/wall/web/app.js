@@ -223,6 +223,13 @@
         strip.setAttribute("hidden", "");
         body.appendChild(strip);
       }
+      // Round 4: the all-clear hero for a fully-empty VALID wall (hidden
+      // unless renderEmptyHero says otherwise).
+      if (!byId("empty-hero")) {
+        var hero = el("div", "empty-hero");
+        hero.setAttribute("hidden", "");
+        body.appendChild(hero);
+      }
       if (!byId("grid")) {
         var grid = el("main", "grid");
         var col1 = el("section", "col1-programs");
@@ -355,11 +362,116 @@
           }
         });
       }
+      // Boot readability (browser finding, round 4): the two stacked middle
+      // subpanels rendered as one duplicated "waiting for first state" box.
+      // Both notes stay in the DOM (AC-5 reads every panel), but while the
+      // LIVE wall is ACTUALLY booting (no valid doc yet) the SECOND subpanel's
+      // chrome collapses via CSS so the operator sees one waiting box per
+      // column, not a double render. The blankNote wording alone is NOT the
+      // trigger — in LIVE it reads "waiting for first state" on every render,
+      // valid docs included (browser finding, minimal-case shot).
+      var col2 = byId("col2");
+      if (col2) {
+        if (!valid && blankNote === "waiting for first state") col2.classList.add("waiting");
+        else col2.classList.remove("waiting");
+      }
+      // Round 4b — the grid is ADAPTIVE: a column with no rows leaves the
+      // grid template instead of staying as an empty box floating in dead
+      // space (browser finding: the default live wall showed two contentless
+      // columns plus ~60% void). Classes (set only for VALID docs — an L0
+      // doc's blank panels ARE its content): has-programs / has-owed /
+      // has-sessions select the grid template in CSS; one-col centers a sole
+      // content column; is-empty hides the grid behind the all-clear hero.
+      var gridEl = byId("grid");
+      if (gridEl) {
+        var counts = { p: 0, o: 0, s: 0 };
+        if (valid) {
+          counts.p = MCW.state.items(stateDoc.programs, null).valid.length;
+          var oc = owedCounts();
+          counts.o = oc.v + oc.m;
+          var unmappedC = MCW.state.items(stateDoc.sessions_unmapped, "id").valid.length;
+          var mappedC = 0;
+          var groupsC = buildSessionGroups();
+          for (var gk in groupsC) {
+            if (Object.prototype.hasOwnProperty.call(groupsC, gk)) mappedC += groupsC[gk].length;
+          }
+          counts.s = mappedC + unmappedC;
+        }
+        function setPresence(cls, present) {
+          if (present) gridEl.classList.add(cls);
+          else gridEl.classList.remove(cls);
+        }
+        setPresence("has-programs", counts.p > 0);
+        setPresence("no-programs", counts.p === 0);
+        setPresence("has-owed", counts.o > 0);
+        setPresence("no-owed", counts.o === 0);
+        setPresence("has-sessions", counts.s > 0);
+        setPresence("no-sessions", counts.s === 0);
+        var contentKinds = (counts.p > 0 ? 1 : 0) + (counts.o > 0 ? 1 : 0) + (counts.s > 0 ? 1 : 0);
+        setPresence("one-col", valid && contentKinds === 1);
+        setPresence("is-empty", valid && contentKinds === 0);
+        renderEmptyHero(valid, counts, unmappedHeroCount(counts));
+      }
       renderBanners(stateDoc, pollDriven); // sets freezeActive before the dot reads it
       renderTopBar(valid, pollDriven);
       renderArmedBar(pollDriven);
       updateNeedsMeNow();
       wireNeedsMeNow();
+    }
+
+    // Unmapped-session count for the slim hero line (0 when not computable).
+    function unmappedHeroCount(counts) {
+      if (stateDoc === null) return 0;
+      return MCW.state.items(stateDoc.sessions_unmapped, "id").valid.length;
+    }
+
+    // Round 4b — two hero forms (round 4 had one):
+    //   big   — a fully-empty VALID wall: the whole page IS the statement;
+    //           the grid hides behind it (CSS #grid.is-empty).
+    //   slim  — no programs registered, but there IS content (unmapped
+    //           sessions / owed merges): one compact context line above the
+    //           content instead of a contentless programs column.
+    // Hidden whenever programs exist or the doc is invalid.
+    function renderEmptyHero(valid, counts, unmappedCount) {
+      var hero = byId("empty-hero");
+      if (!hero) return;
+      var mode = "hidden";
+      if (valid) {
+        var contentKinds = (counts.p > 0 ? 1 : 0) + (counts.o > 0 ? 1 : 0) + (counts.s > 0 ? 1 : 0);
+        if (contentKinds === 0) mode = "big";
+        else if (counts.p === 0) mode = "slim";
+      }
+      if (mode === "hidden") {
+        hero.setAttribute("hidden", "");
+        hero.classList.remove("hero--big");
+        hero.classList.remove("hero--slim");
+        return;
+      }
+      renderContainer(hero, "empty-hero", false, function (scratch) {
+        var big = el("div");
+        big.classList.add("hero-line");
+        if (mode === "big") {
+          big.setText("All clear — nothing needs you right now.");
+          scratch.appendChild(big);
+          var sub = el("div");
+          sub.classList.add("hero-sub");
+          sub.setText(
+            "Programs, verify work, and owed merges will appear here the moment the tower registers them. This page updates itself every 5 s."
+          );
+          scratch.appendChild(sub);
+        } else {
+          big.setText(
+            "No programs registered yet — " +
+              (unmappedCount > 0
+                ? unmappedCount + " unmapped session" + (unmappedCount === 1 ? "" : "s") + " below."
+                : "what the tower sees is below.")
+          );
+          scratch.appendChild(big);
+        }
+      });
+      hero.removeAttribute("hidden");
+      hero.classList.add(mode === "big" ? "hero--big" : "hero--slim");
+      hero.classList.remove(mode === "big" ? "hero--slim" : "hero--big");
     }
 
     function renderCol1(rootEl) {
@@ -430,11 +542,37 @@
         appendNote(listEl, "no lanes");
         appendHint(listEl, "No lanes are open for this program yet.");
       }
-      for (var i = 0; i < laneRes.valid.length; i += 1) renderLane(listEl, mtime, laneRes.valid[i]);
+      var orderedLanes = lanesBySeverity(laneRes.valid, mtime);
+      for (var i = 0; i < orderedLanes.length; i += 1) renderLane(listEl, mtime, orderedLanes[i]);
       card.appendChild(listEl);
       if (laneRes.skipped > 0) appendNote(card, "skipped " + laneRes.skipped + " malformed rows", "data-note");
 
       rootEl.appendChild(card);
+    }
+
+    // Operator triage order (round 4 contract: a parked lane may never render
+    // above a failed one). Stable tiering — served order is preserved inside a
+    // tier: blocked (failed) first, then watch (UNPARSED / partial / a stalled
+    // lane / an unstamped note), then everything healthy.
+    function laneSeverityRank(lane, mtime) {
+      var sev = statusSeverity(lane, mtime);
+      if (sev === "chip--sev-blocked") return 0;
+      if (sev === "chip--sev-watch") return 1;
+      return 2;
+    }
+
+    function lanesBySeverity(lanes, mtime) {
+      var decorated = [];
+      for (var i = 0; i < lanes.length; i += 1) {
+        decorated.push({ lane: lanes[i], rank: laneSeverityRank(lanes[i], mtime), idx: i });
+      }
+      decorated.sort(function (a, b) {
+        if (a.rank !== b.rank) return a.rank - b.rank;
+        return a.idx - b.idx;
+      });
+      var out = [];
+      for (var j = 0; j < decorated.length; j += 1) out.push(decorated[j].lane);
+      return out;
     }
 
     // T7 (D): one builder for MR badges — the !/# glyph prefix stays the
@@ -488,16 +626,13 @@
       } else {
         chipEl.classList.add(mtime === 0 ? "chip--stale" : "chip--note");
         chipEl.setText(status);
-        var stampSpan = el("span");
-        stampSpan.classList.add("chip-stamp");
-        if (mtime === 0) {
-          stampSpan.setText(" · stamped: unknown");
-        } else {
-          stampSpan.setText(" · stamped " + stampAge(mtime));
-          stampSpan.setAttribute("title", String(mtime));
-        }
-        chipEl.appendChild(stampSpan);
+        // Round 4 de-noise: the authority stamp is PROGRAM-level (note_mtime is
+        // identical on every lane's chip) and lives once on the card head —
+        // repeating "· stamped 22h" on each chip was noise, not information.
+        // The stale provenance demotion (mtime 0 -> chip--stale) is kept: it is
+        // trust grammar, not the stamp text.
       }
+      chipEl.classList.add("chip--s-" + status.toLowerCase().replace(/[^a-z0-9]+/g, "-"));
       var manifest = nullable(lane.manifest);
       var stalledInfo = nullable(lane.stalled);
       if (stalledInfo !== null) chipEl.classList.add("stalled"); // treatment, not a 4th level
@@ -1118,7 +1253,15 @@
         appendNote(rootEl, "nothing to verify");
         appendHint(rootEl, "When a lane finishes, its COPY VERIFY command lands here.");
       }
-      for (var i = 0; i < res.valid.length; i += 1) renderVerifyRow(rootEl, res.valid[i]);
+      // Round 4: oldest finished first — the panel now reads in the SAME order
+      // the needs-me-now jump walks (fallbackCandidates: finished_ago_s DESC,
+      // head wins), so "the top row" and "where n takes me" can never disagree.
+      var orderedRows = res.valid.slice().sort(function (a, b) {
+        var aa = isInt(a.finished_ago_s) ? a.finished_ago_s : 0;
+        var bb = isInt(b.finished_ago_s) ? b.finished_ago_s : 0;
+        return bb - aa;
+      });
+      for (var i = 0; i < orderedRows.length; i += 1) renderVerifyRow(rootEl, orderedRows[i]);
       if (res.skipped > 0) appendNote(rootEl, "skipped " + res.skipped + " malformed rows", "data-note");
     }
 
@@ -1246,7 +1389,14 @@
         appendNote(rootEl, "nothing owed");
         appendHint(rootEl, "Merge requests waiting on you will appear here.");
       }
-      for (var j = 0; j < merges.length; j += 1) renderMergeCard(rootEl, merges[j]);
+      // Round 4: NOT-ready merges float to the top (they still need pipeline
+      // attention); ready ones follow in served order. Stable tiering.
+      var orderedMerges = merges.slice().sort(function (a, b) {
+        var ar = a.ready === true ? 1 : 0;
+        var br = b.ready === true ? 1 : 0;
+        return ar - br;
+      });
+      for (var j = 0; j < orderedMerges.length; j += 1) renderMergeCard(rootEl, orderedMerges[j]);
       if (skipped > 0) appendNote(rootEl, "skipped " + skipped + " malformed rows", "data-note");
       if (unsupported > 0) appendNote(rootEl, "skipped " + unsupported + " unsupported rows", "data-note");
     }
@@ -1254,6 +1404,7 @@
     function renderMergeCard(rootEl, m) {
       var card = el("div");
       card.classList.add("merge-card");
+      card.classList.add(m.ready === true ? "merge-card--ready" : "merge-card--not-ready");
       card.setAttribute("data-row-id", m.ref);
       var line = el("div");
       line.classList.add("merge-line");
@@ -1369,7 +1520,12 @@
       var cands = fallbackCandidates();
       if (cands.length === 0) {
         out.note = triggerNote === null ? "nothing owed" : triggerNote;
-        if (out.note !== null) transientNote(out.note, null);
+        // Round 4 (browser finding): the persistent nmn-hint already reads
+        // "nothing owed — updates every 5 s"; echoing the same words inline
+        // read as a duplication bug (screens 01c/03). The transient confirms
+        // DIFFERENTLY; the returned note keeps the pinned "nothing owed"
+        // contract (AC-17/AC-18 read the return value, not the transient).
+        if (out.note !== null) transientNote(triggerNote === null ? "all clear ✓" : out.note, null);
         return Promise.resolve(out);
       }
       var head = cands[0];
@@ -1395,7 +1551,7 @@
     function needsMeNow() {
       var counts = owedCounts();
       if (counts.v === 0 && counts.m === 0) {
-        transientNote("nothing owed", null);
+        transientNote("all clear ✓", null); // display only — see pageSideFallback note
         return Promise.resolve({ jumped: null, copied: null, note: "nothing owed" });
       }
       var live = deps.location.protocol !== "file:";
@@ -1415,7 +1571,7 @@
           return res.json().then(function (body) {
             var action = body !== null && typeof body === "object" ? body.action : null;
             if (action === null || typeof action !== "object") {
-              transientNote("nothing owed", null);
+              transientNote("all clear ✓", null); // display only — see pageSideFallback note
               return { jumped: null, copied: null, note: "nothing owed" };
             }
             var rid = typeof action.row_id === "string" ? action.row_id : "";
@@ -1637,6 +1793,11 @@
     function currentDot(valid) {
       if (freezeActive) return "frozen";
       if (live !== null) {
+        // Round 4 (browser finding, screen 01b): before the FIRST poll settles
+        // we know nothing — red "stale" read as an error during a normal boot.
+        // Amber "booting" covers exactly that window; the first poll outcome
+        // (live / stale) takes over from there.
+        if (live.polls === 0) return "booting";
         return live.failures === 0 && live.lastGoodAtMs !== null ? "live" : "stale";
       }
       return valid ? "qa" : "stale";
@@ -2003,7 +2164,7 @@
       rowsEl.classList.add("unmapped-rows");
       if (unmappedOpen) rowsEl.classList.add("open");
       rowsEl.setAttribute("id", "unmapped-rows"); // the toggle's aria-controls target
-      for (var i = 0; i < res.valid.length; i += 1) renderUnmappedRow(rowsEl, res.valid[i]);
+      renderUnmappedGroups(rowsEl, res.valid);
       strip.appendChild(rowsEl);
       if (typeof toggle.addEventListener === "function") {
         toggle.addEventListener("click", function () {
@@ -2021,25 +2182,63 @@
       return res.valid.length;
     }
 
+    // Round 4: unmapped rows group by their dir (the path IS the repo for an
+    // unmapped session) so a wall of 25 near-identical rows becomes a few
+    // labeled repo groups; the path renders once per group instead of once
+    // per row. Groups sort alphabetically; rows within a group keep served
+    // order. Rows with no dir land in "(no path)".
+    function renderUnmappedGroups(rowsEl, rows) {
+      var groups = [];
+      var index = {};
+      for (var i = 0; i < rows.length; i += 1) {
+        var dir = typeof rows[i].dir === "string" && rows[i].dir !== "" ? rows[i].dir : "(no path)";
+        if (!index[dir]) {
+          index[dir] = { dir: dir, rows: [] };
+          groups.push(index[dir]);
+        }
+        index[dir].rows.push(rows[i]);
+      }
+      groups.sort(function (a, b) {
+        return a.dir < b.dir ? -1 : a.dir > b.dir ? 1 : 0;
+      });
+      for (var g = 0; g < groups.length; g += 1) {
+        var groupEl = el("div");
+        groupEl.classList.add("unmapped-group");
+        var head = el("div");
+        head.classList.add("unmapped-group-head");
+        head.setText(groups[g].dir + " · " + groups[g].rows.length);
+        groupEl.appendChild(head);
+        for (var r = 0; r < groups[g].rows.length; r += 1) renderUnmappedRow(groupEl, groups[g].rows[r]);
+        rowsEl.appendChild(groupEl);
+      }
+    }
+
     // Separate function so each row's click closure owns its u (no shared var).
+    // Round 4b: the row is three SEGMENTS (title / age / id) so CSS can align
+    // it like a table row at full width — the old single text node wrapped
+    // unpredictably. Own text per segment keeps collectText() pins intact.
     function renderUnmappedRow(rowsEl, u) {
       var row = el("div");
       row.classList.add("unmapped-row");
       row.setAttribute("data-session-id", u.id);
       var uTitle = typeof u.title === "string" && u.title !== "" ? u.title : "title pending";
-      var uDir = typeof u.dir === "string" ? u.dir : "";
-      row.setText(
-        uTitle +
-          " · " +
-          uDir +
-          " · " +
-          MCW.util.humanizeAge(isInt(u.last_active_ago_s) ? u.last_active_ago_s : 0)
-      );
-      // T6 carry-over (c): dim span with the session id so an unmapped row is
-      // identifiable for copying. setText runs first — it wipes children.
+      var titleSpan = el("span");
+      titleSpan.classList.add("unmapped-title");
+      titleSpan.setText(uTitle);
+      row.appendChild(titleSpan);
+      var ageSpan = el("span");
+      ageSpan.classList.add("unmapped-age");
+      ageSpan.setText(MCW.util.humanizeAge(isInt(u.last_active_ago_s) ? u.last_active_ago_s : 0));
+      row.appendChild(ageSpan);
+      // The id is demoted to a dim monospace tail (short form + ellipsis when
+      // long; full id on hover) — it is a copy handle, not reading material.
+      // The click still copies the FULL id (AC-16 reads the copied ids).
+      var rawId = typeof u.id === "string" ? u.id : "";
+      var shortId = rawId.length > 18 ? rawId.slice(0, 15) + "…" : rawId;
       var idSpan = el("span");
       idSpan.classList.add("dim");
-      idSpan.setText(" · " + u.id);
+      idSpan.setText(shortId);
+      if (shortId !== rawId) idSpan.setAttribute("title", rawId);
       row.appendChild(idSpan);
       // T6 carry-over (d) + T7 (H): keyboard parity via the shared wiring helper.
       // SPEC v2.1 §4.3: a resolved copy confirms with a transient note —

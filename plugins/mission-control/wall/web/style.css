@@ -1,9 +1,13 @@
 /* MC Wall — style.css (canonical). The copy at assets/style.css must stay
  * byte-identical (AC-32). The :root token set below is the design contract
  * of record (redesign SPEC v2.1, "the operator's wall") — dark, dense-but-
- * scannable, information-first. --attention is now cyan-blue ("look here /
- * interactive"), deliberately distinct from stale-red so a stalled lane, a
- * padlock, or the jump flash never reads as an error. */
+ * scannable, information-first. Hue semantics (round 4 accent discipline):
+ *   --attention cyan-blue  = interactive / look here (focus, hover, jump,
+ *                            stalled ring) — deliberately never an alarm;
+ *   --derived amber        = pending human action (armed strip, the owed CTA,
+ *                            COPY VERIFY) AND derived signals — the "your
+ *                            move" family;
+ *   --stale red            = blocked / broken only. */
 
 :root {
   --bg: #0e1319;
@@ -59,6 +63,10 @@ body {
   padding: var(--s2) var(--s4);
   background: var(--panel);
   border-bottom: 1px solid var(--border);
+  /* round 4 polish: the operator bar survives scrolling the wall */
+  position: sticky;
+  top: 0;
+  z-index: 5;
 }
 
 .tb-cluster {
@@ -92,13 +100,14 @@ body {
   color: var(--ink-dim);
 }
 
-/* the owed CTA: cyan-tinted while it has work to name; idle-dim at 0 owed
- * (SPEC v2.1 §2.5) — still focusable/clickable either way */
+/* the owed CTA: amber-tinted while it has work to name (the "your move"
+ * family — round 4 accent discipline); idle-dim at 0 owed (SPEC v2.1 §2.5)
+ * — still focusable/clickable either way */
 
 #needs-me-now {
   color: var(--ink);
-  background: color-mix(in srgb, var(--attention) 16%, var(--panel-2));
-  border: 2px solid var(--attention);
+  background: color-mix(in srgb, var(--derived) 14%, var(--panel-2));
+  border: 2px solid var(--derived);
 }
 
 #needs-me-now.nmn-idle {
@@ -169,11 +178,15 @@ button:focus-visible,
   z-index: 25;
 }
 
-/* with the panel open, the armed chip ends where the panel begins — its
- * right-aligned controls dock beside the panel instead of sliding under it */
+/* with the panel open, the strip's BOX ends where the panel begins (round 4
+ * fix, screens 07-10): the old padding-right hack kept the full-width strip
+ * painting its border/background OVER the panel's first field row. An even
+ * right margin shrinks the box instead — the armed chip + its controls dock
+ * beside the panel edge with nothing overlapping. */
 
 body.panel-open #armed-strip {
-  padding-right: min(420px, 92vw);
+  padding-right: 0;
+  margin-right: min(420px, 92vw);
 }
 
 /* ---- three-column grid (SPEC section 6) ---- */
@@ -181,8 +194,162 @@ body.panel-open #armed-strip {
 #grid {
   display: grid;
   grid-template-columns: minmax(340px, 1fr) minmax(420px, 1.25fr) minmax(340px, 1fr);
+  grid-template-areas: "programs verify sessions";
   gap: var(--s3);
   padding: var(--s4);
+  align-items: start;
+}
+
+#col1-programs {
+  grid-area: programs;
+}
+
+#col2 {
+  grid-area: verify;
+}
+
+#col3-sessions {
+  grid-area: sessions;
+}
+
+/* ---- round 4b: the ADAPTIVE grid ----
+ * A column with no rows leaves the grid template instead of remaining as an
+ * empty box floating in dead space (the default live wall used to show two
+ * contentless columns beside ~60% void). renderBody tags #grid with
+ * has-/no-programs, has-/no-owed, has-/no-sessions; the combinations below
+ * pick the template. A sole content column centers at a readable width. */
+
+#grid.has-programs.has-owed.has-sessions {
+  grid-template-columns: minmax(340px, 1fr) minmax(420px, 1.25fr) minmax(340px, 1fr);
+  grid-template-areas: "programs verify sessions";
+}
+
+#grid.has-programs.has-owed.no-sessions {
+  grid-template-columns: minmax(340px, 1.1fr) minmax(420px, 1fr);
+  grid-template-areas: "programs verify";
+}
+
+#grid.has-programs.no-owed.has-sessions {
+  grid-template-columns: minmax(340px, 1.1fr) minmax(340px, 1fr);
+  grid-template-areas: "programs sessions";
+}
+
+#grid.no-programs.has-owed.has-sessions {
+  grid-template-columns: minmax(420px, 1.1fr) minmax(340px, 1fr);
+  grid-template-areas: "verify sessions";
+}
+
+#grid.has-programs.no-owed.no-sessions {
+  grid-template-columns: 1fr;
+  grid-template-areas: "programs";
+}
+
+#grid.no-programs.has-owed.no-sessions {
+  grid-template-columns: 1fr;
+  grid-template-areas: "verify";
+}
+
+#grid.no-programs.no-owed.has-sessions {
+  grid-template-columns: 1fr;
+  grid-template-areas: "sessions";
+}
+
+/* Columns whose area is not in the active template are REMOVED, not left for
+ * auto-placement: a dangling grid-area spawns implicit tracks that garble the
+ * template (browser finding, round 4b — the live wall rendered verify boxes
+ * in an implicit third column beside the sessions-only grid). display:none
+ * takes them out of placement; their notes stay in the DOM for the pins. */
+
+#grid.no-programs.no-owed #col1-programs,
+#grid.no-programs.no-owed #col2 {
+  display: none;
+}
+
+#grid.no-programs.has-owed #col1-programs {
+  display: none;
+}
+
+#grid.has-programs.no-owed #col2 {
+  display: none;
+}
+
+#grid.has-programs.has-owed.no-sessions #col3-sessions {
+  display: none;
+}
+
+#grid.no-programs.has-owed.no-sessions #col3-sessions {
+  display: none;
+}
+
+#grid.has-programs.no-owed.no-sessions #col3-sessions {
+  display: none;
+}
+
+/* sole-sessions view: the collapsed 240px scroll cap wastes the page — let
+ * the list breathe while keeping it scrollable (base rule stays pinned) */
+
+#grid.one-col .unmapped-rows {
+  max-height: 62vh;
+}
+
+#grid.one-col .col {
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+/* a fully-empty VALID wall: the grid hides entirely — the big hero IS the page */
+
+#grid.is-empty {
+  display: none;
+}
+
+/* ---- round 4: the all-clear hero (index.html ships it hidden between the
+ * banner strip and the grid; renderEmptyHero fills one of two forms) ---- */
+
+#empty-hero.hero--big {
+  margin: 0 var(--s4);
+  padding: 26vh var(--s4) 0;
+  text-align: center;
+}
+
+#empty-hero.hero--big .hero-line {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  color: var(--note);
+}
+
+#empty-hero.hero--big .hero-sub {
+  margin: var(--s2) auto 0;
+  max-width: 640px;
+  color: var(--ink-dim);
+  font-size: 14px;
+}
+
+/* slim form: one context line when programs are absent but content exists */
+
+#empty-hero.hero--slim {
+  margin: 0 var(--s4);
+  padding: var(--s3) 0 0;
+  text-align: center;
+}
+
+#empty-hero.hero--slim .hero-line {
+  color: var(--ink-dim);
+  font-size: 14px;
+}
+
+/* boot readability (round 4, screen 01b): while LIVE waits for the first
+ * state, the middle column's TWO waiting subpanels read as one duplicated
+ * box — collapse the second; the notes stay in the DOM (AC-5 reads them) */
+
+#col2.waiting .subpanel + .subpanel {
+  display: none;
+}
+
+#col2.waiting .subpanel {
+  border-style: dashed;
 }
 
 .col {
@@ -428,13 +595,22 @@ body.panel-open #armed-strip {
   background-image: repeating-linear-gradient(45deg, color-mix(in srgb, var(--stale) 30%, transparent) 0 2px, transparent 2px 6px);
 }
 
-/* the in-chip stamp demotes to micro-mono (text verbatim — SPEC v2.1 §3/05(b)) */
+/* round 4 status variants: the green family reads differently at a glance —
+ * done goes quiet (finished work), in-flight is the LIVE one, parked dims.
+ * Additive over the sev-ok base; no new tokens. */
 
-.chip-stamp {
-  color: var(--ink-dim);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12.5px;
-  font-weight: 600;
+.chip--s-done {
+  color: color-mix(in srgb, var(--note) 55%, var(--ink-dim));
+  border-color: color-mix(in srgb, var(--note) 45%, var(--border));
+  background-color: var(--panel);
+}
+
+.chip--s-in-flight {
+  background-color: color-mix(in srgb, var(--note) 24%, var(--panel-2));
+}
+
+.chip--s-parked {
+  opacity: 0.7;
 }
 
 /* F-5: UNPARSED notes can be arbitrarily long — clamp the note span; the
@@ -534,6 +710,7 @@ body.panel-open #armed-strip {
   padding: 8px;
   background: var(--panel);
   border: 1px solid var(--border);
+  border-left: 3px solid var(--derived); /* round 4: every verify row is "your move" */
   border-radius: var(--r-m);
 }
 
@@ -556,12 +733,31 @@ body.panel-open #armed-strip {
   margin-top: 6px;
 }
 
+/* round 4: COPY VERIFY is THE action of the verify queue — the one amber
+ * control; "Bring ZCode forward" stays the quiet secondary */
+
+.copy-verify-btn {
+  border-color: var(--derived);
+  color: var(--derived);
+}
+
 .merge-card {
   margin-top: 8px;
   padding: 8px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--r-m);
+}
+
+/* round 4: the card's left edge carries readiness — NOT-ready reads as a
+ * loose end (red edge), ready as a green light, before a single word */
+
+.merge-card--not-ready {
+  border-left: 3px solid var(--stale);
+}
+
+.merge-card--ready {
+  border-left: 3px solid var(--note);
 }
 
 /* MR title + pipeline + repo badge share ONE visual line (SPEC 3.2 human row) */
@@ -632,6 +828,11 @@ body.panel-open #armed-strip {
   top: 0;
   right: 0;
   bottom: 0;
+  /* border-box so the DRAWN width is min(420px, 92vw) — round 4 (screens
+   * 07-10): content-box made the panel 33px wider than the armed strip's
+   * dock margin, letting the strip's own background clip the panel's first
+   * field rows even with the boxes nominally abutting. */
+  box-sizing: border-box;
   width: min(420px, 92vw);
   padding: var(--s3) var(--s4) var(--s5);
   overflow-y: auto;
@@ -767,6 +968,25 @@ body.panel-open #armed-strip {
   background: var(--stale);
 }
 
+/* round 4 (screen 01b): before the first poll settles we know nothing —
+ * amber "booting", NOT red (red is for measured staleness, not startup) */
+
+#live-dot.booting {
+  background: var(--derived);
+  animation: boot-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes boot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.45;
+  }
+}
+
 #live-dot.frozen {
   background: var(--stale);
   background-image: repeating-linear-gradient(45deg, color-mix(in srgb, var(--stale) 30%, transparent) 0 2px, transparent 2px 5px);
@@ -887,10 +1107,14 @@ body.panel-open #armed-strip {
   font-weight: 600;
 }
 
+/* round 4 accent discipline: armed = pending human action = the amber "your
+ * move" family (was cyan, which read as informational while a paste is
+ * actively being awaited) */
+
 .armed--armed {
-  border: 2px solid var(--attention);
-  color: var(--attention);
-  background: color-mix(in srgb, var(--attention) 10%, var(--panel));
+  border: 2px solid var(--derived);
+  color: var(--derived);
+  background: color-mix(in srgb, var(--derived) 10%, var(--panel));
 }
 
 .armed--flagged,
@@ -1013,6 +1237,9 @@ body.frozen .chip--derived {
 
 .session-idle {
   color: var(--ink-dim);
+  /* round 4b: ages hang right so the row reads title-left / telemetry-right */
+  margin-left: auto;
+  white-space: nowrap;
 }
 
 .session-idle.stale {
@@ -1101,23 +1328,59 @@ body.frozen .chip--derived {
   max-height: none;
 }
 
+/* round 4: rows group under their dir (the repo path) — the path renders
+ * ONCE per group; a wall of identical rows becomes a few labeled groups */
+
+.unmapped-group {
+  margin-top: var(--s2);
+}
+
+.unmapped-group-head {
+  margin-bottom: 2px;
+  color: var(--ink-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
 .unmapped-row {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 2px 8px;
+  gap: 2px 10px;
   margin-top: 6px;
-  padding: 4px 6px;
+  padding: 5px 8px;
   background: var(--panel-2);
   border: 1px dashed var(--border);
   border-radius: var(--r-m);
   font-size: 14px;
-  color: var(--ink-dim);
+  color: var(--ink);
   cursor: pointer;
 }
 
 .unmapped-row:hover {
   border-color: var(--attention);
+}
+
+/* round 4b: title / age / id are separate segments — the row reads like a
+ * table line at full width (title carries, age and id hang right) */
+
+.unmapped-row .unmapped-title {
+  flex: 1 1 240px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.unmapped-row .unmapped-age {
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+
+.unmapped-row:hover .unmapped-age {
+  color: var(--ink);
 }
 
 /* the trailing dim id span reads as an id: dim monospace micro (SPEC v2.1

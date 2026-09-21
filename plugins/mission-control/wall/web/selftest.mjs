@@ -1177,7 +1177,7 @@ test("T3-step0: mountQA delegates to normalize — exactly one extract/select pi
   assert.deepEqual(named.sel, { appliedCase: "unparsed", unknownCase: false });
 });
 
-test("AC-9[S]: every lane in every fixture maps to its trust chip class + stamped age", () => {
+test("AC-9[S]: every lane in every fixture maps to its trust chip class; the stamp lives ONCE on the card head", () => {
   const items = loadApp().state.items;
   for (const caseName of NINE_CASES) {
     const doc = parseIndexMocks(readWebFile("index.html"))[caseName];
@@ -1216,15 +1216,16 @@ test("AC-9[S]: every lane in every fixture maps to its trust chip class + stampe
           }
         } else {
           assert.ok(text.indexOf(lane.status_parsed) !== -1, "status word " + lane.status_parsed);
-          if (mtime === 0) {
-            assert.ok(text.indexOf("stamped: unknown") !== -1, "mtime 0 -> stamped: unknown");
-          } else {
-            assert.ok(
-              text.indexOf("stamped " + fixedStampAge(mtime)) !== -1,
-              "chip stamp 'stamped <age>' from note_mtime; got: " + text
-            );
-          }
         }
+        // round 4: the authority stamp is PROGRAM-level (note_mtime identical
+        // on every lane) and renders ONCE on the card head — lane rows carry
+        // NO stamp text at all; the unstamped-note trust demotion stays
+        // class-level (chip--stale, asserted above), not as repeated text.
+        assert.equal(
+          text.indexOf("stamped"),
+          -1,
+          caseName + " " + lane.row_id + ": no stamp text on lane rows (stamp lives on the card head)"
+        );
         // derived chips carry the pinned verbatim inline forms
         const sig = lane.signals;
         if (sig && sig.pushed !== null && (sig.pushed.value === true || sig.pushed.value === false)) {
@@ -1798,15 +1799,17 @@ test("AC-17: mix counter from fixture lengths (4 verify · 2 merge); 0-owed idle
   assert.ok(mbtn.classList.contains("nmn-idle"), "0 owed carries the idle styling class");
   assert.ok(!("disabled" in mbtn.attrs), "the idle CTA stays focusable/clickable (never disabled)");
   assert.equal(mbtn.attrs.title, "nothing owed", "idle title");
-  // the idle click still reaches needsMeNow's guard: 'nothing owed' note, zero fetches
+  // the idle click still reaches needsMeNow's guard: zero fetches, and the
+  // transient confirms with its OWN wording (round 4: echoing the persistent
+  // hint's "nothing owed" verbatim read as a duplication bug in the browser)
   const clock = fakeClock(FIXED_NOW_MS);
   const fetchMini = fakeFetchScript([]);
   const idleClick = makeQaApp("minimal", Object.assign({ fetch: fetchMini }, clockDeps(clock)));
   idleClick.dom.getElementById("needs-me-now").click();
   await flushMicrotasks();
   assert.ok(
-    collectText(idleClick.dom.getElementById("topbar")).indexOf("nothing owed") !== -1,
-    "idle click surfaces the nothing-owed inline note"
+    collectText(idleClick.dom.getElementById("topbar")).indexOf("all clear ✓") !== -1,
+    "idle click surfaces the all-clear transient (not an echo of the hint)"
   );
   assert.equal(fetchMini.calls.length, 0, "the idle click issues zero fetches");
 });
@@ -2438,9 +2441,11 @@ test("AC-20: armed wordings verbatim for every status; attention border; null ab
   // pending null -> indicator absent
   assert.equal(slotOf(makeQaApp("pending-null").dom).children.length, 0, "pending-null case");
   assert.equal(slotOf(makeQaApp("minimal").dom).children.length, 0, "wall.pending null");
-  // attention border CSS maps to the attention token
+  // armed border CSS maps to the DERIVED (amber) token — round 4 accent
+  // discipline: armed is "pending human action" (the your-move family), not
+  // cyan-informational; red stays reserved for blocked/broken
   const armedRule = parseCssRules(readWebFile("style.css")).find((r) => r.selector === ".armed--armed" && r.media === "");
-  assert.ok(armedRule && /var\(--attention\)/.test(armedRule.decls["border"]), "armed border uses the attention token");
+  assert.ok(armedRule && /var\(--derived\)/.test(armedRule.decls["border"]), "armed border uses the amber (your-move) token");
 });
 
 test("AC-20 QA demo: cycle exercises prompt-armed -> goal-armed -> cleared tombstone; x sets null-not-mock", () => {
@@ -3706,16 +3711,140 @@ test("panel-sync: one qaArmCycle re-renders the open panel (pending + LAUNCH foc
   assert.ok(!dom.body.classList.contains("panel-open"), "closing clears the panel-open body class");
   const trigger = findByData(dom.getElementById("col1-programs"), "data-row-id", "W2-L7");
   assert.ok((trigger.focusCount || 0) >= 1, "focus restored to the triggering lane");
-  // round 3 (screen 10): the armed strip rides ABOVE the panel stack and its
-  // chip docks beside the open panel, so the strip's controls are clickable
+  // round 3 (screen 10): the armed strip rides ABOVE the panel stack so the
+  // strip's controls are clickable; round 4 (screens 07-10): the dock is an
+  // even right MARGIN — the old padding-right hack kept the full-width strip
+  // box painting its border over the panel's first field row
   const rules = parseCssRules(readWebFile("style.css"));
   const stripRule = rules.find((r) => r.selector === "#armed-strip" && r.media === "");
   assert.ok(stripRule && stripRule.decls["z-index"] === "25", "armed strip sits above the panel/backdrop stack");
   const dockRule = rules.find((r) => r.selector === "body.panel-open #armed-strip" && r.media === "");
   assert.ok(
-    dockRule && /min\(420px, 92vw\)/.test(dockRule.decls["padding-right"] || ""),
-    "the armed chip docks beside the open panel (same width formula)"
+    dockRule && /min\(420px, 92vw\)/.test(dockRule.decls["margin-right"] || ""),
+    "the armed chip docks beside the open panel (margin shrinks the BOX, not just padding)"
   );
+});
+
+// ---------------- round 4: the operator contract ----------------
+
+test("round 4: severity triage order — blocked first, watch second, healthy last (stable inside a tier)", () => {
+  const { dom } = makeQaApp("full");
+  const col1 = dom.getElementById("col1-programs");
+  const secfixCard = byClass(col1, "program-card")[0];
+  const laneIds = byClass(secfixCard, "lane").map((l) => l.attrs["data-row-id"]);
+  // served order was L1..L10; triage order is:
+  //   blocked:  L5 (failed)
+  //   watch:    L4 (partial), L8 (UNPARSED), L9 (stalled), L10 (UNPARSED)
+  //   healthy:  L1, L2, L3, L6, L7 (served order kept inside the tier)
+  assert.deepEqual(
+    laneIds,
+    ["W2-L5", "W2-L4", "W2-L8", "W2-L9", "W2-L10", "W2-L1", "W2-L2", "W2-L3", "W2-L6", "W2-L7"],
+    "a parked/healthy lane may never render above a failed one"
+  );
+});
+
+test("round 4: verify queue renders oldest-first (same order the needs-me-now jump walks)", () => {
+  const { dom } = makeQaApp("full");
+  const verifyIds = byClass(dom.getElementById("panel-verify"), "verify-row").map((r) => r.attrs["data-row-id"]);
+  assert.deepEqual(
+    verifyIds,
+    ["W2-L3", "W2-L4", "W2-L99", "W3-L1"],
+    "finished_ago_s DESC — panel head == jump head (AC-18 fallback walks the same order)"
+  );
+});
+
+test("round 4: NOT-ready merges float above ready ones; readiness rides the card's left edge", () => {
+  const { dom } = makeQaApp("full");
+  const human = dom.getElementById("panel-human");
+  const mergeRefs = byClass(human, "merge-card").map((c) => c.attrs["data-row-id"]);
+  assert.deepEqual(mergeRefs, ["#56", "!34"], "NOT-ready first, stable");
+  assert.ok(byClass(human, "merge-card--not-ready")[0], "not-ready class present");
+  const rules = parseCssRules(readWebFile("style.css"));
+  const notReady = rules.find((r) => r.selector === ".merge-card--not-ready" && r.media === "");
+  const ready = rules.find((r) => r.selector === ".merge-card--ready" && r.media === "");
+  assert.ok(notReady && /var\(--stale\)/.test(notReady.decls["border-left"]), "not-ready edge is red");
+  assert.ok(ready && /var\(--note\)/.test(ready.decls["border-left"]), "ready edge is green");
+});
+
+test("round 4: LIVE boot dot is 'booting' (amber) before the first poll settles — never red", () => {
+  const w = makeLiveWall([], {
+    fetch: function () {
+      return new Promise(function () {}); // never settles: the boot window
+    },
+  });
+  assert.equal(w.app.diagnostics().dot, "booting");
+  const dot = w.dom.getElementById("live-dot");
+  assert.ok(dot.classList.contains("booting"), "booting dot class at boot");
+  assert.ok(!dot.classList.contains("stale"), "no red during a normal boot");
+  const rules = parseCssRules(readWebFile("style.css"));
+  const bootRule = rules.find((r) => r.selector === "#live-dot.booting" && r.media === "");
+  assert.ok(bootRule && /var\(--derived\)/.test(bootRule.decls["background"]), "booting dot is amber, not red");
+});
+
+test("round 4b: hero forms — big on a fully-empty wall, slim with no programs but content, hidden otherwise", () => {
+  const mini = makeQaApp("minimal");
+  const hero = mini.dom.getElementById("empty-hero");
+  assert.ok(hero, "hero shell exists");
+  assert.ok(collectText(hero).indexOf("All clear — nothing needs you right now.") !== -1, "hero line");
+  assert.ok(!hero.attrs.hidden, "hero visible on a fully-empty wall");
+  assert.ok(hero.classList.contains("hero--big"), "big form on a fully-empty wall");
+  assert.ok(mini.dom.getElementById("grid").classList.contains("is-empty"), "grid hides when empty");
+  // the per-panel notes still render underneath (the minimal-case pins read them)
+  assert.ok(collectText(mini.dom.getElementById("panel-verify")).indexOf("nothing to verify") !== -1);
+  const full = makeQaApp("full");
+  assert.ok("hidden" in full.dom.getElementById("empty-hero").attrs, "hero hidden when there is data");
+  assert.ok(!full.dom.getElementById("grid").classList.contains("is-empty"));
+  assert.ok(full.dom.getElementById("grid").classList.contains("has-programs"), "full wall tags all three columns");
+  assert.ok(full.dom.getElementById("grid").classList.contains("has-sessions"));
+});
+
+test("round 4b: adaptive grid — sole content goes full width; empty columns leave the template; CSS templates pinned", () => {
+  // The default live wall shape: no programs, nothing owed, sessions only.
+  const doc = JSON.parse(JSON.stringify(parseIndexMocks(readWebFile("index.html")).minimal));
+  doc.sessions_unmapped = [
+    { id: "s-u1", title: "scratch", dir: "~/repo/a", last_active_ago_s: 60 },
+    { id: "s-u2", title: "", dir: "~/repo/a", last_active_ago_s: 120 },
+    { id: "s-u3", title: "other", dir: "~/repo/b", last_active_ago_s: 30 },
+  ];
+  const dom = buildMockDom(parseIndexMocks(readWebFile("index.html")));
+  const MCW = loadApp();
+  const deps = MCW.createDeps({ document: dom, now: () => FIXED_NOW_MS, location: fakeLocation({}) });
+  const app = MCW.createApp(deps);
+  app.setDocument(doc);
+  app.render();
+  const grid = dom.getElementById("grid");
+  for (const cls of ["no-programs", "no-owed", "has-sessions", "one-col"]) {
+    assert.ok(grid.classList.contains(cls), "grid carries " + cls);
+  }
+  assert.ok(!grid.classList.contains("is-empty"), "sessions exist — not the empty hero");
+  const hero = dom.getElementById("empty-hero");
+  assert.ok(hero.classList.contains("hero--slim"), "slim hero form");
+  assert.ok(collectText(hero).indexOf("3 unmapped sessions below") !== -1, "slim hero names the count");
+  // CSS: the sessions-only template + full-empty hide are pinned
+  const rules = parseCssRules(readWebFile("style.css"));
+  const solo = rules.find((r) => r.selector === "#grid.no-programs.no-owed.has-sessions" && r.media === "");
+  assert.ok(solo && /sessions/.test(solo.decls["grid-template-areas"] || ""), "sessions-only template pinned");
+  const emptyHide = rules.find((r) => r.selector === "#grid.is-empty" && r.media === "");
+  assert.ok(emptyHide && emptyHide.decls["display"] === "none", "fully-empty grid hides behind the big hero");
+  // dangling-area columns must be REMOVED from placement, or their implicit
+  // auto-placed tracks garble the template (round 4b browser finding)
+  const hideIdle = rules.find(
+    (r) => r.selector === "#grid.no-programs.no-owed #col1-programs, #grid.no-programs.no-owed #col2" && r.media === ""
+  );
+  assert.ok(hideIdle && hideIdle.decls["display"] === "none", "contentless columns leave the grid entirely");
+});
+
+test("round 4: unmapped rows group by dir — path renders once per group, id demoted to a copy handle", () => {
+  const { dom } = makeQaApp("full");
+  const strip = byClass(dom.getElementById("col3-sessions"), "unmapped-strip")[0];
+  const groups = byClass(strip, "unmapped-group");
+  assert.equal(groups.length, 2, "two distinct dirs -> two groups");
+  const head0 = collectText(byClass(groups[0], "unmapped-group-head")[0]);
+  assert.ok(head0.indexOf("~/.zcode/s-unmapped-1") !== -1, "group head carries the dir");
+  const row0 = collectText(byClass(groups[0], "unmapped-row")[0]);
+  assert.ok(row0.indexOf("scratch: rebase experiment") !== -1, "row still carries the title");
+  assert.equal(row0.indexOf("~/.zcode/s-unmapped-1"), -1, "the path renders once per group, not per row");
+  assert.ok(collectText(byClass(groups[0], "unmapped-row")[0]).indexOf("s-unmapped-1") !== -1, "short id tail present");
 });
 
 // ---------------- runner ----------------

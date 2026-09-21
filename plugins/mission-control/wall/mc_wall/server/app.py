@@ -241,7 +241,19 @@ class WallRequestHandler(http.server.BaseHTTPRequestHandler):
             elif rest.startswith("assets/"):
                 self._serve_static(rest[len("assets/"):], head_only=head_only)
             else:
-                self._not_found(head_only=head_only)
+                # SPEC v2.1 screen 04: an unknown GET/HEAD route under a VALID
+                # token lands the operator on the wall (302 to the canonical
+                # page) instead of a raw JSON 404. The missing-index case
+                # (rest == "" -> _serve_static) keeps its JSON 404 above; POST
+                # unknown routes keep theirs in _dispatch_post. The Location
+                # target is the server's own canonical token, never user input.
+                self._reply(
+                    302,
+                    b"",
+                    None,
+                    head_only=head_only,
+                    extra_headers={"Location": f"/{ctx.token}/"},
+                )
             return
         # 5. POST routes (T6): guard pipeline, then launch / cancel / re-copy.
         if method == "POST":
