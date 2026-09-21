@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 New changes accumulate here between releases, above the latest version entry (Keep a Changelog convention; the release gates skip this section when reading the head version).
 
+## [1.7.0] - 2026-09-22
+
+Parent-session lineage for the Wall: every workflow-actor cluster and side chat links to the conversation that spawned it, readable at a single glance (PR #6).
+
+### Added
+- **True parent lineage in the state contract** — the tower reads `session.parent_id` from the zcode session db (read-only; verified populated for both workflow actors and side chats) and emits `parent_session_id` on `lanes[].session` and every `sessions_unmapped` row; an older db without the column degrades parents to null, never schema drift. `parent_title` additionally resolves the parent conversation's name by id, unwindowed — the parent chat is usually older than the 24 h session window, exactly when client-side resolution would fail.
+- **Glanceable run clusters (wall)** — the hidden background section leads each run cluster with the parent conversation's title over a dim `project · run <first8> · N actors` meta line; side-chat rows show `↳ <parent title>` plus the project segment (full dir on hover). Unresolvable parents degrade to a short id; the full id always rides the hover; a rare multi-parent run falls back to per-parent sub-heads.
+- **One expandable row per workflow run (projects view)** — same-run actors fold into a single row leading with what the workflow did, counting its actors, expandable in place to the individual rows; expansion survives the 5 s poll rebuilds and the card's session total stays weight-honest.
+- **Parent lineage in the projects view** — background rows show `↳ <parent>` inline (hover still carries the full parent id).
+
+### Changed
+- Run ids demoted to metadata — cluster leads are the task, not the uuid; wrong-typed or missing parent data reads as "no parent", never a crash or a raw id dump.
+
 ## [1.6.0] - 2026-09-22
 
 The Wall UI, redesigned end to end around operator triage: severity-ordered lanes, an adaptive layout with no dead space, a PROJECTS view, and background sessions that stay out of sight until asked (PR #4).
