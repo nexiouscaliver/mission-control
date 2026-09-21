@@ -4121,6 +4121,87 @@ test("round 8: glanceable parent lineage — parent title leads the cluster with
   assert.equal(byClass(plainRow, "project-row-parent").length, 0, "rows without a parent carry no lineage segment");
 });
 
+test("round 9: projects view — same-run workflow actors collapse into ONE expandable row; expansion survives polls", () => {
+  const doc = JSON.parse(JSON.stringify(parseIndexMocks(readWebFile("index.html")).minimal));
+  doc.sessions_unmapped = [
+    { id: "s-main-1", title: "real work", dir: "~/repo/a", last_active_ago_s: 60, parent_session_id: null, parent_title: null },
+    {
+      id: "sess_dwf-dwfrun-abcdef12-3456-7890-abcd-ef1234567890-actor_1_1",
+      title: "workflow subagent actor#@1@1",
+      dir: "~/repo/a",
+      last_active_ago_s: 100,
+      parent_session_id: "s-parent-0",
+      parent_title: "the spawning chat",
+    },
+    {
+      id: "sess_dwf-dwfrun-abcdef12-3456-7890-abcd-ef1234567890-actor_2_1",
+      title: "workflow subagent actor#@2@1",
+      dir: "~/repo/a",
+      last_active_ago_s: 200,
+      parent_session_id: "s-parent-0",
+      parent_title: "the spawning chat",
+    },
+    {
+      // a second, single-actor run in the same project (no parent at all)
+      id: "sess_dwf-dwfrun-dddddddd-3456-7890-abcd-ef1234567890-actor_1_1",
+      title: "workflow subagent actor#@1@1",
+      dir: "~/repo/a",
+      last_active_ago_s: 150,
+      parent_session_id: null,
+      parent_title: null,
+    },
+  ];
+  const dom = buildMockDom(parseIndexMocks(readWebFile("index.html")));
+  const MCW = loadApp();
+  const deps = MCW.createDeps({ document: dom, now: () => FIXED_NOW_MS, location: fakeLocation({}) });
+  const app = MCW.createApp(deps);
+  app.setDocument(doc);
+  app.render();
+  app.setView("projects");
+  const projEl = dom.getElementById("projects-view");
+  byClass(projEl, "projects-bg")[0].click();
+
+  // two runs -> exactly two run rows; the shared-parent one leads with the
+  // parent conversation (what the workflow DID), not the run id
+  const runHeads = byClass(projEl, "project-run-head");
+  assert.equal(runHeads.length, 2, "one run row per distinct workflow run");
+  const sharedHead = runHeads.find((h) => collectText(h).indexOf("the spawning chat") !== -1);
+  assert.ok(sharedHead, "run row leads with the common parent conversation title");
+  assert.ok(collectText(sharedHead).indexOf("2 actors") !== -1, "actor count on the run row");
+  assert.ok(collectText(sharedHead).indexOf("run abcdef12") !== -1, "run id demoted to the dim tail");
+  assert.equal(sharedHead.attrs["aria-expanded"], "false", "run row ships collapsed");
+  const parentlessHead = runHeads.find((h) => h !== sharedHead);
+  assert.ok(
+    collectText(parentlessHead).indexOf("workflow run dddddddd") !== -1,
+    "parentless run keeps the run label as its lead"
+  );
+
+  // actors stay in the DOM under the collapsed container (CSS-hidden, not absent)
+  const actorsEl = byClass(sharedHead.parentNode, "project-run-actors")[0];
+  assert.ok(actorsEl.classList.contains("collapsed"), "actor rows collapsed via class");
+  assert.ok(collectText(actorsEl).indexOf("actor#@1@1") !== -1, "actor rows present in the DOM");
+  assert.equal(byClass(actorsEl, "project-row").length, 2, "two actor rows inside the group");
+
+  // card meta counts every actor session: 1 main + 2 + 1 = 4
+  const meta = collectText(byClass(projEl, "project-meta")[0]);
+  assert.ok(meta.indexOf("4 sessions") !== -1, "card meta counts run-group actors via weight");
+
+  // expand in place; expansion survives a poll rebuild
+  sharedHead.click();
+  assert.equal(sharedHead.attrs["aria-expanded"], "true", "expands on click");
+  assert.ok(!actorsEl.classList.contains("collapsed"), "actor rows revealed");
+  app.render(); // poll tick — ages change, the view rebuilds
+  const headAfter = byClass(dom.getElementById("projects-view"), "project-run-head").find(
+    (h) => collectText(h).indexOf("the spawning chat") !== -1
+  );
+  assert.equal(headAfter.attrs["aria-expanded"], "true", "expansion survives the poll rebuild");
+  const actorsAfter = byClass(headAfter.parentNode, "project-run-actors")[0];
+  assert.ok(!actorsAfter.classList.contains("collapsed"), "actor rows still revealed after rebuild");
+  // collapsed sibling run stays collapsed
+  const otherAfter = byClass(dom.getElementById("projects-view"), "project-run-head").find((h) => h !== headAfter);
+  assert.equal(otherAfter.attrs["aria-expanded"], "false", "unexpanded run stays collapsed");
+});
+
 // ---------------- runner ----------------
 
 async function main() {

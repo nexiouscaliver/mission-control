@@ -439,6 +439,35 @@ body.panel-open #armed-strip {
   color: var(--ink);
 }
 
+/* round 9: one expandable row per workflow run — the run row reads like a
+ * project row (plus actor count + chevron); the actor rows stay in the DOM
+ * under it (collapsed via class, never absence) and indent one level */
+
+.project-run-actors.collapsed {
+  display: none;
+}
+
+.project-run-actors .project-row {
+  margin-left: 16px;
+}
+
+.project-run-count {
+  color: var(--ink-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.project-run-head[aria-expanded="true"]::after {
+  content: " ▴";
+  color: var(--ink-dim);
+}
+
+.project-run-head[aria-expanded="false"]::after {
+  content: " ▾";
+  color: var(--ink-dim);
+}
+
 .project-row-age {
   color: var(--ink-dim);
   white-space: nowrap;

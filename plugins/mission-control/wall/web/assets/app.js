@@ -1153,6 +1153,10 @@
     // Round 6: background sessions are hidden until asked for.
     var backgroundOpen = false; // wall strip: reveal workflow/side-chat rows
     var showBackground = false; // projects view: include them in cards
+    // Round 9: a workflow run's actors collapse into ONE expandable projects
+    // row; the expansion lives HERE (keyed by run id) so 5 s poll rebuilds —
+    // which swap the projects view every tick — never snap it shut.
+    var expandedProjectRuns = {};
     // Reading state across poll rebuilds (user report: the session list
     // snapped to its top every cadence tick). Captured from the live column
     // before the churn-guard swap, re-applied after it.
@@ -2725,7 +2729,7 @@
       function projectFor(name, path) {
         var key = name.toLowerCase();
         if (!projects[key]) {
-          projects[key] = { name: name, path: path || "", items: [] };
+          projects[key] = { name: name, path: path || "", items: [], runs: {} };
           order.push(key);
         } else if (path && !projects[key].path) {
           // an unmapped dir's full path fills in the hover target for a
@@ -2733,6 +2737,14 @@
           projects[key].path = path;
         }
         return projects[key];
+      }
+      // Round 9: workflow-kind items do not render as individual rows — they
+      // accumulate per run on their project and render as ONE expandable row
+      // (ten actor rows repeating one parent was unreadable).
+      function addRunActor(proj, sid, item) {
+        var runKey = workflowRunKey(sid) || "(unknown run)";
+        if (!proj.runs[runKey]) proj.runs[runKey] = [];
+        proj.runs[runKey].push(item);
       }
       if (stateDoc !== null) {
         var progs = MCW.state.items(stateDoc.programs, null).valid;
@@ -2749,18 +2761,21 @@
           for (var j = 0; j < lanes.length; j += 1) {
             var ses = nullable(lanes[j].session);
             if (ses === null || typeof ses.id !== "string" || ses.id === "") continue;
-            if (!showBackground && sessionKind(ses.id, ses.title) !== "main") continue;
+            var laneKind = sessionKind(ses.id, ses.title);
+            if (!showBackground && laneKind !== "main") continue;
             var laneRepo =
               typeof lanes[j].repo === "string" && lanes[j].repo !== ""
                 ? lanes[j].repo
                 : "(unconfigured repo)";
-            projectFor(laneRepo, "").items.push({
+            var laneItem = {
               tag: progName + " · " + lanes[j].row_id,
               title: sessionDisplayTitle(ses),
               age: isInt(ses.last_active_ago_s) ? ses.last_active_ago_s : 0,
               id: ses.id,
               parent: parentInfoFor(ses, pIdx),
-            });
+            };
+            if (laneKind === "workflow") addRunActor(projectFor(laneRepo, ""), ses.id, laneItem);
+            else projectFor(laneRepo, "").items.push(laneItem);
           }
           var master = nullable(progs[i].master);
           if (master !== null && typeof master.session_id === "string" && master.session_id !== "") {
@@ -2778,18 +2793,53 @@
           if (!showBackground && kind !== "main") continue;
           var dir = typeof unmapped[u].dir === "string" && unmapped[u].dir !== "" ? unmapped[u].dir : "(no path)";
           var proj = projectFor(dir === "(no path)" ? dir : baseName(dir), dir);
-          proj.items.push({
+          var item = {
             tag: kind === "workflow" ? "workflow" : kind === "sidechat" ? "side chat" : "unmapped",
             title: typeof unmapped[u].title === "string" && unmapped[u].title !== "" ? unmapped[u].title : "title pending",
             age: isInt(unmapped[u].last_active_ago_s) ? unmapped[u].last_active_ago_s : 0,
             id: typeof unmapped[u].id === "string" ? unmapped[u].id : "",
             parent: parentInfoFor(unmapped[u], pIdx),
-          });
+          };
+          if (kind === "workflow") addRunActor(proj, unmapped[u].id, item);
+          else proj.items.push(item);
         }
       }
       var out = [];
       for (var k = 0; k < order.length; k += 1) {
         var p = projects[order[k]];
+        // Fold accumulated runs into ONE group item each: the run row leads
+        // with what the workflow did (the common parent conversation), counts
+        // its actors, and sorts by its NEWEST actor so the card's ordering
+        // and "newest" math stay honest.
+        for (var rk in p.runs) {
+          if (!Object.prototype.hasOwnProperty.call(p.runs, rk)) continue;
+          var actors = p.runs[rk];
+          var pids = [];
+          var minAge = Infinity;
+          for (var a = 0; a < actors.length; a += 1) {
+            var apid = actors[a].parent !== null ? actors[a].parent.fullId : null;
+            if (apid !== null && pids.indexOf(apid) === -1) pids.push(apid);
+            if (actors[a].age < minAge) minAge = actors[a].age;
+          }
+          var shared = null;
+          if (pids.length === 1) {
+            for (var f = 0; f < actors.length; f += 1) {
+              if (actors[f].parent !== null && actors[f].parent.fullId === pids[0]) {
+                shared = actors[f].parent;
+                break;
+              }
+            }
+          }
+          p.items.push({
+            kind: "run-group",
+            runKey: rk,
+            title: pids.length === 1 && shared !== null ? shared.label : "workflow run " + rk.slice(0, 8),
+            age: minAge,
+            weight: actors.length,
+            parent: shared,
+            actors: actors,
+          });
+        }
         p.items.sort(function (a, b) {
           return a.age - b.age;
         });
@@ -2864,15 +2914,81 @@
       name.setText(p.name);
       if (p.path !== "") name.setAttribute("title", p.path); // hover-only full path
       head.appendChild(name);
+      // Round 9: a run-group item stands for ALL its actor sessions — count
+      // them via weight so "N sessions" stays the honest total.
+      var total = 0;
+      for (var w = 0; w < p.items.length; w += 1) total += p.items[w].weight || 1;
       var meta = el("span");
       meta.classList.add("project-meta");
       meta.setText(
-        p.items.length + " session" + (p.items.length === 1 ? "" : "s") + " · newest " + MCW.util.humanizeAge(p.items[0].age)
+        total + " session" + (total === 1 ? "" : "s") + " · newest " + MCW.util.humanizeAge(p.items[0].age)
       );
       head.appendChild(meta);
       card.appendChild(head);
-      for (var i = 0; i < p.items.length; i += 1) renderProjectRow(card, p.items[i]);
+      for (var i = 0; i < p.items.length; i += 1) {
+        if (p.items[i].kind === "run-group") renderProjectRunGroup(card, p.items[i]);
+        else renderProjectRow(card, p.items[i]);
+      }
       rootEl.appendChild(card);
+    }
+
+    // Round 9: ONE row per workflow run in the projects view — it leads with
+    // what the workflow did (the common parent conversation; the run label
+    // when actors disagree), counts its actors, and expands in place to the
+    // individual actor rows. Expansion lives in expandedProjectRuns (module
+    // var) so the 5 s poll rebuild never snaps it shut (idle-sub pattern).
+    function renderProjectRunGroup(rootEl, g) {
+      var wrap = el("div");
+      wrap.classList.add("project-run");
+      var expanded = expandedProjectRuns[g.runKey] === true;
+      var head = el("div");
+      head.classList.add("project-row");
+      head.classList.add("project-run-head");
+      head.setAttribute("aria-expanded", expanded ? "true" : "false");
+      head.setAttribute(
+        "title",
+        "workflow run " + g.runKey + " — " + g.weight + " actor session" + (g.weight === 1 ? "" : "s")
+      );
+      var tag = el("span");
+      tag.classList.add("project-row-tag");
+      tag.setText("workflow");
+      head.appendChild(tag);
+      var title = el("span");
+      title.classList.add("project-row-title");
+      title.setText(g.title);
+      head.appendChild(title);
+      var count = el("span");
+      count.classList.add("project-run-count");
+      count.setText(g.weight + " actor" + (g.weight === 1 ? "" : "s"));
+      head.appendChild(count);
+      var age = el("span");
+      age.classList.add("project-row-age");
+      age.setText(MCW.util.humanizeAge(g.age));
+      head.appendChild(age);
+      // dim run-id tail: the copy handle lives on the expanded actor rows
+      var runSpan = el("span");
+      runSpan.classList.add("dim");
+      runSpan.setText("run " + g.runKey.slice(0, 8));
+      if (g.runKey.length > 8) runSpan.setAttribute("title", g.runKey);
+      head.appendChild(runSpan);
+      var actorsEl = el("div");
+      actorsEl.classList.add("project-run-actors");
+      if (!expanded) actorsEl.classList.add("collapsed");
+      for (var a = 0; a < g.actors.length; a += 1) renderProjectRow(actorsEl, g.actors[a]);
+      wireClickable(head, function () {
+        var nowExpanded = actorsEl.classList.contains("collapsed");
+        if (nowExpanded) {
+          actorsEl.classList.remove("collapsed");
+          head.setAttribute("aria-expanded", "true");
+        } else {
+          actorsEl.classList.add("collapsed");
+          head.setAttribute("aria-expanded", "false");
+        }
+        expandedProjectRuns[g.runKey] = nowExpanded;
+      });
+      wrap.appendChild(head);
+      wrap.appendChild(actorsEl);
+      rootEl.appendChild(wrap);
     }
 
     function renderProjectsView(rootEl) {
