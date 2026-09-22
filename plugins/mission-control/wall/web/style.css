@@ -178,14 +178,16 @@ button:disabled {
   cursor: not-allowed;
 }
 
-/* one focus language (SPEC v2.1 §4.1): 2px cyan outline, offset 2, everywhere */
+/* one focus language (SPEC v2.1 §4.1): 2px --focus (blue) outline, offset 2, everywhere */
 
 button:focus-visible,
 .lane--launchable:focus-visible,
 .session-row:focus-visible,
 .unmapped-row:focus-visible,
 .unmapped-toggle:focus-visible,
-.idle-sub-head:focus-visible {
+.idle-sub-head:focus-visible,
+.project-row:focus-visible,
+.project-run-head:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
@@ -367,9 +369,12 @@ body.panel-open #armed-strip {
   color: var(--dim);
 }
 
+/* active view toggle = interactive/look-here (design review): blue, not
+ * amber — amber stays reserved for pending human action */
+
 .tb-views button[aria-pressed="true"] {
-  color: var(--amber);
-  border-color: var(--amber);
+  color: var(--blue);
+  border-color: var(--blue);
 }
 
 #projects-view {
@@ -413,8 +418,8 @@ body.panel-open #armed-strip {
 }
 
 .projects-bg[aria-pressed="true"] {
-  color: var(--amber);
-  border-color: var(--amber);
+  color: var(--blue);
+  border-color: var(--blue);
 }
 
 /* signal-panel S5: the projects ledger — headers + hairline rows, containers
@@ -465,7 +470,7 @@ body.panel-open #armed-strip {
 
 .project-row-tag {
   color: var(--dim);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12.5px;
   white-space: nowrap;
 }
@@ -510,7 +515,7 @@ body.panel-open #armed-strip {
 
 .project-run-count {
   color: var(--dim);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12.5px;
   white-space: nowrap;
 }
@@ -531,7 +536,7 @@ body.panel-open #armed-strip {
 }
 
 .project-row .dim {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12.5px;
 }
 
@@ -623,7 +628,7 @@ body.panel-open #armed-strip {
 
 .data-note {
   color: var(--dim);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12.5px;
 }
 
@@ -715,10 +720,8 @@ body.panel-open #armed-strip {
   color: var(--dim);
 }
 
-.stalled-note {
-  color: var(--blue);
-  font-weight: 600;
-}
+/* the standalone blue .stalled-note rule is gone (design review): the
+ * lane-scoped dim rule above always won and is semantically right */
 
 /* forged lanes carry a persistent trailing affordance — visible at rest */
 
@@ -757,43 +760,48 @@ body.panel-open #armed-strip {
 .padlock { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--amber); border: 1px solid color-mix(in srgb, var(--amber) 40%, transparent); background: transparent; padding: 1px 6px; border-radius: 3px; }
 .tag-verify { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--amber); border: 1px solid color-mix(in srgb, var(--amber) 40%, transparent); background: transparent; padding: 1px 6px; border-radius: 3px; }
 
-.legacy-badge,
-.mr-badge {
+/* legacy "launch via master" reads as a quiet outline tag (SPEC v2.1 §3/05(b)) */
+
+.legacy-badge {
   display: inline-flex;
   align-items: center;
   min-height: 26px;
   padding: 2px 8px;
+  border: 1px solid var(--border);
   border-radius: var(--r-s);
-  font-size: 14px;
+  color: var(--dim);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
   font-weight: 600;
 }
 
-/* legacy "launch via master" reads as a quiet outline tag (SPEC v2.1 §3/05(b)) */
-
-.legacy-badge {
-  border: 1px solid var(--border);
-  color: var(--dim);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12.5px;
-}
+/* design review: .mr-badge joins the status-badge outline anatomy (mono 10px
+ * uppercase, transparent bg, 40%-alpha hue border) — the chip-era weight and
+ * --raise fill are gone */
 
 .mr-badge {
   margin-left: 6px;
-  border: 1px solid var(--amber);
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--amber) 40%, transparent);
+  border-radius: var(--r-s);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  background: transparent;
   color: var(--amber);
-  background: var(--raise);
 }
 
 /* T7 (D): per-host hues on top of the !/# glyph prefix (the primary
  * encoding) — gitlab reads blue, github green; the two hosts are impossible
  * to confuse at a distance. Existing tokens only. */
 .mr-badge--gitlab {
-  border-color: var(--blue);
+  border-color: color-mix(in srgb, var(--blue) 40%, transparent);
   color: var(--blue);
 }
 
 .mr-badge--github {
-  border-color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 40%, transparent);
   color: var(--green);
 }
 
@@ -836,13 +844,8 @@ body.panel-open #armed-strip {
   margin-top: 6px;
 }
 
-/* round 4: COPY VERIFY is THE action of the verify queue — the one amber
- * control; "Bring ZCode forward" stays the quiet secondary */
-
-.copy-verify-btn {
-  border-color: var(--amber);
-  color: var(--amber);
-}
+/* COPY VERIFY renders as the solid-white primary (SPEC 3.4) — same family as
+ * NEEDS ME NOW and armed RE-COPY; the design-review amber override is gone. */
 
 .merge-card {
   display: flex;
@@ -972,7 +975,8 @@ body.panel-open #armed-strip {
   right: 0;
   bottom: 0;
   left: 0;
-  background: rgba(4, 8, 12, 0.55);
+  /* same dim-curtain formula as the freeze overlay (design review) */
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
   z-index: 19;
 }
 
@@ -995,7 +999,7 @@ body.panel-open #armed-strip {
 .launch-esc {
   margin-right: var(--s2);
   color: var(--dim);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12.5px;
 }
 
@@ -1125,30 +1129,34 @@ body.panel-open #armed-strip {
   gap: 6px;
 }
 
-/* sp-5: badge grammar (S7) — outline mono rectangle on a hue token; the
- * advisory/freeze modifiers below carry their own hues */
+/* sp-5 + design review: the degraded badges join the status-badge outline
+ * anatomy (S7 / SPEC 3.2) — mono 10px uppercase, transparent bg, 40%-alpha
+ * hue border, color var(--hue); advisory/freeze carry their own hues */
 
 .badge {
   display: inline-flex;
   align-items: center;
-  min-height: 26px;
-  padding: 2px 8px;
-  border: 1px solid var(--faint);
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--faint) 40%, transparent);
   border-radius: var(--r-s);
-  font-size: 14px;
+  font-family: var(--font-mono);
+  font-size: 10px;
   font-weight: 600;
-  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  background: transparent;
+  color: var(--faint);
 }
 
 .badge--advisory {
-  border-color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 40%, transparent);
   color: var(--amber);
 }
 
 /* freeze badge carries the red left edge (SPEC v2.1 §3/15) */
 
 .badge--freeze {
-  border-color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 40%, transparent);
   border-left-width: 3px;
   color: var(--red);
 }
@@ -1270,6 +1278,14 @@ body.panel-open #armed-strip {
   color: var(--dim);
 }
 
+/* design review (A7 latitude): the CLEARED tombstone must not pulse amber —
+ * its dot goes faint and still */
+
+.armed--cleared .armed-dot {
+  background: var(--faint);
+  animation: none;
+}
+
 /* in-chip controls right-align inside the armed chip (SPEC v2.1 §3/08): the
  * FIRST button present takes the auto margin — re-copy on armed states,
  * cancel on goal-armed, the × alone on cleared/flagged — so the whole
@@ -1328,7 +1344,7 @@ body.frozen .sig {
  * the caption (signal-panel S7: hatch replaced) */
 
 .program-card.degraded-notes {
-  border-left: 2px solid var(--amber);
+  border-left: 3px solid var(--amber);
 }
 
 .notes-degraded-caption {
@@ -1487,7 +1503,7 @@ body.frozen .sig {
 .unmapped-group-head {
   margin-bottom: 2px;
   color: var(--dim);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12.5px;
   font-weight: 600;
 }
@@ -1566,7 +1582,7 @@ body.frozen .sig {
  * no family) */
 
 .unmapped-row .dim {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12.5px;
 }
 
@@ -1612,7 +1628,7 @@ body.frozen .sig {
 .unmapped-group-meta {
   margin-top: 1px;
   color: var(--dim);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
 }
 
@@ -1625,7 +1641,7 @@ body.frozen .sig {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--dim);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
 }
 
@@ -1648,7 +1664,7 @@ body.frozen .sig {
   border-radius: var(--r-s);
   background: var(--hover);
   color: var(--ink);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
 }
 
@@ -1673,7 +1689,7 @@ body.frozen .sig {
 .legacy-badge,
 .badge,
 #kbd-hint,
-.launch-panel,
+#launch-panel,
 .lane-go {
   font-family: var(--font-mono);
 }
@@ -1701,6 +1717,22 @@ body.frozen .sig {
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--faint);
+}
+
+/* design review: the micro-label treatment above styles head CONTAINERS, so
+ * their title children inherited faint/uppercase/0.14em — reset the titles to
+ * --ink sentence-case (font-size/weight stay on the per-title rules; the
+ * meta/objective/stamp lines keep the micro treatment). The bare
+ * .project-row-title also covers the run-head's title span so the clickable
+ * run head reads like its sibling rows. */
+
+.card-head .card-title,
+.launch-head .launch-title,
+.project-head .project-name,
+.project-row-title {
+  color: var(--ink);
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 @media (prefers-reduced-motion: reduce) {

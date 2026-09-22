@@ -1117,6 +1117,11 @@
       lastPanelRowId = key;
       lastTrigger = findDataIn(byId("col1-programs"), "row-id", key);
       renderLaunchPanel(hit.prog, hit.lane);
+      // design review: opening clears the [hidden] attribute itself instead
+      // of relying on the CSS !important rule outranking it; close restores it
+      // (same mechanism the backdrop below already uses).
+      var panelEl = byId("launch-panel");
+      if (panelEl) panelEl.removeAttribute("hidden");
       var backdrop = byId("panel-backdrop");
       if (backdrop) {
         backdrop.classList.add("open");
@@ -1136,7 +1141,10 @@
 
     function closeLaunchPanel() {
       var panelEl = byId("launch-panel");
-      if (panelEl) panelEl.classList.remove("open");
+      if (panelEl) {
+        panelEl.classList.remove("open");
+        panelEl.setAttribute("hidden", "");
+      }
       var backdrop = byId("panel-backdrop");
       if (backdrop) {
         backdrop.classList.remove("open");
