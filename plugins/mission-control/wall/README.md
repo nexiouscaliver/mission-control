@@ -204,6 +204,13 @@ every POST /launch 404s unknown-row in production today.
     scripts/             mc_status board CLI + skill deploy helper
     skills/mc-status     the deployed skill source
     tests/               unit tests + tests/integration (both sides of the stack)
+    docs/                design contract + QA screenshots
+
+Design contract: `docs/design-signal-panel.md` is the design contract of
+record for the Signal Panel reskin — the frozen token set, the status
+grammar (7px dot + outline badge; the old provenance chip cipher is
+replaced), the severity map, buttons, and layout rules. Its executable
+form is `node web/selftest.mjs` (104 checks).
 
 Gates (`regenloop/gates.toml`): `python-test` (`.venv/bin/pytest -q`),
 `web-selftest` (`node web/selftest.mjs`), `bin-py-compile`

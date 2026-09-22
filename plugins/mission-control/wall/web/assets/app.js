@@ -284,31 +284,33 @@
         body.appendChild(launch);
       }
       if (!byId("kbd-hint")) {
+        // Signal-panel footer: the severity legend line of record + shortcuts.
+        // Text mirrors index.html's static footer EXACTLY (kbd-hint pins both).
         var kbd = el("footer", "kbd-hint");
         var seg;
         seg = el("span");
-        seg.setText("shortcuts: ");
+        seg.setText("● in-flight ◐ ready ✓ done ✕ failed ◌ parked ? unparsed ⚠ stalled · shortcuts: [");
         kbd.appendChild(seg);
         seg = el("span");
         seg.classList.add("kbd");
         seg.setText("n");
         kbd.appendChild(seg);
         seg = el("span");
-        seg.setText(" needs-me-now · ");
+        seg.setText("] needs-me-now [");
         kbd.appendChild(seg);
         seg = el("span");
         seg.classList.add("kbd");
         seg.setText("r");
         kbd.appendChild(seg);
         seg = el("span");
-        seg.setText(" refresh · ");
+        seg.setText("] refresh [");
         kbd.appendChild(seg);
         seg = el("span");
         seg.classList.add("kbd");
         seg.setText("esc");
         kbd.appendChild(seg);
         seg = el("span");
-        seg.setText(" close panel");
+        seg.setText("] close panel");
         kbd.appendChild(seg);
         body.appendChild(kbd);
       }
@@ -617,10 +619,14 @@
     // above a failed one). Stable tiering — served order is preserved inside a
     // tier: blocked (failed) first, then watch (UNPARSED / partial / a stalled
     // lane / an unstamped note), then everything healthy.
+    // Signal-panel INVARIANT (critic amendment 4): sorting != styling — the
+    // ORDER keeps UNPARSED in the watch tier even though statusSeverity
+    // renders it quiet. The explicit status check below is what holds it.
     function laneSeverityRank(lane, mtime) {
-      var sev = statusSeverity(lane, mtime);
-      if (sev === "chip--sev-blocked") return 0;
-      if (sev === "chip--sev-watch") return 1;
+      var hue = statusSeverity(lane, mtime);
+      var status = typeof lane.status_parsed === "string" && lane.status_parsed !== "" ? lane.status_parsed : "UNPARSED";
+      if (hue === "blocked") return 0;
+      if (hue === "watch" || status === "UNPARSED") return 1;
       return 2;
     }
 
@@ -649,17 +655,22 @@
       parentEl.appendChild(badge);
     }
 
-    // chip grammar v2 (SPEC v2.1 §2.4): the severity axis. Pure — provenance
-    // stays in the pinned chip--note/derived/stale classes; this picks the
-    // additive modifier: failed reads blocked, partial / UNPARSED / a stalled
-    // lane / an unstamped note read watch, everything stamped-and-healthy ok.
+    // Signal-panel severity map (SPEC 3.3): the RENDER hue key consumed by the
+    // dot+badge grammar. Pure — failed reads blocked; partial / a stalled lane /
+    // an unstamped note read watch; UNPARSED / done / parked render quiet; the
+    // live family reads blue; everything stamped-and-healthy reads ok.
     function statusSeverity(lane, mtime) {
       var status = typeof lane.status_parsed === "string" && lane.status_parsed !== "" ? lane.status_parsed : "UNPARSED";
-      if (status === "failed") return "chip--sev-blocked";
-      if (status === "partial" || status === "UNPARSED") return "chip--sev-watch";
-      if (nullable(lane.stalled) !== null) return "chip--sev-watch";
-      if (mtime === 0) return "chip--sev-watch";
-      return "chip--sev-ok";
+      if (status === "failed") return "blocked";
+      if (status === "partial") return "watch";
+      if (nullable(lane.stalled) !== null) return "watch";
+      // A6: UNPARSED drops watch->quiet in RENDER even when unstamped (the
+      // AC-22 unparsed-case pin); unstamped stays watch for every other status.
+      if (status === "UNPARSED") return "quiet";
+      if (mtime === 0) return "watch";
+      if (status === "done" || status === "parked") return "quiet";
+      if (status === "launched" || status === "in-flight") return "live";
+      return "ok";
     }
 
     function renderLane(listEl, mtime, lane) {
@@ -668,38 +679,40 @@
       laneEl.setAttribute("data-row-id", lane.row_id);
 
       var status = typeof lane.status_parsed === "string" && lane.status_parsed !== "" ? lane.status_parsed : "UNPARSED";
-      var chipEl = el("div");
-      chipEl.classList.add("chip");
-      chipEl.classList.add(statusSeverity(lane, mtime)); // additive severity axis
+      var manifest = nullable(lane.manifest);
+      var stalledInfo = nullable(lane.stalled);
+      // Signal-panel status grammar (SPEC 3.2): a 7px dot + outline mono badge
+      // carry the severity hue; the provenance chip cipher is REPLACED.
+      var hue = statusSeverity(lane, mtime);
+      var statusEl = el("div");
+      statusEl.classList.add("status");
+      var dotEl = el("span");
+      dotEl.classList.add("status-dot");
+      dotEl.classList.add("status-dot--" + hue);
+      statusEl.appendChild(dotEl);
+      var badgeEl = el("span");
+      badgeEl.classList.add("status-badge");
+      badgeEl.classList.add("status-badge--" + hue);
+      statusEl.appendChild(badgeEl);
       if (status === "UNPARSED") {
-        // SPEC 5: unknown vocab renders as UNPARSED, never an error.
-        chipEl.classList.add("chip--stale");
-        chipEl.setText("UNPARSED: ");
+        // SPEC 5: unknown vocab renders as a quiet '?', never an error.
+        badgeEl.setText("?");
         var noteSpan = el("span");
         var noteText = typeof lane.status_note === "string" ? lane.status_note : "";
+        noteSpan.classList.add("status-note"); // F-5: clamp; full text on title
         if (noteText === "") {
           noteSpan.classList.add("dim");
           noteSpan.setText("(empty status)");
         } else {
-          noteSpan.classList.add("chip-unparsed-note"); // F-5: clamp; full text on title
           noteSpan.setText(noteText);
           noteSpan.setAttribute("title", noteText);
         }
-        chipEl.appendChild(noteSpan);
+        statusEl.appendChild(noteSpan);
       } else {
-        chipEl.classList.add(mtime === 0 ? "chip--stale" : "chip--note");
-        chipEl.setText(status);
-        // Round 4 de-noise: the authority stamp is PROGRAM-level (note_mtime is
-        // identical on every lane's chip) and lives once on the card head —
-        // repeating "· stamped 22h" on each chip was noise, not information.
-        // The stale provenance demotion (mtime 0 -> chip--stale) is kept: it is
-        // trust grammar, not the stamp text.
+        badgeEl.setText(status);
       }
-      chipEl.classList.add("chip--s-" + status.toLowerCase().replace(/[^a-z0-9]+/g, "-"));
-      var manifest = nullable(lane.manifest);
-      var stalledInfo = nullable(lane.stalled);
-      if (stalledInfo !== null) chipEl.classList.add("stalled"); // treatment, not a 4th level
-      laneEl.appendChild(chipEl);
+      if (stalledInfo !== null) statusEl.classList.add("status--stalled"); // treatment on the container
+      laneEl.appendChild(statusEl);
 
       if (manifest === null) {
         var legacy = el("span");
@@ -711,7 +724,7 @@
         if (mrs.length > 0) {
           var lock = el("span");
           lock.classList.add("padlock");
-          lock.setText("🔒");
+          lock.setText("locked");
           lock.setAttribute("title", "preconditions: " + mrs.join(" · "));
           laneEl.appendChild(lock);
         }
@@ -720,7 +733,7 @@
       var sv = nullable(lane.suggest_verify);
       if (sv !== null) {
         var vtag = el("span");
-        vtag.classList.add("verify-tag");
+        vtag.classList.add("tag-verify");
         vtag.setText("verify?");
         var becauseTxt =
           Array.isArray(sv.because)
@@ -772,14 +785,13 @@
       var sig = nullable(lane.signals);
       var pushed = sig !== null ? nullable(sig.pushed) : null;
       if (pushed !== null && (pushed.value === true || pushed.value === false)) {
-        var pchip = el("div");
-        pchip.classList.add("chip");
-        pchip.classList.add("chip--derived");
-        if (pushed.value === true) {
-          pchip.setText("push: ls-remote " + (isInt(pushed.age_s) ? pushed.age_s : 0) + "s");
-        } else {
-          pchip.setText("push: not pushed");
-        }
+        var pchip = el("span");
+        pchip.classList.add("sig");
+        pchip.setText(
+          pushed.value === true
+            ? "push " + humanizeAge(isInt(pushed.age_s) ? pushed.age_s : 0)
+            : "push —"
+        );
         laneEl.appendChild(pchip);
       }
 
@@ -788,10 +800,9 @@
         var ref = typeof mr.ref === "string" ? mr.ref : mr.ref === null || mr.ref === undefined ? "" : String(mr.ref);
         var mrState = typeof mr.state === "string" ? mr.state : "";
         var mrAge = isInt(mr.age_s) ? mr.age_s : 0;
-        var mchip = el("div");
-        mchip.classList.add("chip");
-        mchip.classList.add("chip--derived");
-        mchip.setText("mr: " + ref + " " + mrState + " " + mrAge + "s");
+        var mchip = el("span");
+        mchip.classList.add("sig");
+        mchip.setText("mr " + ref + " " + mrState + " " + humanizeAge(mrAge));
         var host = typeof mr.repo_host === "string" ? mr.repo_host : "";
         mrBadgeInto(mchip, host, ref);
         laneEl.appendChild(mchip);
@@ -852,12 +863,12 @@
         // Only a successful ls-remote carries a meaningful age (SPEC 6.3: the
         // AGES compose; a false push has none).
         if (pushed !== null && pushed.value === true) {
-          bits.push("push " + (isInt(pushed.age_s) ? pushed.age_s : 0) + "s");
+          bits.push("push " + humanizeAge(isInt(pushed.age_s) ? pushed.age_s : 0));
         }
         var mr = nullable(sig.mr);
         if (mr !== null) {
           var ref = typeof mr.ref === "string" ? mr.ref : mr.ref === null || mr.ref === undefined ? "" : String(mr.ref);
-          bits.push("mr " + ref + " " + (isInt(mr.age_s) ? mr.age_s : 0) + "s");
+          bits.push("mr " + ref + " " + humanizeAge(isInt(mr.age_s) ? mr.age_s : 0));
         }
       }
       return bits;
@@ -958,22 +969,33 @@
       return section;
     }
 
-    // Status mirror chip: the lane's provenance + severity classes re-rendered
-    // inside the panel so the armed decision reads with the lane's color.
+    // Status mirror: the lane's dot+badge grammar re-rendered inside the panel
+    // so the armed decision reads with the lane's hue (same render map).
     function mirrorChipInto(parentEl, lane, mtime) {
       var status = typeof lane.status_parsed === "string" && lane.status_parsed !== "" ? lane.status_parsed : "UNPARSED";
-      var chip = el("div");
-      chip.classList.add("chip");
-      if (status === "UNPARSED" || mtime === 0) chip.classList.add("chip--stale");
-      else chip.classList.add("chip--note");
-      chip.classList.add(statusSeverity(lane, mtime));
+      var hue = statusSeverity(lane, mtime);
+      var statusEl = el("div");
+      statusEl.classList.add("status");
+      var dotEl = el("span");
+      dotEl.classList.add("status-dot");
+      dotEl.classList.add("status-dot--" + hue);
+      statusEl.appendChild(dotEl);
+      var badgeEl = el("span");
+      badgeEl.classList.add("status-badge");
+      badgeEl.classList.add("status-badge--" + hue);
+      statusEl.appendChild(badgeEl);
       if (status === "UNPARSED") {
         var noteText = typeof lane.status_note === "string" ? lane.status_note : "";
-        chip.setText("UNPARSED: " + (noteText !== "" ? noteText : "(empty status)"));
+        badgeEl.setText("?");
+        var noteSpan = el("span");
+        noteSpan.classList.add("status-note");
+        noteSpan.setText(noteText !== "" ? noteText : "(empty status)");
+        statusEl.appendChild(noteSpan);
       } else {
-        chip.setText(status);
+        badgeEl.setText(status);
       }
-      parentEl.appendChild(chip);
+      if (nullable(lane.stalled) !== null) statusEl.classList.add("status--stalled");
+      parentEl.appendChild(statusEl);
     }
 
     function renderLaunchPanel(prog, lane) {
@@ -1095,6 +1117,11 @@
       lastPanelRowId = key;
       lastTrigger = findDataIn(byId("col1-programs"), "row-id", key);
       renderLaunchPanel(hit.prog, hit.lane);
+      // design review: opening clears the [hidden] attribute itself instead
+      // of relying on the CSS !important rule outranking it; close restores it
+      // (same mechanism the backdrop below already uses).
+      var panelEl = byId("launch-panel");
+      if (panelEl) panelEl.removeAttribute("hidden");
       var backdrop = byId("panel-backdrop");
       if (backdrop) {
         backdrop.classList.add("open");
@@ -1114,7 +1141,10 @@
 
     function closeLaunchPanel() {
       var panelEl = byId("launch-panel");
-      if (panelEl) panelEl.classList.remove("open");
+      if (panelEl) {
+        panelEl.classList.remove("open");
+        panelEl.setAttribute("hidden", "");
+      }
       var backdrop = byId("panel-backdrop");
       if (backdrop) {
         backdrop.classList.remove("open");
@@ -1560,12 +1590,12 @@
       // comes from the lane with the same row_id; miss -> age only.
       var lane = MCW.state.laneByRowId(stateDoc, row.row_id);
       var age = isInt(row.finished_ago_s) ? row.finished_ago_s : 0;
-      var ageTxt = age === 0 ? "0s (unknown)" : age + "s";
+      var ageTxt = age === 0 ? "0s (unknown)" : humanizeAge(age);
       var sig = el("div");
       sig.classList.add("verify-signals");
       var statusWord =
         lane !== null && typeof lane.status_parsed === "string" && lane.status_parsed !== ""
-          ? lane.status_parsed + "·"
+          ? lane.status_parsed + " · "
           : "";
       sig.setText("signals: " + statusWord + ageTxt);
       rowEl.appendChild(sig);
@@ -1715,6 +1745,13 @@
       else spanText("not-ready", "NOT ready");
 
       card.appendChild(line);
+      // sp-4 (critic amendment 4): readiness also rides an outline badge
+      // SIBLING of .merge-line so the inline row text stays byte-identical.
+      var badge = el("span");
+      badge.classList.add("ready-badge");
+      badge.classList.add(m.ready === true ? "ready-badge--ok" : "ready-badge--no");
+      badge.setText(m.ready === true ? "ready" : "NOT ready");
+      card.appendChild(badge);
       rootEl.appendChild(card);
     }
 
@@ -2226,20 +2263,26 @@
         if (status === "prompt-armed" || status === "await-birth") {
           wrap.classList.add("armed--armed");
           var tag = typeof rec.lane_tag === "string" ? rec.lane_tag : "";
-          wrap.setText("📋 prompt armed: " + tag + " — paste in ZCode");
+          wrap.setText("prompt armed: " + tag + " — paste in ZCode");
         } else if (status === "goal-armed") {
           wrap.classList.add("armed--armed");
-          wrap.setText("📋 goal copied — paste in the SAME session");
+          wrap.setText("goal copied — paste in the SAME session");
         } else if (status === "flagged") {
           wrap.classList.add("armed--flagged");
-          wrap.setText("🚩 launch flagged — " + (reason !== null ? reason : "check pending"));
+          wrap.setText("launch flagged — " + (reason !== null ? reason : "check pending"));
         } else if (status === "cleared") {
           wrap.classList.add("armed--cleared"); // dim tombstone, not armed styling
-          wrap.setText(reason !== null ? "✔ cleared — " + reason : "✔ cleared");
+          wrap.setText(reason !== null ? "cleared — " + reason : "cleared");
         } else {
           wrap.classList.add("armed--unknown");
           wrap.setText("pending: " + (status !== "" ? status : "unknown"));
         }
+        // sp-4 (A7): the 7px amber pulse dot carries the armed state — the
+        // wordings carry no glyph prefixes. Appended after setText (setText
+        // wipes children); CSS order:-1 renders it ahead of the text.
+        var dot = el("span");
+        dot.classList.add("armed-dot");
+        wrap.appendChild(dot);
         scratch.appendChild(wrap);
 
       var qaMode = deps.location.protocol === "file:";
@@ -3419,14 +3462,15 @@
     return { doc: doc, case: sel.appliedCase, notes: notes };
   }
 
-  // Humanized age (SPEC 3.1): <60s "45s"; <60m "3m"; <24h "2h"; else "4d".
-  // Ages floor at 0; non-numbers degrade to the zero value, never throw.
+  // Humanized age (SPEC 3.1 / signal-panel SPEC 5): <60s "45s"; <60m "3m";
+  // <24h "2h"; else days with ONE decimal when fractional — 250000 -> "2.9d",
+  // 172800 -> "2d". Ages floor at 0; non-numbers degrade to the zero value.
   function humanizeAge(s) {
     var n = typeof s === "number" && isFinite(s) && s > 0 ? Math.floor(s) : 0;
     if (n < 60) return n + "s";
     if (n < 3600) return Math.floor(n / 60) + "m";
     if (n < 86400) return Math.floor(n / 3600) + "h";
-    return Math.floor(n / 86400) + "d";
+    return Math.round((n / 86400) * 10) / 10 + "d";
   }
 
   // Lane lookup by row_id (T4: feeds the verify-row signals line and any other

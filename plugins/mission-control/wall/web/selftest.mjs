@@ -579,23 +579,25 @@ test("AC-26: 18 text pairs >= 4.5:1 and status colors >= 3:1 vs panel", () => {
   const tokens = parseRootTokens(readWebFile("style.css"));
   const required = [
     "--bg",
-    "--panel",
-    "--panel-2",
+    "--raise",
+    "--hover",
     "--border",
+    "--border-2",
     "--ink",
-    "--ink-dim",
-    "--note",
-    "--derived",
-    "--stale",
-    "--attention",
+    "--dim",
+    "--faint",
+    "--green",
+    "--amber",
+    "--red",
+    "--blue",
   ];
   for (const t of required) {
-    assert.ok(tokens[t], "missing :root token " + t + " (SPEC section 10 token table)");
+    assert.ok(tokens[t], "missing :root token " + t + " (signal-panel SPEC section 3.1 token table)");
     // NaN guard: a malformed token must fail loudly, not slip through NaN < 4.5
     assert.match(tokens[t], /^#[0-9a-f]{6}$/i, t + " must be a 6-digit hex token, got " + tokens[t]);
   }
-  const textFgs = ["--ink", "--ink-dim", "--note", "--derived", "--stale", "--attention"];
-  const bgs = ["--bg", "--panel", "--panel-2"];
+  const textFgs = ["--ink", "--dim", "--green", "--amber", "--red", "--blue"];
+  const bgs = ["--bg", "--raise", "--hover"];
   const lows = [];
   for (const fg of textFgs) {
     for (const bg of bgs) {
@@ -604,12 +606,13 @@ test("AC-26: 18 text pairs >= 4.5:1 and status colors >= 3:1 vs panel", () => {
     }
   }
   assert.deepEqual(lows, [], "text pairs below 4.5:1: " + lows.join("; "));
-  const chipLows = [];
-  for (const c of ["--note", "--derived", "--stale"]) {
-    const r = contrastRatio(tokens[c], tokens["--panel"]);
-    if (r < 3) chipLows.push(c + " vs panel = " + r.toFixed(2) + ":1");
+  // --faint is scoped to 11px micro-labels (spec assumption A2): >= 3:1 only.
+  const faintLows = [];
+  for (const bg of bgs) {
+    const r = contrastRatio(tokens["--faint"], tokens[bg]);
+    if (r < 3) faintLows.push("--faint on " + bg + " = " + r.toFixed(2) + ":1");
   }
-  assert.deepEqual(chipLows, [], "chip border/dot colors below 3:1 vs panel: " + chipLows.join("; "));
+  assert.deepEqual(faintLows, [], "micro-label --faint below 3:1: " + faintLows.join("; "));
 });
 
 // =====================================================================
@@ -1101,7 +1104,7 @@ test("AC-23 L4: nullable — wrong-typed nullables read as null; ladder never th
   }
 });
 
-test("T2-util: humanizeAge bands (45s / 3m / 2h / 4d; floors 0, negative, non-number)", () => {
+test("T2-util: humanizeAge bands (45s / 3m / 2h / 2.9d / 4d; floors 0, negative, non-number)", () => {
   const h = loadApp().util.humanizeAge;
   assert.equal(h(0), "0s");
   assert.equal(h(45), "45s");
@@ -1113,6 +1116,8 @@ test("T2-util: humanizeAge bands (45s / 3m / 2h / 4d; floors 0, negative, non-nu
   assert.equal(h(7200), "2h");
   assert.equal(h(86399), "23h");
   assert.equal(h(86400), "1d");
+  assert.equal(h(172800), "2d", "whole days drop the trailing .0");
+  assert.equal(h(250000), "2.9d", "fractional days gain ONE decimal (SPEC 5 / A5)");
   assert.equal(h(345600), "4d");
   assert.equal(h(-5), "0s", "ages floor at 0 (SPEC 3.1)");
   assert.equal(h("x"), "0s", "non-number degrades to the zero value");
@@ -1177,11 +1182,25 @@ test("T3-step0: mountQA delegates to normalize — exactly one extract/select pi
   assert.deepEqual(named.sel, { appliedCase: "unparsed", unknownCase: false });
 });
 
-test("AC-9[S]: every lane in every fixture maps to its trust chip class; the stamp lives ONCE on the card head", () => {
+test("AC-9[S]: every lane in every fixture maps to its status dot+badge pair; the stamp lives ONCE on the card head", () => {
   const items = loadApp().state.items;
+  // the §3.3 render map, restated from the fixture data (the same rules app.js applies)
+  function hueOf(lane, mtime) {
+    const status = lane.status_parsed === "" || lane.status_parsed === undefined ? "UNPARSED" : lane.status_parsed;
+    if (status === "failed") return "blocked";
+    if (status === "partial") return "watch";
+    if (lane.stalled !== null) return "watch";
+    // A6: UNPARSED renders quiet even unstamped (the AC-22 unparsed-case pin);
+    // unstamped stays watch for every other status.
+    if (status === "UNPARSED") return "quiet";
+    if (mtime === 0) return "watch";
+    if (status === "done" || status === "parked") return "quiet";
+    if (status === "launched" || status === "in-flight") return "live";
+    return "ok";
+  }
   for (const caseName of NINE_CASES) {
     const doc = parseIndexMocks(readWebFile("index.html"))[caseName];
-    // T5: an L0-invalid doc (no-schema-version) renders BLANK panels (SPEC 3.3) — no chips to assert
+    // T5: an L0-invalid doc (no-schema-version) renders BLANK panels (SPEC 3.3) — no status to assert
     if (!loadApp().state.validateDoc(doc).ok) continue;
     const { dom } = makeQaApp(caseName);
     const col1 = dom.getElementById("col1-programs");
@@ -1191,57 +1210,58 @@ test("AC-9[S]: every lane in every fixture maps to its trust chip class; the sta
       for (const lane of items(prog.lanes, "row_id").valid) {
         const laneEl = findByData(col1, "data-row-id", lane.row_id);
         assert.ok(laneEl, caseName + ": lane " + lane.row_id + " must render with data-row-id");
-        const chips = byClass(laneEl, "chip");
-        assert.ok(chips.length >= 1, caseName + " " + lane.row_id + ": at least one chip");
-        // truth level: UNPARSED or an unstamped authority (note_mtime 0) is stale;
-        // everything else is a solid note-status chip (SPEC 5)
-        const wantClass =
-          lane.status_parsed === "UNPARSED" || mtime === 0 ? "chip--stale" : "chip--note";
-        const matching = chips.filter((c) => c.classList.contains(wantClass));
+        const statuses = byClass(laneEl, "status");
+        assert.equal(statuses.length, 1, caseName + " " + lane.row_id + ": exactly one .status");
+        const want = hueOf(lane, mtime);
+        const dots = byClass(statuses[0], "status-dot");
+        const badges = byClass(statuses[0], "status-badge");
+        assert.equal(dots.length, 1, caseName + " " + lane.row_id + ": exactly one status-dot");
+        assert.equal(badges.length, 1, caseName + " " + lane.row_id + ": exactly one status-badge");
         assert.ok(
-          matching.length >= 1,
-          caseName + " " + lane.row_id + " (" + lane.status_parsed + ", mtime " + mtime +
-            ") needs a " + wantClass + " chip"
+          dots[0].classList.contains("status-dot--" + want),
+          caseName + " " + lane.row_id + " (" + lane.status_parsed + ", mtime " + mtime + "): needs a status-dot--" + want
         );
-        const text = collectText(laneEl);
+        assert.ok(
+          badges[0].classList.contains("status-badge--" + want),
+          caseName + " " + lane.row_id + " (" + lane.status_parsed + ", mtime " + mtime + "): needs a status-badge--" + want
+        );
         if (lane.status_parsed === "UNPARSED") {
-          assert.ok(text.indexOf("UNPARSED:") !== -1, "UNPARSED prefix on " + lane.row_id);
+          // SPEC 5: unknown vocab renders as a quiet '?', never an error.
+          assert.equal(collectText(badges[0]), "?", "UNPARSED badge text '?' on " + lane.row_id);
+          const notes = byClass(statuses[0], "status-note");
+          assert.equal(notes.length, 1, "UNPARSED note via .status-note on " + lane.row_id);
           if (lane.status_note === "") {
-            assert.ok(text.indexOf("(empty status)") !== -1, "empty status placeholder on " + lane.row_id);
+            assert.equal(collectText(notes[0]), "(empty status)", "empty status placeholder on " + lane.row_id);
           } else {
-            assert.ok(
-              text.indexOf(lane.status_note) !== -1,
+            assert.equal(
+              collectText(notes[0]),
+              lane.status_note,
               "status_note verbatim on " + lane.row_id + ": " + lane.status_note
             );
           }
         } else {
-          assert.ok(text.indexOf(lane.status_parsed) !== -1, "status word " + lane.status_parsed);
+          assert.equal(collectText(badges[0]), lane.status_parsed, "status word badge on " + lane.row_id);
         }
-        // round 4: the authority stamp is PROGRAM-level (note_mtime identical
-        // on every lane) and renders ONCE on the card head — lane rows carry
-        // NO stamp text at all; the unstamped-note trust demotion stays
-        // class-level (chip--stale, asserted above), not as repeated text.
+        // round 4 KEEP: the authority stamp is PROGRAM-level and renders ONCE on
+        // the card head — lane rows carry NO stamp text at all.
+        const text = collectText(laneEl);
         assert.equal(
           text.indexOf("stamped"),
           -1,
           caseName + " " + lane.row_id + ": no stamp text on lane rows (stamp lives on the card head)"
         );
-        // derived chips carry the pinned verbatim inline forms
+        // derived bits humanized via the app's own humanizeAge (SPEC 5)
+        const h = loadApp().util.humanizeAge;
         const sig = lane.signals;
         if (sig && sig.pushed !== null && (sig.pushed.value === true || sig.pushed.value === false)) {
-          const want =
-            sig.pushed.value === true
-              ? "push: ls-remote " + sig.pushed.age_s + "s"
-              : "push: not pushed";
-          const chip = chips.find((c) => collectText(c).indexOf(want) !== -1);
-          assert.ok(chip, caseName + " " + lane.row_id + ": derived chip '" + want + "'");
-          assert.ok(chip.classList.contains("chip--derived"), want + " must be chip--derived");
+          const want = sig.pushed.value === true ? "push " + h(sig.pushed.age_s) : "push —";
+          const chip = byClass(laneEl, "sig").find((c) => collectText(c).indexOf(want) !== -1);
+          assert.ok(chip, caseName + " " + lane.row_id + ": derived sig '" + want + "'");
         }
         if (sig && sig.mr !== null) {
-          const want = "mr: " + sig.mr.ref + " " + sig.mr.state + " " + sig.mr.age_s + "s";
-          const chip = chips.find((c) => collectText(c).indexOf(want) !== -1);
-          assert.ok(chip, caseName + " " + lane.row_id + ": derived chip '" + want + "'");
-          assert.ok(chip.classList.contains("chip--derived"), want + " must be chip--derived");
+          const want = "mr " + sig.mr.ref + " " + sig.mr.state + " " + h(sig.mr.age_s);
+          const chip = byClass(laneEl, "sig").find((c) => collectText(c).indexOf(want) !== -1);
+          assert.ok(chip, caseName + " " + lane.row_id + ": derived sig '" + want + "'");
         }
       }
     }
@@ -1317,9 +1337,10 @@ test("AC-13: full census render — statuses, UNPARSED verbatim, legacy, STALLED
   for (const s of ["forged", "launched", "done", "partial", "failed", "parked", "in-flight"]) {
     assert.ok(text.indexOf(s) !== -1, "status word " + s + " must render");
   }
-  // UNPARSED chip: status_note verbatim
+  // UNPARSED lane: quiet '?' badge + status_note verbatim
   const l8 = findByData(col1, "data-row-id", "W2-L8");
-  assert.ok(l8 && byClass(l8, "chip--stale").length >= 1, "UNPARSED chip is stale-styled");
+  assert.ok(l8 && byClass(l8, "status-badge--quiet").length >= 1, "UNPARSED badge is quiet-styled");
+  assert.equal(collectText(byClass(l8, "status-badge")[0]), "?", "UNPARSED badge text '?'");
   assert.ok(collectText(l8).indexOf("Waiting on CI!!") !== -1, "status_note verbatim");
   // empty status_note -> dim placeholder
   const l10 = findByData(col1, "data-row-id", "W2-L10");
@@ -1328,29 +1349,31 @@ test("AC-13: full census render — statuses, UNPARSED verbatim, legacy, STALLED
   const l2 = findByData(col1, "data-row-id", "W2-L2");
   assert.ok(byClass(l2, "legacy-badge").length >= 1, "legacy badge on manifest:null lane");
   assert.ok(collectText(l2).indexOf("launch via master") !== -1, "launch via master note");
-  // STALLED treatment: because + last_event verbatim, attention class on the chip
+  // STALLED treatment: because + last_event verbatim, status--stalled on the container
   const l9 = findByData(col1, "data-row-id", "W2-L9");
-  assert.ok(l9 && byClass(l9, "stalled").length >= 1, "stalled class on the lane's chip");
+  assert.ok(l9 && byClass(l9, "status--stalled").length >= 1, "status--stalled on the lane's status");
   assert.ok(collectText(l9).indexOf("inactive for 21600s > stall_t 6h") !== -1, "because verbatim");
   assert.ok(collectText(l9).indexOf("queue.md mtime at 21600s ago") !== -1, "last_event verbatim");
-  // parked chip
+  // parked lane renders quiet
   const l6 = findByData(col1, "data-row-id", "W2-L6");
   assert.ok(l6 && collectText(l6).indexOf("parked") !== -1, "parked renders");
-  assert.ok(byClass(l6, "chip--note").length >= 1, "parked chip keeps note trust level");
-  // padlock lane (manifest non-null, precondition_mrs ["!12"]) + CSS attention mapping
+  assert.ok(byClass(l6, "status-badge--quiet").length >= 1, "parked badge renders quiet");
+  // padlock lane (manifest non-null, precondition_mrs ["!12"]) + amber CSS mapping
   const l3 = findByData(col1, "data-row-id", "W2-L3");
   const locks = byClass(l3, "padlock");
-  assert.ok(locks.length >= 1, "padlock glyph on locked lane");
-  assert.ok(collectText(locks[0]).indexOf("🔒") !== -1, "padlock glyph text");
+  assert.ok(locks.length >= 1, "padlock badge on locked lane");
+  assert.equal(collectText(locks[0]).trim(), "locked", "padlock text is the word 'locked'");
+  assert.ok(collectText(col1).indexOf("🔒") === -1, "no padlock emoji anywhere in col1");
+  assert.equal(locks[0].attrs.title, "preconditions: !12", "title still lists precondition_mrs");
   const css = readWebFile("style.css");
   const tokens = parseRootTokens(css);
   const padRule = parseCssRules(css).find((r) => r.selector === ".padlock" && r.media === "");
   assert.ok(padRule && padRule.decls["color"], ".padlock color rule must exist");
   const m = /var\((--[\w-]+)\)/.exec(padRule.decls["color"]);
   assert.ok(m, "padlock color must reference a :root token");
-  assert.equal(tokens[m[1]], tokens["--attention"], "padlock maps to --attention");
+  assert.equal(tokens[m[1]], tokens["--amber"], "padlock maps to --amber");
   assert.notEqual(tokens[m[1]], tokens["--border"], "padlock must never be the hairline grey");
-  assert.notEqual(tokens[m[1]], tokens["--ink-dim"], "padlock must never be the dim grey");
+  assert.notEqual(tokens[m[1]], tokens["--dim"], "padlock must never be the dim grey");
 });
 
 test("AC-21: mr badges derive from repo_host (!N/#N verbatim, unknown host neutral, never parsed from ref)", () => {
@@ -1438,46 +1461,53 @@ test("AC-21: mr badges derive from repo_host (!N/#N verbatim, unknown host neutr
   );
 });
 
-test("AC-26: chip floors + trust borders/dots resolve to status tokens; flash defined", () => {
+test("AC-26: status dot+badge anatomy resolve to hue tokens; flash defined", () => {
   const css = readWebFile("style.css");
   const tokens = parseRootTokens(css);
   const rules = parseCssRules(css);
-  const chip = rules.find((r) => r.selector === ".chip" && r.media === "");
-  assert.ok(chip, "unconditional .chip base rule");
-  assert.ok(parseFloat(chip.decls["font-size"]) >= 14, "chip font-size >= 14px");
-  assert.ok(parseInt(chip.decls["font-weight"], 10) >= 600, "chip font-weight >= 600");
-  assert.ok(parseFloat(chip.decls["min-height"]) >= 26, "chip min-height >= 26px");
-  // trust borders: line style + status token per level
-  const noteRule = rules.find((r) => r.selector === ".chip--note" && r.media === "");
-  const derivedRule = rules.find((r) => r.selector === ".chip--derived" && r.media === "");
-  const staleRule = rules.find((r) => r.selector === ".chip--stale" && r.media === "");
-  assert.ok(noteRule && derivedRule && staleRule, "all three trust chip rules exist");
-  assert.equal(noteRule.decls["border"], "2px solid var(--note)", "note chip: SOLID border in --note");
-  assert.equal(derivedRule.decls["border"], "2px dashed var(--derived)", "derived chip: DASHED border in --derived");
-  assert.equal(staleRule.decls["border"], "2px solid var(--stale)", "stale chip border in --stale");
-  assert.match(staleRule.decls["background-image"], /repeating-linear-gradient/, "stale chip: HATCHED background");
-  assert.match(staleRule.decls["background-image"], /var\(--stale\)\s+30%/, "hatch stripes use --stale at ~30% alpha");
-  // corner dots: filled disk / thin open outline / thick hollow donut
-  const dotNote = rules.find((r) => r.selector === ".chip--note::after" && r.media === "");
-  const dotDerived = rules.find((r) => r.selector === ".chip--derived::after" && r.media === "");
-  const dotStale = rules.find((r) => r.selector === ".chip--stale::after" && r.media === "");
-  assert.ok(dotNote && dotDerived && dotStale, "all three corner-dot rules exist");
-  assert.equal(dotNote.decls["background"], "var(--note)", "note dot = FILLED disk");
-  assert.equal(dotNote.decls["border-radius"], "50%");
-  assert.equal(dotDerived.decls["border"], "1.5px solid var(--derived)", "derived dot = thin OPEN outline");
-  assert.equal(dotDerived.decls["background"], "transparent");
-  assert.ok(parseFloat(dotStale.decls["border"]) >= 3, "stale dot = HOLLOW donut ring >= 3px");
-  assert.equal(dotStale.decls["background"], "transparent");
-  assert.equal(dotStale.decls["border-radius"], "50%");
-  // every var() referenced by the chip rules resolves to a :root token
-  for (const rule of [noteRule, derivedRule, staleRule, dotNote, dotDerived, dotStale]) {
+  const dot = rules.find((r) => r.selector === ".status-dot" && r.media === "");
+  assert.ok(dot, "unconditional .status-dot rule");
+  assert.equal(dot.decls["width"], "7px", "status-dot width 7px");
+  assert.equal(dot.decls["height"], "7px", "status-dot height 7px");
+  assert.equal(dot.decls["border-radius"], "50%", "status-dot is a circle");
+  const badge = rules.find((r) => r.selector === ".status-badge" && r.media === "");
+  assert.ok(badge, "unconditional .status-badge rule");
+  assert.equal(badge.decls["font-size"], "10px", "badge font-size 10px");
+  assert.equal(badge.decls["text-transform"], "uppercase", "badge uppercase");
+  assert.equal(badge.decls["letter-spacing"], "0.08em", "badge letter-spacing 0.08em");
+  assert.equal(badge.decls["background"], "transparent", "outline badge: NO fills");
+  assert.equal(badge.decls["padding"], "1px 6px", "badge padding 1px 6px");
+  assert.ok(parseFloat(badge.decls["border-radius"]) <= 4, "badge radius <= 4px");
+  assert.ok(/--font-mono/.test(badge.decls["font-family"] || ""), "badge references --font-mono");
+  // hue modifiers: text + 40%-alpha outline border on the badge, solid dot fill
+  const hueToken = { ok: "--green", watch: "--amber", blocked: "--red", live: "--blue", quiet: "--faint" };
+  const grammarRules = [dot, badge];
+  for (const hue of ["ok", "watch", "blocked", "live", "quiet"]) {
+    const tok = hueToken[hue];
+    const bRule = rules.find((r) => r.selector === ".status-badge--" + hue && r.media === "");
+    assert.ok(bRule, ".status-badge--" + hue + " rule exists");
+    assert.equal(bRule.decls["color"], "var(" + tok + ")", hue + " badge text color");
+    assert.equal(
+      bRule.decls["border"],
+      "1px solid color-mix(in srgb, var(" + tok + ") 40%, transparent)",
+      hue + " badge 40%-alpha outline border"
+    );
+    const dRule = rules.find((r) => r.selector === ".status-dot--" + hue && r.media === "");
+    assert.ok(dRule, ".status-dot--" + hue + " rule exists");
+    assert.equal(dRule.decls["background"], "var(" + tok + ")", hue + " dot background");
+    grammarRules.push(bRule, dRule);
+  }
+  // every var() referenced by the grammar rules resolves to a :root token
+  for (const rule of grammarRules) {
     for (const decl of Object.keys(rule.decls)) {
       const vm = /var\((--[\w-]+)\)/.exec(rule.decls[decl]);
       if (vm) assert.ok(tokens[vm[1]], decl + " references unknown token " + vm[1]);
     }
   }
-  // flash class defined (the T4 jump primitive T3 pins)
-  assert.ok(rules.find((r) => r.selector === ".flash" && r.media === ""), ".flash must be defined");
+  // flash class defined (the T4 jump primitive T3 pins), now on the blue token
+  const flash = rules.find((r) => r.selector === ".flash" && r.media === "");
+  assert.ok(flash, ".flash must be defined");
+  assert.ok(/var\(--blue\)/.test(flash.decls["outline"] || ""), ".flash outline rides --blue");
 });
 
 test("AC-34: LIVE LAUNCH design-off (disabled + note + zero fetch); QA demo cycles the override", () => {
@@ -1681,20 +1711,23 @@ test("AC-14: verify rows — signals line forms, master forms, COPY VERIFY wired
   assert.strictEqual(laneByRowId(mocks.full, "W2-L99"), null, "lookup miss -> null");
   assert.strictEqual(laneByRowId(null, "W2-L3"), null, "null doc degrades");
 
+  // signals lines: "signals: <status> · <humanized age>" via the app's own
+  // humanizeAge; the miss case drops the status word, age 0 stays literal.
+  const h = MCW.util.humanizeAge;
   const l3 = findByData(pv, "data-row-id", "W2-L3");
   assert.ok(l3, "verify row carries data-row-id");
   assert.ok(collectText(l3).indexOf("W2-L3 · secfix") !== -1, "caption row_id · program");
-  assert.ok(collectText(l3).indexOf("signals: done·250000s") !== -1, "signals: <status>·<age>s (banned-word-safe)");
+  assert.ok(collectText(l3).indexOf("signals: done · " + h(250000)) !== -1, "signals: <status> · <age> (banned-word-safe)");
   assert.ok(collectText(l3).indexOf("master s-master-1") !== -1, "master <hint> when non-empty");
   const l4 = findByData(pv, "data-row-id", "W2-L4");
-  assert.ok(collectText(l4).indexOf("signals: partial·2400s") !== -1, "status via row_id->lane lookup");
+  assert.ok(collectText(l4).indexOf("signals: partial · " + h(2400)) !== -1, "status via row_id->lane lookup");
   const l99 = findByData(pv, "data-row-id", "W2-L99");
-  assert.ok(collectText(l99).indexOf("signals: 600s") !== -1, "lookup miss drops the status word");
+  assert.ok(collectText(l99).indexOf("signals: " + h(600)) !== -1, "lookup miss drops the status word");
   const mLine = byClass(l99, "verify-master")[0];
   assert.ok(mLine.classList.contains("dim"), "no-master note is dim");
   assert.ok(collectText(mLine).indexOf("no master mapped") !== -1, "no master mapped note");
   const l1om = findByData(pv, "data-row-id", "W3-L1");
-  assert.ok(collectText(l1om).indexOf("signals: done·0s (unknown)") !== -1, "finished_ago_s 0 -> '0s (unknown)'");
+  assert.ok(collectText(l1om).indexOf("signals: done · 0s (unknown)") !== -1, "finished_ago_s 0 -> '0s (unknown)'");
   const copyDisabled = byClass(l1om, "copy-verify-btn")[0];
   assert.ok("disabled" in copyDisabled.attrs, "COPY VERIFY disabled when verify_cmd === ''");
   assert.ok(
@@ -1737,8 +1770,10 @@ test("AC-15: merge cards — one inline row, badges, ready/pipeline states, unkn
   assert.ok(collectText(ph).indexOf("HUMAN ACTIONS OWED") !== -1, "sub-panel header");
   const c34 = findByData(ph, "data-row-id", "!34");
   assert.ok(c34, "merge card carries data-row-id=<ref>");
+  // critic-2 fix c: the exact-row pins describe the INLINE row — scope them to
+  // .merge-line so the appended ready-badge sibling cannot perturb them
   assert.equal(
-    collectText(c34),
+    collectText(byClass(c34, "merge-line")[0]),
     "[cleo] !34 secfix: join hardening — pipeline: green · ready",
     "exact inline row: [repo] badge title — pipeline · ready"
   );
@@ -1746,21 +1781,33 @@ test("AC-15: merge cards — one inline row, badges, ready/pipeline states, unkn
   assert.equal(collectText(byClass(c34, "mr-badge")[0]), "!34", "gitlab ref badge verbatim");
   const c56 = findByData(ph, "data-row-id", "#56");
   assert.equal(
-    collectText(c56),
+    collectText(byClass(c56, "merge-line")[0]),
     "[omniforge] #56 secfix: partial band fix — pipeline: unknown · NOT ready",
     "ready:false -> NOT ready; empty pipeline -> pipeline: unknown"
   );
   assert.equal(collectText(byClass(c56, "mr-badge")[0]), "#56", "github ref badge verbatim");
   assert.ok(byClass(c56, "pipeline-unknown")[0], "empty-pipeline span");
   assert.ok(byClass(c56, "not-ready").length >= 1, "NOT ready span");
-  // single visual line is CSS-pinned; pipeline: unknown is stale-styled
+  // sp-4 (critic amendment 4): readiness also rides a ready-badge SIBLING of
+  // .merge-line (outside it) — the inline row text stays byte-identical
+  for (const card of byClass(ph, "merge-card")) {
+    const badge = byClass(card, "ready-badge")[0];
+    assert.ok(badge, "every merge card carries a ready-badge");
+    assert.ok(badge.parentNode === card, "the badge is a SIBLING of .merge-line (outside it)");
+    const badgeTxt = collectText(badge);
+    assert.ok(badgeTxt === "ready" || badgeTxt === "NOT ready", "badge text ready/NOT ready: '" + badgeTxt + "'");
+  }
+  assert.equal(collectText(byClass(c34, "ready-badge")[0]), "ready", "ready card badge text");
+  assert.equal(collectText(byClass(c56, "ready-badge")[0]), "NOT ready", "not-ready card badge text");
+  // single visual line is CSS-pinned; pipeline: unknown is amber
   const css = readWebFile("style.css");
   const rules = parseCssRules(css);
   const line = rules.find((r) => r.selector === ".merge-line" && r.media === "");
   assert.ok(line, ".merge-line rule exists");
   assert.equal(line.decls["flex-wrap"], "nowrap", "merge row never stacks");
+  assert.equal(line.decls["white-space"], "nowrap", "merge row stays a single visual line");
   const pu = rules.find((r) => r.selector === ".pipeline-unknown" && r.media === "");
-  assert.ok(pu && /var\(--stale\)/.test(pu.decls["color"]), "pipeline: unknown styled stale");
+  assert.ok(pu && /var\(--amber\)/.test(pu.decls["color"]), "pipeline: unknown styled amber");
   // unknown kind skipped + count note (in-test doc)
   const skip = makeQaApp("minimal");
   skip.app.setDocument(
@@ -2249,7 +2296,7 @@ test("AC-16: Col 3 — repo groups, master row, idle>24h collapse, unmapped stri
   const idleLines = byClass(col3, "session-idle");
   assert.ok(idleLines.length >= 5);
   for (const line of idleLines) {
-    assert.match(collectText(line), /^idle \d+[smhd] · /, "idle text is never bare: '" + collectText(line) + "'");
+    assert.match(collectText(line), /^idle \d+(\.\d+)?[smhd] · /, "idle text is never bare (fractional days tolerated): '" + collectText(line) + "'");
   }
   const s101 = findByData(col3, "data-session-id", "s-101");
   assert.ok(
@@ -2400,35 +2447,35 @@ test("AC-20: armed wordings verbatim for every status; attention border; null ab
   const full = makeQaApp("full");
   const ind1 = byClass(slotOf(full.dom), "armed-indicator")[0];
   assert.ok(ind1, "indicator renders for prompt-armed");
-  assert.equal(ind1.text, "📋 prompt armed: [secfix W2-L7] — paste in ZCode");
+  assert.equal(ind1.text, "prompt armed: [secfix W2-L7] — paste in ZCode");
   assert.ok(ind1.classList.contains("armed--armed"));
   // await-birth: same armed wording
   const ab = makeQaApp("minimal");
   ab.app.setDocument(pendingDocWith(mocks, "await-birth"));
   ab.app.render();
-  assert.equal(byClass(slotOf(ab.dom), "armed-indicator")[0].text, "📋 prompt armed: [secfix W2-L7] — paste in ZCode");
+  assert.equal(byClass(slotOf(ab.dom), "armed-indicator")[0].text, "prompt armed: [secfix W2-L7] — paste in ZCode");
   // goal-armed
   const ga = makeQaApp("minimal");
   ga.app.setDocument(pendingDocWith(mocks, "goal-armed"));
   ga.app.render();
   const ind3 = byClass(slotOf(ga.dom), "armed-indicator")[0];
-  assert.equal(ind3.text, "📋 goal copied — paste in the SAME session");
+  assert.equal(ind3.text, "goal copied — paste in the SAME session");
   assert.ok(ind3.classList.contains("armed--armed"), "both armed wordings carry the attention styling");
   // flagged: stale style + reason; null reason -> check pending
   const pf = makeQaApp("pending-flagged");
   const ind4 = byClass(slotOf(pf.dom), "armed-indicator")[0];
-  assert.equal(ind4.text, "🚩 launch flagged — ambiguous tags");
+  assert.equal(ind4.text, "launch flagged — ambiguous tags");
   assert.ok(ind4.classList.contains("armed--flagged"));
   const fnr = makeQaApp("minimal");
   fnr.app.setDocument(pendingDocWith(mocks, "flagged", { reason: null }));
   fnr.app.render();
-  assert.equal(byClass(slotOf(fnr.dom), "armed-indicator")[0].text, "🚩 launch flagged — check pending");
+  assert.equal(byClass(slotOf(fnr.dom), "armed-indicator")[0].text, "launch flagged — check pending");
   // cleared tombstone: dim, not armed styling; with + without reason
   const cr = makeQaApp("minimal");
   cr.app.setDocument(pendingDocWith(mocks, "cleared", { reason: "merged" }));
   cr.app.render();
   const ind5 = byClass(slotOf(cr.dom), "armed-indicator")[0];
-  assert.equal(ind5.text, "✔ cleared — merged");
+  assert.equal(ind5.text, "cleared — merged");
   assert.ok(ind5.classList.contains("armed--cleared"), "tombstone class");
   assert.ok(!ind5.classList.contains("armed--armed"), "tombstone is NOT armed styling");
   // unknown status: stale 'pending: <status>'
@@ -2441,11 +2488,23 @@ test("AC-20: armed wordings verbatim for every status; attention border; null ab
   // pending null -> indicator absent
   assert.equal(slotOf(makeQaApp("pending-null").dom).children.length, 0, "pending-null case");
   assert.equal(slotOf(makeQaApp("minimal").dom).children.length, 0, "wall.pending null");
-  // armed border CSS maps to the DERIVED (amber) token — round 4 accent
-  // discipline: armed is "pending human action" (the your-move family), not
+  // armed border CSS maps to the AMBER token — round 4 accent discipline:
+  // armed is "pending human action" (the your-move family), not
   // cyan-informational; red stays reserved for blocked/broken
-  const armedRule = parseCssRules(readWebFile("style.css")).find((r) => r.selector === ".armed--armed" && r.media === "");
-  assert.ok(armedRule && /var\(--derived\)/.test(armedRule.decls["border"]), "armed border uses the amber (your-move) token");
+  const armedRules = parseCssRules(readWebFile("style.css"));
+  const armedRule = armedRules.find((r) => r.selector === ".armed--armed" && r.media === "");
+  assert.ok(armedRule && /var\(--amber\)/.test(armedRule.decls["border"]), "armed border uses the amber (your-move) token");
+  // sp-4 (A7): the wordings lose their glyph prefixes — a 7px amber pulse dot
+  // carries the armed state instead (reduced-motion safe)
+  const dotRule = armedRules.find((r) => r.selector === ".armed-dot" && r.media === "");
+  assert.ok(dotRule, ".armed-dot unconditional rule exists");
+  assert.equal(dotRule.decls["width"], "7px", "armed dot is 7px wide");
+  assert.equal(dotRule.decls["height"], "7px", "armed dot is 7px tall");
+  assert.ok(/var\(--amber\)/.test(dotRule.decls["background"] || ""), "armed dot rides the amber token");
+  assert.ok(
+    armedRules.some((r) => /prefers-reduced-motion: reduce/.test(r.media) && r.selector === ".armed-dot"),
+    "reduced-motion neutralizes the armed dot pulse"
+  );
 });
 
 test("AC-20 QA demo: cycle exercises prompt-armed -> goal-armed -> cleared tombstone; x sets null-not-mock", () => {
@@ -2456,10 +2515,10 @@ test("AC-20 QA demo: cycle exercises prompt-armed -> goal-armed -> cleared tombs
   assert.equal(app.qaArmCycle(), "prompt-armed");
   assert.ok(ind().classList.contains("armed--armed"));
   assert.equal(app.qaArmCycle(), "goal-armed");
-  assert.equal(ind().text, "📋 goal copied — paste in the SAME session");
+  assert.equal(ind().text, "goal copied — paste in the SAME session");
   assert.equal(app.qaArmCycle(), "cleared");
   const cleared = ind();
-  assert.equal(cleared.text, "✔ cleared", "cleared tombstone (mock reason null)");
+  assert.equal(cleared.text, "cleared", "cleared tombstone (mock reason null)");
   assert.ok(cleared.classList.contains("armed--cleared"));
   assert.ok(!cleared.classList.contains("armed--armed"));
   assert.strictEqual(app.qaArmCycle(), null);
@@ -2571,14 +2630,19 @@ test("AC-24 render: freeze — frozen body class, verbatim non-dismissable freez
     "entry verbatim in the badge");
   assert.equal(byClass(badgesEl, "banner-dismiss").length, 0, "freeze badge is NOT dismissable");
   assert.ok(fz.dom.getElementById("live-dot").classList.contains("frozen"), "dot frozen while frozen");
-  // freeze CSS machinery exists (page lock + hatched derived chips)
+  // freeze CSS machinery exists (page lock + quiet grammar under the curtain)
   const rules = parseCssRules(readWebFile("style.css"));
   const frozenBody = rules.find((r) => r.selector === "body.frozen" && r.media === "");
   assert.ok(frozenBody && frozenBody.decls["pointer-events"] === "none", "body.frozen pointer-events none");
-  const frozenDerived = rules.find((r) => r.selector === "body.frozen .chip--derived" && r.media === "");
+  const frozenDot = rules.find((r) => r.selector === "body.frozen .status-dot" && r.media === "");
   assert.ok(
-    frozenDerived && /repeating-linear-gradient/.test(frozenDerived.decls["background-image"] || ""),
-    "derived chips hatch under freeze (render stops trusting derived)"
+    frozenDot && /var\(--faint\)/.test(frozenDot.decls["background"] || ""),
+    "status dots go faint under freeze (render stops trusting severity)"
+  );
+  const frozenSig = rules.find((r) => r.selector === "body.frozen .sig" && r.media === "");
+  assert.ok(
+    frozenSig && (/var\(--faint\)/.test(frozenSig.decls["color"] || "") || parseFloat(frozenSig.decls["opacity"] || "1") <= 0.6),
+    "derived sig text dims under freeze"
   );
   // a later valid doc without such entries clears the frozen class + hides the strip
   fz.app.mountQA("minimal");
@@ -2612,8 +2676,8 @@ test("F-4 mcwallf: degraded entries render exactly once (badges only, zero banne
 
 test("F-5 mcwallf: UNPARSED note clamp rule + full-text title", () => {
   const rules = parseCssRules(readWebFile("style.css"));
-  const clamp = rules.find((r) => r.selector === ".chip-unparsed-note" && r.media === "");
-  assert.ok(clamp, ".chip-unparsed-note rule exists");
+  const clamp = rules.find((r) => r.selector === ".status-note" && r.media === "");
+  assert.ok(clamp, ".status-note rule exists");
   assert.equal(clamp.decls["max-width"], "280px");
   assert.equal(clamp.decls["overflow"], "hidden");
   assert.equal(clamp.decls["text-overflow"], "ellipsis");
@@ -2627,30 +2691,23 @@ test("F-5 mcwallf: UNPARSED note clamp rule + full-text title", () => {
   t.app.setDocument(doc);
   t.app.render();
   const lane = findByData(t.dom.getElementById("col1-programs"), "data-row-id", "W2-L8");
-  const chip = byClass(lane, "chip")[0];
-  const noteSpan = chip.children.find((c) => c.tag === "span" && c.text === longNote);
-  assert.ok(noteSpan, "the raw note renders verbatim");
-  assert.ok(noteSpan.classList.contains("chip-unparsed-note"), "clamp class on the note span");
+  const noteSpan = byClass(byClass(lane, "status")[0], "status-note")[0];
+  assert.ok(noteSpan, "the note span renders under the lane's .status");
+  assert.equal(collectText(noteSpan), longNote, "the raw note renders verbatim");
+  assert.ok(noteSpan.classList.contains("status-note"), "clamp class on the note span");
   assert.equal(noteSpan.attrs.title, longNote, "title carries the full note");
 });
 
-test("F-6 mcwallf: verify-tag corner dot grammar + padding accommodation", () => {
+test("F-6 mcwallf: verify tag is an outline amber badge — no corner dot", () => {
   const rules = parseCssRules(readWebFile("style.css"));
-  const base = rules.find((r) => r.selector === ".verify-tag" && r.media === "");
-  assert.ok(base, "standalone .verify-tag rule exists");
-  assert.equal(base.decls["position"], "relative", "the dot anchors to the tag");
-  assert.equal(base.decls["padding-right"], "16px", "right padding reserves the dot");
-  const dot = rules.find((r) => r.selector === ".verify-tag::after" && r.media === "");
-  assert.ok(dot, ".verify-tag::after rule exists");
-  assert.equal(dot.decls["content"], "\"\"");
-  assert.equal(dot.decls["position"], "absolute");
-  assert.equal(dot.decls["top"], "-4px");
-  assert.equal(dot.decls["right"], "-4px");
-  assert.equal(dot.decls["width"], "10px");
-  assert.equal(dot.decls["height"], "10px");
-  assert.equal(dot.decls["border-radius"], "50%");
-  assert.equal(dot.decls["border"], "1.5px solid var(--derived)");
-  assert.equal(dot.decls["background"], "transparent");
+  const base = rules.find((r) => r.selector === ".tag-verify" && r.media === "");
+  assert.ok(base, "standalone .tag-verify rule exists");
+  assert.ok(/var\(--amber\)/.test(base.decls["color"] || ""), "tag text color rides --amber");
+  assert.ok(/var\(--amber\)/.test(base.decls["border"] || ""), "tag border rides --amber");
+  assert.ok(
+    !rules.some((r) => r.selector === ".tag-verify::after"),
+    "NO .tag-verify::after rule may exist (the corner dot is gone)"
+  );
 });
 
 test("AC-29: degraded prefix reactions — notes/goals hatch, advisory badges, unknown verbatim-only", () => {
@@ -2697,12 +2754,16 @@ test("AC-29: degraded prefix reactions — notes/goals hatch, advisory badges, u
   const goalLines = byClass(col1, "goal-line");
   assert.equal(goalLines.length, 4, "full has four goal lines (W2-L1, W2-L2, W2-L3, W2-L7)");
   for (const g of goalLines) assert.ok(g.classList.contains("stale"), "cleo goal line stale-styled");
-  // CSS pins for the two chip reactions
+  // CSS pins for the two reactions: amber left rule (hatch gone) + amber stale goals
   const rules = parseCssRules(readWebFile("style.css"));
   const hatchRule = rules.find((r) => r.selector === ".program-card.degraded-notes" && r.media === "");
-  assert.ok(hatchRule && /repeating-linear-gradient/.test(hatchRule.decls["background-image"] || ""), "hatched card rule");
+  assert.ok(
+    hatchRule && /var\(--amber\)/.test(hatchRule.decls["border-left"] || ""),
+    "degraded-notes card carries the amber left rule"
+  );
+  assert.ok(!/repeating-linear-gradient/.test(hatchRule.decls["background-image"] || ""), "hatch removed from the degraded card");
   const goalStale = rules.find((r) => r.selector === ".goal-line.stale" && r.media === "");
-  assert.ok(goalStale && /var\(--stale\)/.test(goalStale.decls["color"]), "stale goal-line rule");
+  assert.ok(goalStale && /var\(--amber\)/.test(goalStale.decls["color"]), "stale goal-line rides the amber token");
 });
 
 test("AC-22: all nine cases parse+render with their pinned outcomes", () => {
@@ -2730,9 +2791,9 @@ test("AC-22: all nine cases parse+render with their pinned outcomes", () => {
   assert.ok(bad.dom.getElementById("live-dot").classList.contains("stale"), "no doc rendered -> stale dot");
   // freeze: banner + frozen body (detail in AC-24)
   assert.ok(makeQaApp("freeze").dom.body.classList.contains("frozen"));
-  // unparsed: UNPARSED lane renders stale-styled
+  // unparsed: UNPARSED lane renders quiet (grammar split — wording re-pins stay in sp-4)
   const up = makeQaApp("unparsed");
-  assert.ok(byClass(up.dom.getElementById("col1-programs"), "chip--stale").length >= 1, "UNPARSED chip stale class");
+  assert.ok(byClass(up.dom.getElementById("col1-programs"), "status-badge--quiet").length >= 1, "UNPARSED badge quiet class");
   assert.ok(collectText(up.dom.getElementById("col1-programs")).indexOf("Waiting on CI!!") !== -1, "status_note verbatim");
   // minimal: every empty-state note + zero counters ('no programs' is the T4 reading of zero programs)
   const mini = makeQaApp("minimal");
@@ -2747,7 +2808,7 @@ test("AC-22: all nine cases parse+render with their pinned outcomes", () => {
   const pf = makeQaApp("pending-flagged");
   const ind = byClass(pf.dom.getElementById("armed-indicator-slot"), "armed-indicator")[0];
   assert.ok(ind && ind.classList.contains("armed--flagged"));
-  assert.equal(ind.text, "🚩 launch flagged — ambiguous tags");
+  assert.equal(ind.text, "launch flagged — ambiguous tags");
   // empty-lanes: col1 note + col3 empty (its master is all-null)
   const el = makeQaApp("empty-lanes");
   assert.ok(collectText(el.dom.getElementById("col1-programs")).indexOf("no lanes") !== -1);
@@ -3189,17 +3250,45 @@ test("T6-carry(a): idle bits compose signal ages — 'push <age>s' / 'mr <ref> <
   assert.ok(a1.indexOf("push 45s") !== -1, "push age bit composes: " + a1);
   assert.ok(a1.indexOf("signals unknown") === -1, "goal:null + live push is never 'signals unknown'");
   const a2 = line("s-b");
-  assert.ok(a2.indexOf("mr !7 240s") !== -1, "mr age bit composes: " + a2);
+  assert.ok(a2.indexOf("mr !7 4m") !== -1, "mr age bit composes humanized (240s -> 4m): " + a2);
   assert.ok(a2.indexOf("signals unknown") === -1);
   const a3 = line("s-c");
   assert.ok(a3.indexOf("signals unknown") !== -1, "a false push carries no age -> nothing composable (SPEC 6.3: signal AGES compose)");
-  // full-mock regression: s-101 composes goal bits AND signal ages now
+  // full-mock regression: s-101 composes goal bits AND humanized signal ages
   const full = makeQaApp("full");
   const s101 = collectText(findByData(full.dom.getElementById("col3-sessions"), "data-session-id", "s-101"));
-  assert.ok(s101.indexOf("push 900s") !== -1, "s-101 idle line carries the push age: " + s101);
-  assert.ok(s101.indexOf("mr !34 3600s") !== -1, "s-101 idle line carries the mr age");
+  assert.ok(s101.indexOf("push 15m") !== -1, "s-101 idle line carries the push age (900s -> 15m): " + s101);
+  assert.ok(s101.indexOf("mr !34 1h") !== -1, "s-101 idle line carries the mr age (3600s -> 1h)");
   const s105 = collectText(findByData(full.dom.getElementById("col3-sessions"), "data-session-id", "s-105"));
   assert.ok(s105.indexOf("signals unknown") !== -1, "all-null signals keep the honest 'signals unknown'");
+});
+
+test("sweep: no raw seconds in UI-composed age text", () => {
+  // SCOPED (critic amendment 2): only UI-COMPOSED containers — .sig signals,
+  // .session-idle lines, .verify-signals rows. The verbatim server-string
+  // containers (.stalled-note, #degraded-badges, #banner-strip, verify_cmd /
+  // captions) legitimately carry 21600s-style text and are NOT collected.
+  // EMOJI half (critic-2 fix b, extended at sp-4): the armed wordings dropped
+  // their glyph prefixes (A7) — planes U+1F300..U+1FAFF must never render; the
+  // whitelist glyphs (legend, chevrons, ↳, ⓘ) all live below U+1F300.
+  for (const name of NINE_CASES) {
+    const { dom } = makeQaApp(name);
+    assert.ok(
+      !/[\u{1F300}-\u{1FAFF}]/u.test(collectText(dom.body)),
+      name + ": emoji-plane glyph rendered on the page"
+    );
+    const scopes = []
+      .concat(byClass(dom.body, "sig"))
+      .concat(byClass(dom.body, "session-idle"))
+      .concat(byClass(dom.body, "verify-signals"));
+    for (const el of scopes) {
+      const text = collectText(el);
+      assert.ok(
+        !/\b\d{4,}s\b/.test(text),
+        name + ": raw seconds leaked into UI-composed age text: '" + text + "'"
+      );
+    }
+  }
 });
 
 test("T6-carry(b): operator-banner dismissal persists across re-renders until the banner text changes", () => {
@@ -3283,15 +3372,21 @@ test("T7-A: freeze renders the verbatim entry exactly once (badge surface, no du
   assert.ok(fz.dom.body.classList.contains("frozen"), "freeze still freezes the body");
 });
 
-test("T7-B: freeze full-page hatch toned to roughly half intensity, still --stale-derived", () => {
+test("T7-B: freeze dim curtain — color-mix veil over the frozen page, no hatch", () => {
   const rule = parseCssRules(readWebFile("style.css")).find(
     (r) => r.selector === "body.frozen::after" && r.media === ""
   );
-  assert.ok(rule && rule.decls["background-image"], "the freeze full-page hatch overlay rule exists");
-  const m = /var\(--stale\)\s+(\d+)%/.exec(rule.decls["background-image"]);
-  assert.ok(m, "hatch stripes still derive from the --stale token");
-  const pct = parseInt(m[1], 10);
-  assert.ok(pct > 0 && pct <= 15, "hatch alpha roughly halved (was 30%, now <= 15%): got " + pct + "%");
+  assert.ok(rule, "the freeze full-page curtain rule exists");
+  assert.ok(
+    /color-mix\(in srgb, var\(--bg\) 55%, transparent\)/.test(rule.decls["background"] || ""),
+    "curtain is a dim bg veil (55% bg)"
+  );
+  assert.ok(
+    !/repeating-linear-gradient/.test((rule.decls["background"] || "") + (rule.decls["background-image"] || "")),
+    "no hatch stripes in the curtain"
+  );
+  assert.equal(rule.decls["position"], "fixed", "curtain covers the full viewport");
+  assert.equal(rule.decls["pointer-events"], "none", "curtain never eats the freeze lock's pointer events");
 });
 
 test("T7-C: QA dot renders neutral — never the live green; LIVE keeps its semantics", async () => {
@@ -3302,7 +3397,7 @@ test("T7-C: QA dot renders neutral — never the live green; LIVE keeps its sema
   const dotRule = parseCssRules(readWebFile("style.css")).find(
     (r) => r.selector === "#live-dot.qa" && r.media === ""
   );
-  assert.ok(dotRule && /var\(--ink-dim\)/.test(dotRule.decls["background"]), "qa dot styled dim via the ink-dim token");
+  assert.ok(dotRule && /var\(--dim\)/.test(dotRule.decls["background"]), "qa dot styled dim via the dim token");
   // LIVE semantics unchanged: live after success, stale after failure
   const w = makeLiveWall([okState(liveDoc()), { reject: "network" }]);
   await flushMicrotasks();
@@ -3337,9 +3432,30 @@ test("T7-D: gitlab/github badges carry host modifier classes + distinct token hu
   assert.ok(ghRule && ghRule.decls["color"], "github hue rule exists");
   const glTok = /var\((--[\w-]+)\)/.exec(glRule.decls["color"])[1];
   const ghTok = /var\((--[\w-]+)\)/.exec(ghRule.decls["color"])[1];
-  assert.equal(tokens[glTok], tokens["--note"], "gitlab badge maps to the note hue");
-  assert.equal(tokens[ghTok], tokens["--derived"], "github badge maps to the derived hue");
+  assert.equal(tokens[glTok], tokens["--blue"], "gitlab badge maps to the blue hue");
+  assert.equal(tokens[ghTok], tokens["--green"], "github badge maps to the green hue");
   assert.notEqual(tokens[glTok], tokens[ghTok], "the two hosts must be distinguishable at 2 m");
+  // sp-5 purge: the sp-1 TEMPORARY legacy alias block is deleted — the names
+  // are gone from :root AND no rule references them anymore
+  for (const legacy of ["--panel", "--panel-2", "--ink-dim", "--note", "--derived", "--stale", "--attention", "--r-pill"]) {
+    assert.ok(!(legacy in tokens), "legacy token " + legacy + " must be purged from :root");
+  }
+  assert.ok(
+    !/var\(--(panel|panel-2|ink-dim|note|derived|stale|attention|r-pill)\)/.test(css),
+    "no legacy var() reference remains in style.css"
+  );
+  // badge base (degraded/banner): rectangular outline badge — no pill radius,
+  // border on a hue token
+  const badgeRule = rules.find((r) => r.selector === ".badge" && r.media === "");
+  assert.ok(badgeRule, ".badge unconditional rule exists");
+  const radiusDecl = badgeRule.decls["border-radius"] || "";
+  const radiusTok = /var\((--[\w-]+)\)/.exec(radiusDecl);
+  const radiusVal = radiusTok ? tokens[radiusTok[1]] : radiusDecl;
+  assert.ok(parseFloat(radiusVal) <= 4, ".badge radius is rectangular (<= 4px): got " + radiusVal);
+  assert.ok(
+    /var\(--(green|amber|red|blue|faint)\)/.test(badgeRule.decls["border"] || ""),
+    ".badge border rides a hue token"
+  );
 });
 
 test("T7-E: master rows read the dim 'no signals' — never the 'signals unknown' alarm", () => {
@@ -3444,21 +3560,26 @@ test("T7-G clamp: a hung-then-settling poll drains at most ONE catch-up (no T/5 
 // EXTEND-only additions; every pinned check above stays as amended.
 // =====================================================================
 
-test("sev-grammar: every status chip carries its severity modifier; derived chips carry none", () => {
-  // the §2.4 map, restated from the fixture data (the same rules app.js applies)
-  function sevOf(lane, mtime) {
+test("sev-grammar: every lane's dot+badge carry the severity hue; sigs carry none; triage rank is styling-independent", () => {
+  // the §3.3 render map, restated from the fixture data (the same rules app.js applies)
+  function hueOf(lane, mtime) {
     const status = lane.status_parsed === "" || lane.status_parsed === undefined ? "UNPARSED" : lane.status_parsed;
-    if (status === "failed") return "chip--sev-blocked";
-    if (status === "partial" || status === "UNPARSED") return "chip--sev-watch";
-    if (lane.stalled !== null) return "chip--sev-watch";
-    if (mtime === 0) return "chip--sev-watch";
-    return "chip--sev-ok";
+    if (status === "failed") return "blocked";
+    if (status === "partial") return "watch";
+    if (lane.stalled !== null) return "watch";
+    // A6: UNPARSED renders quiet even unstamped (the AC-22 unparsed-case pin);
+    // unstamped stays watch for every other status.
+    if (status === "UNPARSED") return "quiet";
+    if (mtime === 0) return "watch";
+    if (status === "done" || status === "parked") return "quiet";
+    if (status === "launched" || status === "in-flight") return "live";
+    return "ok";
   }
   const items = loadApp().state.items;
-  let statusChips = 0;
+  let statusCount = 0;
   for (const caseName of NINE_CASES) {
     const doc = parseIndexMocks(readWebFile("index.html"))[caseName];
-    if (!loadApp().state.validateDoc(doc).ok) continue; // L0 renders no chips
+    if (!loadApp().state.validateDoc(doc).ok) continue; // L0 renders no status
     const { dom } = makeQaApp(caseName);
     const col1 = dom.getElementById("col1-programs");
     for (const prog of items(doc.programs, null).valid) {
@@ -3466,59 +3587,99 @@ test("sev-grammar: every status chip carries its severity modifier; derived chip
       for (const lane of items(prog.lanes, "row_id").valid) {
         const laneEl = findByData(col1, "data-row-id", lane.row_id);
         assert.ok(laneEl, caseName + " " + lane.row_id + " renders");
-        const chips = byClass(laneEl, "chip");
-        const statusChip = chips.find((c) => !c.classList.contains("chip--derived"));
-        assert.ok(statusChip, caseName + " " + lane.row_id + ": status chip found");
-        statusChips += 1;
-        const wantSev = sevOf(lane, mtime);
-        assert.ok(
-          statusChip.classList.contains(wantSev),
-          caseName + " " + lane.row_id + " (" + lane.status_parsed + ", mtime " + mtime + "): expected " + wantSev
+        const statuses = byClass(laneEl, "status");
+        assert.equal(statuses.length, 1, caseName + " " + lane.row_id + ": exactly one .status");
+        const statusEl = statuses[0];
+        statusCount += 1;
+        const want = hueOf(lane, mtime);
+        const badges = byClass(statusEl, "status-badge");
+        const dots = byClass(statusEl, "status-dot");
+        assert.equal(badges.length, 1, caseName + " " + lane.row_id + ": one badge");
+        assert.equal(dots.length, 1, caseName + " " + lane.row_id + ": one dot");
+        // exactly ONE hue modifier class on each, and it is the mapped one
+        assert.deepEqual(
+          String(badges[0].className).split(/\s+/).filter((k) => k.indexOf("status-badge--") === 0),
+          ["status-badge--" + want],
+          caseName + " " + lane.row_id + " (" + lane.status_parsed + ", mtime " + mtime + "): expected badge hue " + want
         );
-        const wantProv = lane.status_parsed === "UNPARSED" || mtime === 0 ? "chip--stale" : "chip--note";
-        assert.ok(statusChip.classList.contains(wantProv), caseName + " " + lane.row_id + ": provenance " + wantProv + " kept");
-        for (const c of chips) {
-          const sev = String(c.className).split(/\s+/).filter((k) => k.indexOf("chip--sev-") === 0);
-          if (c.classList.contains("chip--derived")) {
-            assert.equal(sev.length, 0, caseName + " " + lane.row_id + ": derived chips carry NO severity class");
-          } else {
-            assert.equal(sev.length, 1, caseName + " " + lane.row_id + ": exactly one severity class");
-          }
+        assert.deepEqual(
+          String(dots[0].className).split(/\s+/).filter((k) => k.indexOf("status-dot--") === 0),
+          ["status-dot--" + want],
+          caseName + " " + lane.row_id + ": expected dot hue " + want
+        );
+        // derived sigs carry NO grammar classes (their humanized text pins
+        // live in AC-9[S], which sweeps every case with humanizeAge-composed
+        // expectations — no duplication here)
+        for (const c of byClass(laneEl, "sig")) {
+          const grammar = String(c.className)
+            .split(/\s+/)
+            .filter((k) => k.indexOf("status-badge--") === 0 || k.indexOf("status-dot--") === 0);
+          assert.equal(grammar.length, 0, caseName + " " + lane.row_id + ": sigs carry NO grammar class");
         }
       }
     }
   }
-  assert.ok(statusChips >= 10, "the sweep saw the full fixture's lanes (got " + statusChips + ")");
-  // screen 16 regression: UNPARSED with a raw note reads watched-stale
+  assert.ok(statusCount >= 10, "the sweep saw the full fixture's lanes (got " + statusCount + ")");
+  // screen 16 regression: UNPARSED with a raw note renders QUIET (faint), never alarm
   const up = makeQaApp("unparsed");
-  const upChip = byClass(findByData(up.dom.getElementById("col1-programs"), "data-row-id", "W2-L8"), "chip")[0];
-  assert.ok(upChip.classList.contains("chip--stale") && upChip.classList.contains("chip--sev-watch"), "UNPARSED = stale + watch");
-  // screen 18 regression: launched + unstamped reads uncertain (stale + watch), never failing
+  const upBadge = byClass(findByData(up.dom.getElementById("col1-programs"), "data-row-id", "W2-L8"), "status-badge")[0];
+  assert.ok(upBadge.classList.contains("status-badge--quiet"), "UNPARSED = quiet render");
+  // screen 18 regression: launched + unstamped reads watch, never failing
   const np = makeQaApp("null-program");
-  const npChip = byClass(findByData(np.dom.getElementById("col1-programs"), "data-row-id", "W2-L5"), "chip")[0];
-  assert.ok(npChip.classList.contains("chip--stale") && npChip.classList.contains("chip--sev-watch"), "launched + unstamped = stale + watch");
+  const npBadge = byClass(findByData(np.dom.getElementById("col1-programs"), "data-row-id", "W2-L5"), "status-badge")[0];
+  assert.ok(npBadge.classList.contains("status-badge--watch"), "launched + unstamped = watch");
   // screen 05 regression: failed reads blocked
   const full = makeQaApp("full");
-  const fChip = byClass(findByData(full.dom.getElementById("col1-programs"), "data-row-id", "W2-L5"), "chip")[0];
-  assert.ok(fChip.classList.contains("chip--sev-blocked") && fChip.classList.contains("chip--note"), "failed = note + blocked");
+  const fBadge = byClass(findByData(full.dom.getElementById("col1-programs"), "data-row-id", "W2-L5"), "status-badge")[0];
+  assert.ok(fBadge.classList.contains("status-badge--blocked"), "failed = blocked");
+  // rank-invariance (critic amendment 4): sorting != styling — the pinned triage
+  // ORDER keeps UNPARSED lanes in the watch tier while they RENDER quiet.
+  const col1 = full.dom.getElementById("col1-programs");
+  const laneIds = byClass(byClass(col1, "program-card")[0], "lane").map((l) => l.attrs["data-row-id"]);
+  assert.deepEqual(
+    laneIds,
+    ["W2-L5", "W2-L4", "W2-L8", "W2-L9", "W2-L10", "W2-L1", "W2-L2", "W2-L3", "W2-L6", "W2-L7"],
+    "triage order pin (duplicating round 4 intentionally)"
+  );
+  for (const rid of ["W2-L8", "W2-L10"]) {
+    const laneEl = findByData(col1, "data-row-id", rid);
+    assert.ok(byClass(laneEl, "status-badge--quiet").length >= 1, rid + " renders quiet despite its watch-tier position");
+  }
+  const healthy = ["W2-L1", "W2-L2", "W2-L3", "W2-L6", "W2-L7"];
+  for (const quietId of ["W2-L8", "W2-L10"]) {
+    for (const healthyId of healthy) {
+      assert.ok(
+        laneIds.indexOf(quietId) < laneIds.indexOf(healthyId),
+        quietId + " renders before " + healthyId + " (watch tier of the ORDER despite the quiet RENDER)"
+      );
+    }
+  }
 });
 
-test("sev-contrast: severity modifier colors resolve to tokens passing 4.5:1 vs all three backgrounds", () => {
+test("sev-contrast: badge TEXT colors pass 4.5:1 (quiet 3:1) vs all three surfaces — no border bar", () => {
   const css = readWebFile("style.css");
   const tokens = parseRootTokens(css);
   const rules = parseCssRules(css);
-  for (const sel of [".chip--sev-ok", ".chip--sev-watch", ".chip--sev-blocked"]) {
-    const rule = rules.find((r) => r.selector === sel && r.media === "");
-    assert.ok(rule, sel + " rule exists (unconditional)");
-    for (const decl of ["color", "border-color"]) {
-      const m = /var\((--[\w-]+)\)/.exec(rule.decls[decl] || "");
-      assert.ok(m, sel + " " + decl + " references a :root token");
-      assert.ok(tokens[m[1]], sel + " " + decl + " token " + m[1] + " is defined");
-      for (const bg of ["--bg", "--panel", "--panel-2"]) {
-        const ratio = contrastRatio(tokens[m[1]], tokens[bg]);
-        assert.ok(ratio >= 4.5, sel + " " + decl + " on " + bg + " = " + ratio.toFixed(2) + ":1 (need 4.5)");
-      }
+  // critic amendment 3: TEXT carries the contrast duty. The 40%-alpha borders are
+  // frozen contract — NO border-color contrast assertion here.
+  for (const hue of ["ok", "watch", "blocked", "live"]) {
+    const rule = rules.find((r) => r.selector === ".status-badge--" + hue && r.media === "");
+    assert.ok(rule, ".status-badge--" + hue + " rule exists (unconditional)");
+    const m = /var\((--[\w-]+)\)/.exec(rule.decls["color"] || "");
+    assert.ok(m, hue + " text color references a :root token");
+    assert.ok(tokens[m[1]], hue + " text token " + m[1] + " is defined");
+    for (const bg of ["--bg", "--raise", "--hover"]) {
+      const ratio = contrastRatio(tokens[m[1]], tokens[bg]);
+      assert.ok(ratio >= 4.5, hue + " text on " + bg + " = " + ratio.toFixed(2) + ":1 (need 4.5)");
     }
+  }
+  const quiet = rules.find((r) => r.selector === ".status-badge--quiet" && r.media === "");
+  assert.ok(quiet, ".status-badge--quiet rule exists (unconditional)");
+  const qm = /var\((--[\w-]+)\)/.exec(quiet.decls["color"] || "");
+  assert.ok(qm && tokens[qm[1]], "quiet text color references a defined :root token");
+  for (const bg of ["--bg", "--raise", "--hover"]) {
+    const ratio = contrastRatio(tokens[qm[1]], tokens[bg]);
+    assert.ok(ratio >= 3, "quiet text on " + bg + " = " + ratio.toFixed(2) + ":1 (need 3)");
   }
 });
 
@@ -3659,22 +3820,45 @@ test("empty-hints: valid-doc empty panels carry their companion lines; L0 keeps 
   );
 });
 
-test("kbd-hint: the footer names the three shortcuts and runs its own banned-word/URL sweep", () => {
+test("kbd-hint: footer legend line + three shortcut keys; topbar chrome pinned", () => {
   const { dom } = makeQaApp("full");
   const footer = dom.getElementById("kbd-hint");
   assert.ok(footer, "ensureShell builds the footer");
+  // the legend line of record (signal-panel spec section 4/S8)
+  const LEGEND = [
+    "● in-flight",
+    "◐ ready",
+    "✓ done",
+    "✕ failed",
+    "◌ parked",
+    "? unparsed",
+    "⚠ stalled",
+    "shortcuts: [n] needs-me-now [r] refresh [esc] close panel",
+  ];
   const text = collectText(footer);
-  assert.ok(text.indexOf("n needs-me-now") !== -1, "names n");
-  assert.ok(text.indexOf("r refresh") !== -1, "names r");
-  assert.ok(text.indexOf("esc close panel") !== -1, "names esc");
+  for (const seg of LEGEND) {
+    assert.ok(text.indexOf(seg) !== -1, "footer legend segment '" + seg + "'");
+  }
   assert.equal(byClass(footer, "kbd").length, 3, "three .kbd key spans");
   // AC-10's sweep does NOT scan this footer — so this test performs its own.
   assert.ok(!/\bfinished\b/i.test(text), "kbd-hint banned-word sweep");
   assert.deepEqual(scanExternalUrls(text), [], "kbd-hint external-URL sweep");
-  // index.html ships the same footer statically
+  // index.html ships the SAME footer statically (both sources stay in sync)
   const html = readWebFile("index.html");
-  assert.ok(html.includes('id="kbd-hint"'), "index.html carries the footer");
-  assert.ok(html.includes('class="kbd"'), "index.html keys carry .kbd");
+  const staticFooter = /<footer id="kbd-hint">([\s\S]*?)<\/footer>/.exec(html);
+  assert.ok(staticFooter, "index.html carries the footer");
+  const staticText = staticFooter[1].replace(/<[^>]+>/g, "");
+  for (const seg of LEGEND) {
+    assert.ok(staticText.indexOf(seg) !== -1, "static footer legend segment '" + seg + "'");
+  }
+  assert.equal((staticFooter[1].match(/class="kbd"/g) || []).length, 3, "index.html keys carry three .kbd spans");
+  // sp-1 topbar chrome pins: 46px sticky bar with the 8px backdrop blur
+  const topbarRule = parseCssRules(readWebFile("style.css")).find(
+    (r) => r.selector === "#topbar" && r.media === ""
+  );
+  assert.ok(topbarRule, "unconditional #topbar rule exists");
+  assert.equal(topbarRule.decls["min-height"], "46px", "#topbar min-height 46px");
+  assert.equal(topbarRule.decls["backdrop-filter"], "blur(8px)", "#topbar backdrop-filter blur(8px)");
 });
 
 test("panel-sync: one qaArmCycle re-renders the open panel (pending + LAUNCH focus); backdrop click closes", () => {
@@ -3762,8 +3946,8 @@ test("round 4: NOT-ready merges float above ready ones; readiness rides the card
   const rules = parseCssRules(readWebFile("style.css"));
   const notReady = rules.find((r) => r.selector === ".merge-card--not-ready" && r.media === "");
   const ready = rules.find((r) => r.selector === ".merge-card--ready" && r.media === "");
-  assert.ok(notReady && /var\(--stale\)/.test(notReady.decls["border-left"]), "not-ready edge is red");
-  assert.ok(ready && /var\(--note\)/.test(ready.decls["border-left"]), "ready edge is green");
+  assert.ok(notReady && /var\(--red\)/.test(notReady.decls["border-left"]), "not-ready edge is red");
+  assert.ok(ready && /var\(--green\)/.test(ready.decls["border-left"]), "ready edge is green");
 });
 
 test("round 4: LIVE boot dot is 'booting' (amber) before the first poll settles — never red", () => {
@@ -3778,7 +3962,7 @@ test("round 4: LIVE boot dot is 'booting' (amber) before the first poll settles 
   assert.ok(!dot.classList.contains("stale"), "no red during a normal boot");
   const rules = parseCssRules(readWebFile("style.css"));
   const bootRule = rules.find((r) => r.selector === "#live-dot.booting" && r.media === "");
-  assert.ok(bootRule && /var\(--derived\)/.test(bootRule.decls["background"]), "booting dot is amber, not red");
+  assert.ok(bootRule && /var\(--amber\)/.test(bootRule.decls["background"]), "booting dot is amber, not red");
 });
 
 test("round 4b: hero forms — big on a fully-empty wall, slim with no programs but content, hidden otherwise", () => {
@@ -3820,10 +4004,17 @@ test("round 4b: adaptive grid — sole content goes full width; empty columns le
   const hero = dom.getElementById("empty-hero");
   assert.ok(hero.classList.contains("hero--slim"), "slim hero form");
   assert.ok(collectText(hero).indexOf("3 unmapped sessions below") !== -1, "slim hero names the count");
-  // CSS: the sessions-only template + full-empty hide are pinned
+  // CSS: the fr-only ledger + column rules + the 900px stacking pin (SC-7)
   const rules = parseCssRules(readWebFile("style.css"));
+  const gridBase = rules.find((r) => r.selector === "#grid" && r.media === "");
+  assert.ok(gridBase, "base #grid rule exists");
+  assert.equal(gridBase.decls["grid-template-columns"], "1.15fr 1fr 0.85fr", "3-col fr-only ledger tracks (no minmax pixel floors)");
+  assert.equal(gridBase.decls["gap"], "0", "gap 0 — columns separate by rules, not gutters");
+  const colRule = rules.find((r) => r.selector === "#col2, #col3-sessions" && r.media === "");
+  assert.ok(colRule && colRule.decls["border-left"] === "1px solid var(--border)", "column separator hairline rules");
   const solo = rules.find((r) => r.selector === "#grid.no-programs.no-owed.has-sessions" && r.media === "");
   assert.ok(solo && /sessions/.test(solo.decls["grid-template-areas"] || ""), "sessions-only template pinned");
+  assert.ok(!/minmax\(/.test(solo.decls["grid-template-columns"] || ""), "solo template carries no minmax pixel minimum");
   const emptyHide = rules.find((r) => r.selector === "#grid.is-empty" && r.media === "");
   assert.ok(emptyHide && emptyHide.decls["display"] === "none", "fully-empty grid hides behind the big hero");
   // dangling-area columns must be REMOVED from placement, or their implicit
@@ -3832,6 +4023,19 @@ test("round 4b: adaptive grid — sole content goes full width; empty columns le
     (r) => r.selector === "#grid.no-programs.no-owed #col1-programs, #grid.no-programs.no-owed #col2" && r.media === ""
   );
   assert.ok(hideIdle && hideIdle.decls["display"] === "none", "contentless columns leave the grid entirely");
+  // SC-7: at 900px the ledger stacks into one column; column rules become top rules
+  const narrow = rules.filter((r) => /@media \(max-width: 900px\)/.test(r.media));
+  assert.ok(narrow.length >= 2, "900px media block exists");
+  const mGrid = narrow.find((r) => r.selector === "#grid");
+  assert.ok(
+    mGrid && mGrid.decls["grid-template-areas"] === "\"programs\" \"verify\" \"sessions\"",
+    "single-column stacking at 900px"
+  );
+  const mCols = narrow.find((r) => r.selector === "#col2, #col3-sessions");
+  assert.ok(
+    mCols && mCols.decls["border-left"] === "none" && mCols.decls["border-top"] === "1px solid var(--border)",
+    "column rules become top rules at 900px"
+  );
 });
 
 test("round 4: unmapped rows group by dir — heads show the project NAME, full path hover-only; id demoted to a copy handle", () => {
