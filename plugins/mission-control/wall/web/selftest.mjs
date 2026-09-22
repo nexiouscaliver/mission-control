@@ -579,23 +579,25 @@ test("AC-26: 18 text pairs >= 4.5:1 and status colors >= 3:1 vs panel", () => {
   const tokens = parseRootTokens(readWebFile("style.css"));
   const required = [
     "--bg",
-    "--panel",
-    "--panel-2",
+    "--raise",
+    "--hover",
     "--border",
+    "--border-2",
     "--ink",
-    "--ink-dim",
-    "--note",
-    "--derived",
-    "--stale",
-    "--attention",
+    "--dim",
+    "--faint",
+    "--green",
+    "--amber",
+    "--red",
+    "--blue",
   ];
   for (const t of required) {
-    assert.ok(tokens[t], "missing :root token " + t + " (SPEC section 10 token table)");
+    assert.ok(tokens[t], "missing :root token " + t + " (signal-panel SPEC section 3.1 token table)");
     // NaN guard: a malformed token must fail loudly, not slip through NaN < 4.5
     assert.match(tokens[t], /^#[0-9a-f]{6}$/i, t + " must be a 6-digit hex token, got " + tokens[t]);
   }
-  const textFgs = ["--ink", "--ink-dim", "--note", "--derived", "--stale", "--attention"];
-  const bgs = ["--bg", "--panel", "--panel-2"];
+  const textFgs = ["--ink", "--dim", "--green", "--amber", "--red", "--blue"];
+  const bgs = ["--bg", "--raise", "--hover"];
   const lows = [];
   for (const fg of textFgs) {
     for (const bg of bgs) {
@@ -604,12 +606,13 @@ test("AC-26: 18 text pairs >= 4.5:1 and status colors >= 3:1 vs panel", () => {
     }
   }
   assert.deepEqual(lows, [], "text pairs below 4.5:1: " + lows.join("; "));
-  const chipLows = [];
-  for (const c of ["--note", "--derived", "--stale"]) {
-    const r = contrastRatio(tokens[c], tokens["--panel"]);
-    if (r < 3) chipLows.push(c + " vs panel = " + r.toFixed(2) + ":1");
+  // --faint is scoped to 11px micro-labels (spec assumption A2): >= 3:1 only.
+  const faintLows = [];
+  for (const bg of bgs) {
+    const r = contrastRatio(tokens["--faint"], tokens[bg]);
+    if (r < 3) faintLows.push("--faint on " + bg + " = " + r.toFixed(2) + ":1");
   }
-  assert.deepEqual(chipLows, [], "chip border/dot colors below 3:1 vs panel: " + chipLows.join("; "));
+  assert.deepEqual(faintLows, [], "micro-label --faint below 3:1: " + faintLows.join("; "));
 });
 
 // =====================================================================
@@ -3302,7 +3305,7 @@ test("T7-C: QA dot renders neutral — never the live green; LIVE keeps its sema
   const dotRule = parseCssRules(readWebFile("style.css")).find(
     (r) => r.selector === "#live-dot.qa" && r.media === ""
   );
-  assert.ok(dotRule && /var\(--ink-dim\)/.test(dotRule.decls["background"]), "qa dot styled dim via the ink-dim token");
+  assert.ok(dotRule && /var\(--dim\)/.test(dotRule.decls["background"]), "qa dot styled dim via the dim token");
   // LIVE semantics unchanged: live after success, stale after failure
   const w = makeLiveWall([okState(liveDoc()), { reject: "network" }]);
   await flushMicrotasks();
@@ -3659,22 +3662,45 @@ test("empty-hints: valid-doc empty panels carry their companion lines; L0 keeps 
   );
 });
 
-test("kbd-hint: the footer names the three shortcuts and runs its own banned-word/URL sweep", () => {
+test("kbd-hint: footer legend line + three shortcut keys; topbar chrome pinned", () => {
   const { dom } = makeQaApp("full");
   const footer = dom.getElementById("kbd-hint");
   assert.ok(footer, "ensureShell builds the footer");
+  // the legend line of record (signal-panel spec section 4/S8)
+  const LEGEND = [
+    "● in-flight",
+    "◐ ready",
+    "✓ done",
+    "✕ failed",
+    "◌ parked",
+    "? unparsed",
+    "⚠ stalled",
+    "shortcuts: [n] needs-me-now [r] refresh [esc] close panel",
+  ];
   const text = collectText(footer);
-  assert.ok(text.indexOf("n needs-me-now") !== -1, "names n");
-  assert.ok(text.indexOf("r refresh") !== -1, "names r");
-  assert.ok(text.indexOf("esc close panel") !== -1, "names esc");
+  for (const seg of LEGEND) {
+    assert.ok(text.indexOf(seg) !== -1, "footer legend segment '" + seg + "'");
+  }
   assert.equal(byClass(footer, "kbd").length, 3, "three .kbd key spans");
   // AC-10's sweep does NOT scan this footer — so this test performs its own.
   assert.ok(!/\bfinished\b/i.test(text), "kbd-hint banned-word sweep");
   assert.deepEqual(scanExternalUrls(text), [], "kbd-hint external-URL sweep");
-  // index.html ships the same footer statically
+  // index.html ships the SAME footer statically (both sources stay in sync)
   const html = readWebFile("index.html");
-  assert.ok(html.includes('id="kbd-hint"'), "index.html carries the footer");
-  assert.ok(html.includes('class="kbd"'), "index.html keys carry .kbd");
+  const staticFooter = /<footer id="kbd-hint">([\s\S]*?)<\/footer>/.exec(html);
+  assert.ok(staticFooter, "index.html carries the footer");
+  const staticText = staticFooter[1].replace(/<[^>]+>/g, "");
+  for (const seg of LEGEND) {
+    assert.ok(staticText.indexOf(seg) !== -1, "static footer legend segment '" + seg + "'");
+  }
+  assert.equal((staticFooter[1].match(/class="kbd"/g) || []).length, 3, "index.html keys carry three .kbd spans");
+  // sp-1 topbar chrome pins: 46px sticky bar with the 8px backdrop blur
+  const topbarRule = parseCssRules(readWebFile("style.css")).find(
+    (r) => r.selector === "#topbar" && r.media === ""
+  );
+  assert.ok(topbarRule, "unconditional #topbar rule exists");
+  assert.equal(topbarRule.decls["min-height"], "46px", "#topbar min-height 46px");
+  assert.equal(topbarRule.decls["backdrop-filter"], "blur(8px)", "#topbar backdrop-filter blur(8px)");
 });
 
 test("panel-sync: one qaArmCycle re-renders the open panel (pending + LAUNCH focus); backdrop click closes", () => {
@@ -3778,7 +3804,7 @@ test("round 4: LIVE boot dot is 'booting' (amber) before the first poll settles 
   assert.ok(!dot.classList.contains("stale"), "no red during a normal boot");
   const rules = parseCssRules(readWebFile("style.css"));
   const bootRule = rules.find((r) => r.selector === "#live-dot.booting" && r.media === "");
-  assert.ok(bootRule && /var\(--derived\)/.test(bootRule.decls["background"]), "booting dot is amber, not red");
+  assert.ok(bootRule && /var\(--amber\)/.test(bootRule.decls["background"]), "booting dot is amber, not red");
 });
 
 test("round 4b: hero forms — big on a fully-empty wall, slim with no programs but content, hidden otherwise", () => {
