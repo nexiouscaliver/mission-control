@@ -210,6 +210,10 @@ button:focus-visible,
 
 #armed-strip {
   padding: 0 var(--s4);
+  /* signal-panel S7: a full-width --raise band under the topbar; empty (no
+   * pending state) it collapses to its hairline border-bottom. */
+  background: var(--raise);
+  border-bottom: 1px solid var(--border);
   /* Browser finding, round 3 (screen 10): the fixed launch panel (z 20) and
    * its backdrop (z 19) otherwise occlude the strip's right-aligned controls.
    * Riding above both keeps re-copy/cancel/× visible and clickable while the
@@ -229,13 +233,16 @@ body.panel-open #armed-strip {
   margin-right: min(420px, 92vw);
 }
 
-/* ---- three-column grid (SPEC section 6) ---- */
+/* ---- three-column grid (SPEC section 6 / signal-panel S9) ----
+ * fr-only tracks with min-width:0 columns — the old minmax pixel floors are
+ * what clipped the ledger below 1156px. Columns separate by 1px rules, not
+ * gutters (gap 0); rows carry their own hairlines + hover. */
 
 #grid {
   display: grid;
-  grid-template-columns: minmax(340px, 1fr) minmax(420px, 1.25fr) minmax(340px, 1fr);
+  grid-template-columns: 1.15fr 1fr 0.85fr;
   grid-template-areas: "programs verify sessions";
-  gap: var(--s3);
+  gap: 0;
   padding: var(--s4);
   align-items: start;
 }
@@ -252,6 +259,10 @@ body.panel-open #armed-strip {
   grid-area: sessions;
 }
 
+#col2, #col3-sessions {
+  border-left: 1px solid var(--border);
+}
+
 /* ---- round 4b: the ADAPTIVE grid ----
  * A column with no rows leaves the grid template instead of remaining as an
  * empty box floating in dead space (the default live wall used to show two
@@ -260,22 +271,22 @@ body.panel-open #armed-strip {
  * pick the template. A sole content column centers at a readable width. */
 
 #grid.has-programs.has-owed.has-sessions {
-  grid-template-columns: minmax(340px, 1fr) minmax(420px, 1.25fr) minmax(340px, 1fr);
+  grid-template-columns: 1.15fr 1fr 0.85fr;
   grid-template-areas: "programs verify sessions";
 }
 
 #grid.has-programs.has-owed.no-sessions {
-  grid-template-columns: minmax(340px, 1.1fr) minmax(420px, 1fr);
+  grid-template-columns: 1.15fr 1fr;
   grid-template-areas: "programs verify";
 }
 
 #grid.has-programs.no-owed.has-sessions {
-  grid-template-columns: minmax(340px, 1.1fr) minmax(340px, 1fr);
+  grid-template-columns: 1.15fr 0.85fr;
   grid-template-areas: "programs sessions";
 }
 
 #grid.no-programs.has-owed.has-sessions {
-  grid-template-columns: minmax(420px, 1.1fr) minmax(340px, 1fr);
+  grid-template-columns: 1fr 0.85fr;
   grid-template-areas: "verify sessions";
 }
 
@@ -332,6 +343,30 @@ body.panel-open #armed-strip {
 
 #grid.one-col .unmapped-rows:not(.open) {
   max-height: 62vh;
+}
+
+/* SC-7 (signal-panel S9): at 900px the ledger stacks into one column — the
+ * column rules become top rules, the topbar wraps, the launch panel keeps its
+ * dock width. The companion selector list re-states the stacking at the SAME
+ * specificity as the adaptive has-/no- templates above so a TAGGED grid
+ * actually stacks too (an id-only rule here would lose the cascade to
+ * #grid.has-programs.has-owed.has-sessions). */
+
+@media (max-width: 900px) {
+  #grid { grid-template-columns: 1fr; grid-template-areas: "programs" "verify" "sessions"; }
+  #grid.has-programs.has-owed.has-sessions,
+  #grid.has-programs.has-owed.no-sessions,
+  #grid.has-programs.no-owed.has-sessions,
+  #grid.no-programs.has-owed.has-sessions,
+  #grid.has-programs.no-owed.no-sessions,
+  #grid.no-programs.has-owed.no-sessions,
+  #grid.no-programs.no-owed.has-sessions {
+    grid-template-columns: 1fr;
+    grid-template-areas: "programs" "verify" "sessions";
+  }
+  #col2, #col3-sessions { border-left: none; border-top: 1px solid var(--border); }
+  #topbar { flex-wrap: wrap; }
+  #launch-panel { width: min(420px, 92vw); }
 }
 
 /* ---- round 5: view switcher (WALL / PROJECTS) + projects screen ---- */
@@ -435,15 +470,13 @@ body.panel-open #armed-strip {
   gap: 10px;
   margin-top: 6px;
   padding: 5px 8px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--r-m);
+  border-bottom: 1px solid var(--border);
   font-size: 14px;
   cursor: pointer;
 }
 
 .project-row:hover {
-  border-color: var(--attention);
+  background: var(--hover);
 }
 
 .project-row-tag {
@@ -574,15 +607,11 @@ body.panel-open #armed-strip {
   display: none;
 }
 
-#col2.waiting .subpanel {
-  border-style: dashed;
-}
+/* signal-panel S9: no boxes-in-boxes — columns separate by rules, sub-panels
+ * and program cards carry no bg/border/radius; the rows own the hairlines. */
 
 .col {
   min-width: 0;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--r-m);
   padding: var(--s3);
 }
 
@@ -592,9 +621,6 @@ body.panel-open #armed-strip {
 }
 
 .subpanel {
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: var(--r-m);
   padding: 10px;
 }
 
@@ -629,12 +655,9 @@ body.panel-open #armed-strip {
   font-size: 14px;
 }
 
-/* ---- Col 1: program cards (SPEC 6.1) ---- */
+/* ---- Col 1: program cards (SPEC 6.1; signal-panel S1 ledger) ---- */
 
 .program-card {
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: var(--r-m);
   padding: 10px;
 }
 
@@ -677,6 +700,14 @@ body.panel-open #armed-strip {
   align-items: center;
   gap: 6px;
   margin-top: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* ledger rows: hover is a wash of --hover (placed BEFORE the launchable rule
+ * so the persistent launch affordance below keeps its own accent) */
+
+.lane:hover {
+  background: var(--hover);
 }
 
 .lane--launchable {
@@ -795,10 +826,11 @@ body.panel-open #armed-strip {
 .verify-row {
   margin-top: 8px;
   padding: 8px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--derived); /* round 4: every verify row is "your move" */
-  border-radius: var(--r-m);
+  border-bottom: 1px solid var(--border);
+}
+
+.verify-row:hover {
+  background: var(--hover);
 }
 
 .verify-caption {
@@ -829,22 +861,28 @@ body.panel-open #armed-strip {
 }
 
 .merge-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
   margin-top: 8px;
   padding: 8px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--r-m);
+  border-bottom: 1px solid var(--border);
+}
+
+.merge-card:hover {
+  background: var(--hover);
 }
 
 /* round 4: the card's left edge carries readiness — NOT-ready reads as a
  * loose end (red edge), ready as a green light, before a single word */
 
 .merge-card--not-ready {
-  border-left: 3px solid var(--stale);
+  border-left: 3px solid var(--red);
 }
 
 .merge-card--ready {
-  border-left: 3px solid var(--note);
+  border-left: 3px solid var(--green);
 }
 
 /* MR title + pipeline + repo badge share ONE visual line (SPEC 3.2 human row) */
@@ -865,19 +903,27 @@ body.panel-open #armed-strip {
 }
 
 .pipeline-unknown {
-  color: var(--stale);
+  color: var(--amber);
   font-weight: 600;
 }
 
 .not-ready {
-  color: var(--stale);
+  color: var(--red);
   font-weight: 600;
 }
 
 .ready-flag {
-  color: var(--note);
+  color: var(--green);
   font-weight: 600;
 }
+
+/* sp-4 (critic amendment 4): readiness also rides an outline badge SIBLING of
+ * .merge-line — status-badge anatomy in the green/red hues; the inline row
+ * text stays byte-identical. */
+
+.ready-badge { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; background: transparent; padding: 1px 6px; border-radius: 3px; flex: 0 0 auto; }
+.ready-badge--ok { color: var(--green); border: 1px solid color-mix(in srgb, var(--green) 40%, transparent); }
+.ready-badge--no { color: var(--red); border: 1px solid color-mix(in srgb, var(--red) 40%, transparent); }
 
 /* transient inline notes (copy failures, fail-soft POST notes — never banners) */
 .inline-note {
@@ -1199,9 +1245,35 @@ body.panel-open #armed-strip {
  * actively being awaited) */
 
 .armed--armed {
-  border: 2px solid var(--derived);
+  border: 2px solid var(--amber);
   color: var(--derived);
   background: color-mix(in srgb, var(--derived) 10%, var(--panel));
+}
+
+/* sp-4 (A7): the wordings carry no glyph prefixes — a 7px amber pulse dot
+ * leads the strip instead (flex order:-1 renders it ahead of the own-text
+ * anonymous item in the flex .armed-indicator). */
+
+.armed-dot {
+  order: -1;
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--amber);
+  animation: armed-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes armed-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .armed-dot {
+    animation: none;
+  }
 }
 
 .armed--flagged,
@@ -1251,21 +1323,28 @@ body.frozen::after {
   left: 0;
   z-index: 40;
   pointer-events: none;
-  /* T7 (B): hatch alpha roughly halved (30% -> 15%) — still unmistakable with
-   * the lock + banner + hatched derived chips, but it no longer drowns the
-   * frozen page content underneath. */
-  background-image: repeating-linear-gradient(45deg, color-mix(in srgb, var(--stale) 15%, transparent) 0 2px, transparent 2px 8px);
+  /* signal-panel S7 / T7-B re-pin: the hatch is REPLACED by a dim curtain —
+   * unmistakable with the lock + badge, but the frozen page stays readable
+   * underneath. */
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
 }
 
-/* dead rule — removed in sp-4 */
-body.frozen .chip--derived {
-  background-image: repeating-linear-gradient(45deg, color-mix(in srgb, var(--stale) 30%, transparent) 0 2px, transparent 2px 6px);
+/* render stops trusting severity + derived signals under freeze: dots go
+ * faint, sig text dims (replaces the old .chip--derived hatch, removed sp-4) */
+
+body.frozen .status-dot {
+  background: var(--faint);
 }
 
-/* notes degraded: {program} — the named card hatches + carries the caption */
+body.frozen .sig {
+  color: var(--faint);
+}
+
+/* notes degraded: {program} — the named card carries the amber left rule +
+ * the caption (signal-panel S7: hatch replaced) */
 
 .program-card.degraded-notes {
-  background-image: repeating-linear-gradient(45deg, color-mix(in srgb, var(--stale) 30%, transparent) 0 2px, transparent 2px 6px);
+  border-left: 2px solid var(--amber);
 }
 
 .notes-degraded-caption {
@@ -1275,10 +1354,10 @@ body.frozen .chip--derived {
   font-weight: 600;
 }
 
-/* goals degraded: {repo} — that repo's goal lines go stale */
+/* goals degraded: {repo} — that repo's goal lines go stale (amber watch) */
 
 .goal-line.stale {
-  color: var(--stale);
+  color: var(--amber);
 }
 
 /* ---- T5: Col 3 SESSIONS (SPEC 6.3) ---- */
@@ -1304,15 +1383,13 @@ body.frozen .chip--derived {
   gap: 2px 8px;
   margin-top: 6px;
   padding: 4px 6px;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: var(--r-m);
+  border-bottom: 1px solid var(--border);
   font-size: 14px;
   cursor: pointer;
 }
 
 .session-row:hover {
-  border-color: var(--attention);
+  background: var(--hover);
 }
 
 .session-title {
@@ -1469,16 +1546,14 @@ body.frozen .chip--derived {
   gap: 2px 10px;
   margin-top: 6px;
   padding: 5px 8px;
-  background: var(--panel-2);
-  border: 1px dashed var(--border);
-  border-radius: var(--r-m);
+  border-bottom: 1px solid var(--border);
   font-size: 14px;
   color: var(--ink);
   cursor: pointer;
 }
 
 .unmapped-row:hover {
-  border-color: var(--attention);
+  background: var(--hover);
 }
 
 /* round 4b: title / age / id are separate segments — the row reads like a

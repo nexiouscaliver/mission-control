@@ -1737,6 +1737,13 @@
       else spanText("not-ready", "NOT ready");
 
       card.appendChild(line);
+      // sp-4 (critic amendment 4): readiness also rides an outline badge
+      // SIBLING of .merge-line so the inline row text stays byte-identical.
+      var badge = el("span");
+      badge.classList.add("ready-badge");
+      badge.classList.add(m.ready === true ? "ready-badge--ok" : "ready-badge--no");
+      badge.setText(m.ready === true ? "ready" : "NOT ready");
+      card.appendChild(badge);
       rootEl.appendChild(card);
     }
 
@@ -2248,20 +2255,26 @@
         if (status === "prompt-armed" || status === "await-birth") {
           wrap.classList.add("armed--armed");
           var tag = typeof rec.lane_tag === "string" ? rec.lane_tag : "";
-          wrap.setText("📋 prompt armed: " + tag + " — paste in ZCode");
+          wrap.setText("prompt armed: " + tag + " — paste in ZCode");
         } else if (status === "goal-armed") {
           wrap.classList.add("armed--armed");
-          wrap.setText("📋 goal copied — paste in the SAME session");
+          wrap.setText("goal copied — paste in the SAME session");
         } else if (status === "flagged") {
           wrap.classList.add("armed--flagged");
-          wrap.setText("🚩 launch flagged — " + (reason !== null ? reason : "check pending"));
+          wrap.setText("launch flagged — " + (reason !== null ? reason : "check pending"));
         } else if (status === "cleared") {
           wrap.classList.add("armed--cleared"); // dim tombstone, not armed styling
-          wrap.setText(reason !== null ? "✔ cleared — " + reason : "✔ cleared");
+          wrap.setText(reason !== null ? "cleared — " + reason : "cleared");
         } else {
           wrap.classList.add("armed--unknown");
           wrap.setText("pending: " + (status !== "" ? status : "unknown"));
         }
+        // sp-4 (A7): the 7px amber pulse dot carries the armed state — the
+        // wordings carry no glyph prefixes. Appended after setText (setText
+        // wipes children); CSS order:-1 renders it ahead of the text.
+        var dot = el("span");
+        dot.classList.add("armed-dot");
+        wrap.appendChild(dot);
         scratch.appendChild(wrap);
 
       var qaMode = deps.location.protocol === "file:";
