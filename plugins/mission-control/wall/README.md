@@ -147,10 +147,12 @@ new or deleted notes; note content and lane status still refresh on the
 ~5 s poll. Opt out with `MC_WALL_DISCOVERY` set to `0`, `off`, `no`, or
 `false` (case-insensitive): declared-only boot, no discovery degraded
 lines, and one `MC_WALL_DISCOVERY set — boot-time discovery disabled`
-line in wall.log. Hermetic suite: `MC_WALL_DISCOVERY=0 .venv/bin/pytest
+line in wall.log on the launchd boot path. Hermetic suite:
+`MC_WALL_DISCOVERY=0 .venv/bin/pytest
 -q` keeps the zero-program boot tests off the real vault on
 vault-equipped machines. Only the wall server discovers — `mc_status`
-and the e2e helpers build `TowerConfig` from tower.json and do not.
+builds `TowerConfig` from tower.json and the e2e helpers inject a
+hardcoded one; neither surfaces discovered programs.
 See `docs/discovery.md` for the full reference.
 
 ## 6. mc-status skill

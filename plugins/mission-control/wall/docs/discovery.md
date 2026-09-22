@@ -86,7 +86,10 @@ entries are never duplicated or modified.
 ## Degraded vocabulary
 
 Every non-silent skip emits one `discovery degraded:` line; `<path>` is
-always the absolute candidate/repo path. All ten formats, grouped by
+absolute when the declared `note_glob`s are absolute (the documented
+convention, `mc_wall/tower/config.py`) — a relative declared glob yields
+relative paths, since search dirs are used verbatim after
+`~`-expansion. All ten formats, grouped by
 stage (trigger details and check order in the sections above):
 
 Candidates:
@@ -121,10 +124,13 @@ declared-only config — no scan, no discovery degraded lines. Unset,
 empty, or any other value leaves discovery on (the default).
 
 Disabled boots log `MC_WALL_DISCOVERY set — boot-time discovery disabled`
-(INFO, logger `mc_wall.server`) — at the wiring site on the lazy app boot
-path, and once per process from `collect_state` on the `__main__` path
-(whose config build precedes `setup_logging`, so collect re-emits the
-line into wall.log). Board unexpectedly empty? Check whether
+(INFO, logger `mc_wall.server`): the wiring site logs it at config build,
+and `collect_state` re-emits it once per process on EVERY path
+(flag-guarded, `mc_wall/tower/collect.py`). The lazy embed path — where
+`setup_logging` precedes the first config build — can therefore show the
+line TWICE in wall.log (wiring site + first collect); the production
+launchd/`__main__` path shows it once (its config build precedes
+`setup_logging`). Board unexpectedly empty? Check whether
 `MC_WALL_DISCOVERY` is exported in the server's environment.
 
 Hermetic suite: on a vault-equipped machine a bare `.venv/bin/pytest -q`
@@ -136,6 +142,6 @@ serial network spawns — network-weather-dependent there). Run
 
 Discovery lives in `tower_config_from_wall`
 (`mc_wall/server/tower_boot.py`) — the wall SERVER discovers. The
-mc-status board (`scripts/mc_status.py`) and the e2e helpers
-(`tests/e2e/e2e_common.py`) build `TowerConfig` directly from tower.json
-and do NOT discover (pre-existing split, unchanged).
+mc-status board (`scripts/mc_status.py`) builds `TowerConfig` from
+tower.json; the e2e helpers (`tests/e2e/e2e_common.py`) inject a
+hardcoded `TowerConfig` — neither board surfaces discovered programs.
