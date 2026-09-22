@@ -787,11 +787,11 @@
       if (pushed !== null && (pushed.value === true || pushed.value === false)) {
         var pchip = el("span");
         pchip.classList.add("sig");
-        if (pushed.value === true) {
-          pchip.setText("push: ls-remote " + (isInt(pushed.age_s) ? pushed.age_s : 0) + "s");
-        } else {
-          pchip.setText("push: not pushed");
-        }
+        pchip.setText(
+          pushed.value === true
+            ? "push " + humanizeAge(isInt(pushed.age_s) ? pushed.age_s : 0)
+            : "push —"
+        );
         laneEl.appendChild(pchip);
       }
 
@@ -802,7 +802,7 @@
         var mrAge = isInt(mr.age_s) ? mr.age_s : 0;
         var mchip = el("span");
         mchip.classList.add("sig");
-        mchip.setText("mr: " + ref + " " + mrState + " " + mrAge + "s");
+        mchip.setText("mr " + ref + " " + mrState + " " + humanizeAge(mrAge));
         var host = typeof mr.repo_host === "string" ? mr.repo_host : "";
         mrBadgeInto(mchip, host, ref);
         laneEl.appendChild(mchip);
@@ -863,12 +863,12 @@
         // Only a successful ls-remote carries a meaningful age (SPEC 6.3: the
         // AGES compose; a false push has none).
         if (pushed !== null && pushed.value === true) {
-          bits.push("push " + (isInt(pushed.age_s) ? pushed.age_s : 0) + "s");
+          bits.push("push " + humanizeAge(isInt(pushed.age_s) ? pushed.age_s : 0));
         }
         var mr = nullable(sig.mr);
         if (mr !== null) {
           var ref = typeof mr.ref === "string" ? mr.ref : mr.ref === null || mr.ref === undefined ? "" : String(mr.ref);
-          bits.push("mr " + ref + " " + (isInt(mr.age_s) ? mr.age_s : 0) + "s");
+          bits.push("mr " + ref + " " + humanizeAge(isInt(mr.age_s) ? mr.age_s : 0));
         }
       }
       return bits;
@@ -1582,12 +1582,12 @@
       // comes from the lane with the same row_id; miss -> age only.
       var lane = MCW.state.laneByRowId(stateDoc, row.row_id);
       var age = isInt(row.finished_ago_s) ? row.finished_ago_s : 0;
-      var ageTxt = age === 0 ? "0s (unknown)" : age + "s";
+      var ageTxt = age === 0 ? "0s (unknown)" : humanizeAge(age);
       var sig = el("div");
       sig.classList.add("verify-signals");
       var statusWord =
         lane !== null && typeof lane.status_parsed === "string" && lane.status_parsed !== ""
-          ? lane.status_parsed + "·"
+          ? lane.status_parsed + " · "
           : "";
       sig.setText("signals: " + statusWord + ageTxt);
       rowEl.appendChild(sig);
@@ -3441,14 +3441,15 @@
     return { doc: doc, case: sel.appliedCase, notes: notes };
   }
 
-  // Humanized age (SPEC 3.1): <60s "45s"; <60m "3m"; <24h "2h"; else "4d".
-  // Ages floor at 0; non-numbers degrade to the zero value, never throw.
+  // Humanized age (SPEC 3.1 / signal-panel SPEC 5): <60s "45s"; <60m "3m";
+  // <24h "2h"; else days with ONE decimal when fractional — 250000 -> "2.9d",
+  // 172800 -> "2d". Ages floor at 0; non-numbers degrade to the zero value.
   function humanizeAge(s) {
     var n = typeof s === "number" && isFinite(s) && s > 0 ? Math.floor(s) : 0;
     if (n < 60) return n + "s";
     if (n < 3600) return Math.floor(n / 60) + "m";
     if (n < 86400) return Math.floor(n / 3600) + "h";
-    return Math.floor(n / 86400) + "d";
+    return Math.round((n / 86400) * 10) / 10 + "d";
   }
 
   // Lane lookup by row_id (T4: feeds the verify-row signals line and any other
