@@ -1188,8 +1188,11 @@ test("AC-9[S]: every lane in every fixture maps to its status dot+badge pair; th
     if (status === "failed") return "blocked";
     if (status === "partial") return "watch";
     if (lane.stalled !== null) return "watch";
+    // A6: UNPARSED renders quiet even unstamped (the AC-22 unparsed-case pin);
+    // unstamped stays watch for every other status.
+    if (status === "UNPARSED") return "quiet";
     if (mtime === 0) return "watch";
-    if (status === "UNPARSED" || status === "done" || status === "parked") return "quiet";
+    if (status === "done" || status === "parked") return "quiet";
     if (status === "launched" || status === "in-flight") return "live";
     return "ok";
   }
@@ -3471,8 +3474,11 @@ test("sev-grammar: every lane's dot+badge carry the severity hue; sigs carry non
     if (status === "failed") return "blocked";
     if (status === "partial") return "watch";
     if (lane.stalled !== null) return "watch";
+    // A6: UNPARSED renders quiet even unstamped (the AC-22 unparsed-case pin);
+    // unstamped stays watch for every other status.
+    if (status === "UNPARSED") return "quiet";
     if (mtime === 0) return "watch";
-    if (status === "UNPARSED" || status === "done" || status === "parked") return "quiet";
+    if (status === "done" || status === "parked") return "quiet";
     if (status === "launched" || status === "in-flight") return "live";
     return "ok";
   }
