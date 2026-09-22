@@ -177,7 +177,7 @@ def mcwallt_world(tmp_path, monkeypatch, *, include=("db", "notes", "goals", "ne
                   lane1_age_s=400.0, queue_age_s=3600.0, manifest=None,
                   master_tag="secfix-master", rows=None, extra_sessions=(),
                   second_program_done_lane=False, handler=None, name="mcwallt_world",
-                  discovery_degraded=()):
+                  discovery_degraded=(), discovery_disabled=False):
     """Full §10 AC-E2E-1 fixture world: 1 program (tag secfix, master_tag
     secfix-master), 1 repo (gitlab, name mcwallt-repo), a variant-A note with
     lanes W1-L1 (done, configured repo+branch, !5 artifacts ref, sess_9a690ab2
@@ -273,5 +273,6 @@ def mcwallt_world(tmp_path, monkeypatch, *, include=("db", "notes", "goals", "ne
         pending_launch_path=str(launch_path),
         now_s=now_s,
         network_cache=NetCache(),
-        discovery_degraded=discovery_degraded)
+        discovery_degraded=discovery_degraded,
+        discovery_disabled=discovery_disabled)
     return cfg, set_now

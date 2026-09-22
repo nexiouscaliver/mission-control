@@ -4,12 +4,14 @@ mcwall-tower-discovery; R1 core + plumbing). The module-level
 phase lands ``mc_wall/tower/discovery.py`` — the accepted RED state."""
 
 import json
+import logging
 
 import pytest
 
 from mc_wall.server.tower_boot import build_tower_config, tower_config_from_wall
 from mc_wall.tower import (ProgramConfig, RepoConfig, TowerConfig, collect_state,
                            discovery)
+from mc_wall.tower import collect as collect_module
 from mc_wall.tower import netcache as netcache_module
 from tests.tower.conftest import (MCWALLT_HEADER_A, MCWALLT_SEP, mcwallt_fake_cmd,
                                   mcwallt_make_db, mcwallt_world,
@@ -231,3 +233,24 @@ def test_td1_degraded_seeding(tmp_path, monkeypatch):
                                  name="mcwallt_world_clean", discovery_degraded=())
     assert collect_state(cfg_clean)["server"]["degraded"] == ["note rows skipped: 1"]
     assert TowerConfig(db_path="x", programs=()).discovery_degraded == ()
+
+
+def test_td1_disabled_log_lands_via_collect(tmp_path, monkeypatch, caplog):
+    # td1 review fix (decision 3b): on the __main__ boot path load_config runs
+    # BEFORE setup_logging, so collect_state re-emits the disabled line itself —
+    # ONCE per process even across configs; a discovery-on config stays silent.
+    # The once-flag reset keeps the assert robust against earlier collects in
+    # the same pytest process.
+    monkeypatch.setattr(collect_module, "_DISCOVERY_DISABLED_LOGGED", False)
+    cfg1, _ = mcwallt_world(tmp_path, monkeypatch, discovery_disabled=True)
+    cfg2, _ = mcwallt_world(tmp_path, monkeypatch, name="mcwallt_world_two",
+                            discovery_disabled=True)
+    caplog.set_level(logging.INFO, logger="mc_wall.server")
+    collect_state(cfg1)
+    collect_state(cfg2)
+    assert [r.getMessage() for r in caplog.records].count(
+        "MC_WALL_DISCOVERY set — boot-time discovery disabled") == 1
+    caplog.clear()
+    cfg_on, _ = mcwallt_world(tmp_path, monkeypatch, name="mcwallt_world_on")
+    collect_state(cfg_on)
+    assert [r for r in caplog.records if r.name == "mc_wall.server"] == []

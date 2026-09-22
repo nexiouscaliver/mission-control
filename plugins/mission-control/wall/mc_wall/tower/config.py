@@ -45,3 +45,4 @@ class TowerConfig:
     network: NetworkSettings = NetworkSettings()
     network_cache: NetCache = field(default_factory=NetCache)  # fresh cache per config build
     discovery_degraded: tuple[str, ...] = ()  # boot-time discovery lines (DegradedLog group 7)
+    discovery_disabled: bool = False  # MC_WALL_DISCOVERY opt-out (decision 3b; collect emits the wall.log line once)

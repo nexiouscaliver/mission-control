@@ -101,16 +101,19 @@ def tower_config_from_wall(data: dict, wall_home: pathlib.Path) -> TowerConfig:
         db_path = default_db_path()
     if discovery.enabled():
         disc = discovery.discover_programs(programs, declared_repos=tuple(repos))
+        discovery_disabled = False
     else:
         logging.getLogger("mc_wall.server").info(
             "MC_WALL_DISCOVERY set — boot-time discovery disabled")
         disc = discovery.DiscoveryResult((), (), ())
+        discovery_disabled = True  # collect re-emits the line once (decision 3b)
     return TowerConfig(
         db_path=str(db_path),
         programs=tuple(programs) + disc.programs,
         store=store,
         repos=tuple(repos) + disc.repos,
         discovery_degraded=disc.degraded,
+        discovery_disabled=discovery_disabled,
         pending_launch_path=str(pending) if pending is not None
         else str(wall_home / "pending-launch.json"),
     )
