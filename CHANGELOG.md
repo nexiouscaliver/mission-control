@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 New changes accumulate here between releases, above the latest version entry (Keep a Changelog convention; the release gates skip this section when reading the head version).
 
+## [1.8.0] - 2026-09-22
+
+Programs appear on the MC Wall the moment they are planned: plan mode registers them in `~/.mc-wall/wall.json` itself, and the program note gains the grammar the Wall's parser actually reads.
+
+### Added
+- **Plan-mode Wall registration** (SKILL §2 step 6) — after `write_note` records the program note, the controller registers the program on the Wall, idempotently, as a plain machine-config file edit plus shell commands (no MCP tool). When `~/.mc-wall/wall.json` exists: a timestamped backup copy first, then `{program: <slug>, tag: <slug>, note_glob: <program note path>}` appended to `programs[]` if no entry with that program name exists, and `{name, path, host}` appended to `repos[]` for each repo the waves work if no matching entry exists — written back as valid JSON preserving `token`, `port`, and every existing entry. The step states the Wall reads this config at BOOT only (restart via `launchctl kickstart -k gui/$(id -u)/ai.zcode.mc-wall`) and verifies via `curl -s "http://localhost:<port>/<token>/state"` — program present with its lanes, `degraded` empty. When the file does not exist (wall not installed): registration is skipped and the program note records "wall not installed" — the file is never created.
+- **Program-note grammar for the Wall** (SKILL §1) — the note-shape rules the Wall's parser taught us: prompt-log rows carry EXACTLY 8 cells (a 7-cell row is silently skipped); the repo/branch cell carries a path token (`~/…` or `/…` prefix — a bare repo name parses repo=None and the lane loses its git signals); never emit pre-forge placeholder rows (the status vocabulary has no "planned" state — a row is born at forge as `forged`); the objective line is unbolded `Objective:` (`**Objective:**` does not parse).
+- **Smoke case 06 — wall registration** (`tests/cases/06-wall-registration.sh`) — pins the §2 registration behavior (wall.json, idempotent append, timestamped backup, kickstart restart, state probe, skip-when-absent) and the §1 grammar rules (8-cell rows, path token, no placeholder rows, unbolded objective, fork-disclosure display rule); red at the 1.7.0 base by design.
+
+### Changed
+- **Fork disclosure display rule** (SKILL §1, operator ruling 2026-09-22) — for a program declared on the Wall, off-mode fork disclosure lives in evidence prose only, never as a prompt-log row: an FX row renders as a lane on the Wall and misrepresents the program. Programs not on the Wall keep the FX row as before; the same-turn evidence-line disclosure requirement is unchanged for both.
+
+Gates: `tests/run_smoke.sh` (6 cases incl. the new 06) and `scripts/verify_packaging.sh` green at 1.8.0.
+
 ## [1.7.0] - 2026-09-22
 
 Parent-session lineage for the Wall: every workflow-actor cluster and side chat links to the conversation that spawned it, readable at a single glance (PR #6).
