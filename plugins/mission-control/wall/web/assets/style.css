@@ -10,16 +10,18 @@
  *   --stale red            = blocked / broken only. */
 
 :root {
-  --bg: #0e1319;
-  --panel: #151c24;
-  --panel-2: #1b242e;
-  --border: #2c3947;
-  --ink: #e9f0f6;
-  --ink-dim: #a5b3c2;
-  --note: #4cd787;
-  --derived: #e9b95c;
-  --stale: #ff8578;
-  --attention: #62c2f0;
+  --bg: #09090b;
+  --raise: #101013;
+  --hover: #18181b;
+  --border: #27272a;
+  --border-2: #3f3f46;
+  --ink: #fafafa;
+  --dim: #a1a1aa;
+  --faint: #71717a;
+  --green: #34d399;
+  --amber: #fbbf24;
+  --red: #f87171;
+  --blue: #60a5fa;
   /* additive layout + shape tokens (SPEC v2.1 §2.1) — the only spacing
    * vocabulary; no rule below may invent a raw px gap where a step exists */
   --s1: 4px;
@@ -28,9 +30,24 @@
   --s4: 16px;
   --s5: 24px;
   --r-s: 4px;
-  --r-m: 8px;
+  --r-m: 6px;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --focus: var(--blue);
+  /* TEMPORARY legacy aliases — deleted in sp-5 (purge is assert-locked there).
+     HEX-VALUED on purpose (critic-2 fix a): selftest relLum parseInt's the token
+     value, so var()-valued aliases would NaN sev-contrast's contrast math at sp-1
+     GREEN. These keep old-token NAME pins resolving (T7-D string compare, round4
+     merges, T7-B, AC-29 var() strings, sev-contrast panel reads) with the NEW
+     contract values. Each line may be deleted earlier once zero references remain. */
+  --panel: #101013;
+  --panel-2: #18181b;
+  --ink-dim: #a1a1aa;
+  --note: #34d399;
+  --derived: #fbbf24;
+  --stale: #f87171;
+  --attention: #60a5fa;
   --r-pill: 999px;
-  --focus: var(--attention);
 }
 
 html,
@@ -42,9 +59,10 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--ink);
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-ui);
   font-size: 14px;
   line-height: 1.45;
+  font-variant-numeric: tabular-nums;
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -61,7 +79,9 @@ body {
   flex-wrap: wrap;
   gap: var(--s3);
   padding: var(--s2) var(--s4);
-  background: var(--panel);
+  min-height: 46px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border);
   /* round 4 polish: the operator bar survives scrolling the wall */
   position: sticky;
@@ -100,20 +120,40 @@ body {
   color: var(--ink-dim);
 }
 
-/* the owed CTA: amber-tinted while it has work to name (the "your move"
- * family — round 4 accent discipline); idle-dim at 0 owed (SPEC v2.1 §2.5)
- * — still focusable/clickable either way */
+/* button system (signal-panel SPEC 3.4): primary = solid --ink bg with --bg
+ * text (NEEDS ME NOW owed, COPY VERIFY, armed RE-COPY); ghost = 1px --border-2
+ * outline; idle/disabled read at ~55% opacity — still focusable either way */
 
-#needs-me-now {
+#needs-me-now:not(.nmn-idle),
+.copy-verify-btn,
+.armed-recopy {
+  color: var(--bg);
+  background: var(--ink);
+  border: 1px solid var(--ink);
+}
+
+#view-wall,
+#view-projects,
+.projects-sort,
+.projects-bg,
+.activate-btn,
+.launch-btn,
+.launch-close,
+.banner-dismiss,
+.armed-dismiss,
+.armed-cancel,
+.unmapped-toggle,
+.unmapped-hidden-toggle {
   color: var(--ink);
-  background: color-mix(in srgb, var(--derived) 14%, var(--panel-2));
-  border: 2px solid var(--derived);
+  background: transparent;
+  border: 1px solid var(--border-2);
 }
 
 #needs-me-now.nmn-idle {
   color: var(--ink-dim);
   background: var(--panel-2);
   border: 1px solid var(--border);
+  opacity: 0.55;
 }
 
 #nmn-hint {
@@ -150,7 +190,7 @@ button:active {
 
 button:disabled {
   color: var(--ink-dim);
-  opacity: 0.6;
+  opacity: 0.55;
   cursor: not-allowed;
 }
 
@@ -1158,7 +1198,7 @@ body.panel-open #armed-strip {
  * amber "booting", NOT red (red is for measured staleness, not startup) */
 
 #live-dot.booting {
-  background: var(--derived);
+  background: var(--amber);
   animation: boot-pulse 1.6s ease-in-out infinite;
 }
 
@@ -1181,7 +1221,7 @@ body.panel-open #armed-strip {
 /* T7 (C): QA mounts run no poll cycle — the dot renders neutral-dim there,
  * never the LIVE green (live/stale/frozen stay the LIVE semantics above). */
 #live-dot.qa {
-  background: var(--ink-dim);
+  background: var(--dim);
 }
 
 .case-note {
@@ -1689,6 +1729,57 @@ body.frozen .chip--derived {
   color: var(--ink);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
+}
+
+/* ---- signal-panel sp-1: mono data + micro-labels ----
+ * Data surfaces read in the mono stack (SPEC section 1: ui-monospace/SF Mono/
+ * Menlo for ALL data + labels; system-ui prose keeps --font-ui via body).
+ * tabular-nums rides on body so every numeric column aligns. */
+
+#topbar,
+.lane,
+.session-line,
+.goal-line,
+.stalled-note,
+.verify-caption,
+.verify-signals,
+.verify-master,
+.merge-line,
+.session-row,
+.unmapped-row,
+.session-idle,
+.mr-badge,
+.legacy-badge,
+.badge,
+#kbd-hint,
+.launch-panel,
+.lane-go {
+  font-family: var(--font-mono);
+}
+
+/* uppercase micro-labels (SPEC section 1: 11px / weight 600 / letter-spacing
+ * 0.14em / --faint) — every *-head class app.js emits gets the treatment.
+ * Placed last so it wins the same-specificity cascade over the per-class
+ * rules above; layout decls (borders, margins, flex) live there. */
+
+.card-head,
+.launch-section-head,
+.launch-head,
+.subpanel-head,
+.session-group-head,
+.idle-sub-head,
+.unmapped-head,
+.unmapped-subgroup-head,
+.unmapped-group-head,
+.project-head,
+.project-run-head,
+.projects-head {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
 }
 
 @media (prefers-reduced-motion: reduce) {

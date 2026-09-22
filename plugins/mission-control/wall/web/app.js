@@ -284,31 +284,33 @@
         body.appendChild(launch);
       }
       if (!byId("kbd-hint")) {
+        // Signal-panel footer: the severity legend line of record + shortcuts.
+        // Text mirrors index.html's static footer EXACTLY (kbd-hint pins both).
         var kbd = el("footer", "kbd-hint");
         var seg;
         seg = el("span");
-        seg.setText("shortcuts: ");
+        seg.setText("● in-flight ◐ ready ✓ done ✕ failed ◌ parked ? unparsed ⚠ stalled · shortcuts: [");
         kbd.appendChild(seg);
         seg = el("span");
         seg.classList.add("kbd");
         seg.setText("n");
         kbd.appendChild(seg);
         seg = el("span");
-        seg.setText(" needs-me-now · ");
+        seg.setText("] needs-me-now [");
         kbd.appendChild(seg);
         seg = el("span");
         seg.classList.add("kbd");
         seg.setText("r");
         kbd.appendChild(seg);
         seg = el("span");
-        seg.setText(" refresh · ");
+        seg.setText("] refresh [");
         kbd.appendChild(seg);
         seg = el("span");
         seg.classList.add("kbd");
         seg.setText("esc");
         kbd.appendChild(seg);
         seg = el("span");
-        seg.setText(" close panel");
+        seg.setText("] close panel");
         kbd.appendChild(seg);
         body.appendChild(kbd);
       }
