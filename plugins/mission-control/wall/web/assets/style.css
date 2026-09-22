@@ -1268,7 +1268,14 @@ body.panel-open #armed-strip {
   }
 }
 
-.armed--flagged,
+/* accent discipline (visual QA): flagged = pending human action / caution ->
+ * amber, same family as .armed--armed; red stays reserved for blocked/frozen.
+ * Unknown keeps red (unrecognized state). */
+.armed--flagged {
+  border: 2px solid var(--amber);
+  color: var(--amber);
+}
+
 .armed--unknown {
   border: 2px solid var(--red);
   color: var(--red);
