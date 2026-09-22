@@ -3432,9 +3432,30 @@ test("T7-D: gitlab/github badges carry host modifier classes + distinct token hu
   assert.ok(ghRule && ghRule.decls["color"], "github hue rule exists");
   const glTok = /var\((--[\w-]+)\)/.exec(glRule.decls["color"])[1];
   const ghTok = /var\((--[\w-]+)\)/.exec(ghRule.decls["color"])[1];
-  assert.equal(tokens[glTok], tokens["--note"], "gitlab badge maps to the note hue");
-  assert.equal(tokens[ghTok], tokens["--derived"], "github badge maps to the derived hue");
+  assert.equal(tokens[glTok], tokens["--blue"], "gitlab badge maps to the blue hue");
+  assert.equal(tokens[ghTok], tokens["--green"], "github badge maps to the green hue");
   assert.notEqual(tokens[glTok], tokens[ghTok], "the two hosts must be distinguishable at 2 m");
+  // sp-5 purge: the sp-1 TEMPORARY legacy alias block is deleted — the names
+  // are gone from :root AND no rule references them anymore
+  for (const legacy of ["--panel", "--panel-2", "--ink-dim", "--note", "--derived", "--stale", "--attention", "--r-pill"]) {
+    assert.ok(!(legacy in tokens), "legacy token " + legacy + " must be purged from :root");
+  }
+  assert.ok(
+    !/var\(--(panel|panel-2|ink-dim|note|derived|stale|attention|r-pill)\)/.test(css),
+    "no legacy var() reference remains in style.css"
+  );
+  // badge base (degraded/banner): rectangular outline badge — no pill radius,
+  // border on a hue token
+  const badgeRule = rules.find((r) => r.selector === ".badge" && r.media === "");
+  assert.ok(badgeRule, ".badge unconditional rule exists");
+  const radiusDecl = badgeRule.decls["border-radius"] || "";
+  const radiusTok = /var\((--[\w-]+)\)/.exec(radiusDecl);
+  const radiusVal = radiusTok ? tokens[radiusTok[1]] : radiusDecl;
+  assert.ok(parseFloat(radiusVal) <= 4, ".badge radius is rectangular (<= 4px): got " + radiusVal);
+  assert.ok(
+    /var\(--(green|amber|red|blue|faint)\)/.test(badgeRule.decls["border"] || ""),
+    ".badge border rides a hue token"
+  );
 });
 
 test("T7-E: master rows read the dim 'no signals' — never the 'signals unknown' alarm", () => {
