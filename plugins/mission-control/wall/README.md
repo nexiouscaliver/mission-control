@@ -132,6 +132,20 @@ file is quarantined (`pending.corrupt-<ts>`) and the server still boots; a
 crash between persist and promote leaves prompt-armed, which boot recovery
 promotes back to await-birth with one audit line.
 
+### Boot-time program-note discovery
+
+At boot the tower also scans the parent dirs of the declared `note_glob`s
+(fallback: `~/work/memory-vault/shared/programs`) for undeclared
+`mission-control-<slug>-program.md` notes (slug kebab-case lowercase) and
+appends them — plus repos derived from their lane rows — after the declared
+programs/repos. A candidate needs a recognized prompt-log table and an
+objective line (exact grammar in the reference); rejected candidates and
+repo-probe failures emit `discovery degraded:` lines into the wall's
+degraded list. Declared wall.json config always wins (same-slug notes skip
+silently). The discovered set is fixed at boot: restart the wall to pick up
+new or deleted notes; note content and lane status still refresh on the
+~5 s poll. See `docs/discovery.md` for the full reference.
+
 ## 6. mc-status skill
 
 Text-board twin of the wall, rendered by the real tower (read-only):
