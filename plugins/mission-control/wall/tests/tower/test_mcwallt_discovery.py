@@ -254,3 +254,171 @@ def test_td1_disabled_log_lands_via_collect(tmp_path, monkeypatch, caplog):
     cfg_on, _ = mcwallt_world(tmp_path, monkeypatch, name="mcwallt_world_on")
     collect_state(cfg_on)
     assert [r for r in caplog.records if r.name == "mc_wall.server"] == []
+
+
+# --- td2: R2+R3 repos derivation (AC-5,6,8 + review coverage nits) ----------
+
+
+def test_td1_repos_derivation(tmp_path, monkeypatch):
+    # AC-5: repo path tokens on an accepted candidate's rows become RepoConfig
+    # entries appended AFTER the declared repos, in first-row-appearance
+    # order, deduped by expanded path (~ via the temp HOME, decision 10);
+    # host is inferred from the (fetch) URLs; zero real subprocess.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "td-1-repo-a").mkdir()
+    (tmp_path / "td-1-home-b").mkdir()
+    (tmp_path / "td-1-declared").mkdir()
+
+    def fake_git(path):
+        if "repo-a" in path:
+            return (0, "origin\thttps://github.com/o/a.git (fetch)\n")
+        if "home-b" in path:
+            return (0, "origin\thttps://gitlab.com/o/b.git (fetch)\n")
+        return (1, "")
+
+    monkeypatch.setattr(discovery, "_run_git", fake_git)
+    d = tmp_path / "td-1-rep"
+    declared_glob = td_note(d, "td-1-declared.md")
+    cand = d / "mission-control-derive-program.md"
+    repo_a = tmp_path / "td-1-repo-a"
+    cand.write_text("\n".join(["objective: td-1 derive", MCWALLT_HEADER_A, MCWALLT_SEP,
+        f"| W1-L1 | W1 | L1 | {repo_a} | n/a | n/a | n/a | done |",
+        "| W1-L2 | W1 | L2 | ~/td-1-home-b | n/a | n/a | n/a | done |",
+        f"| W1-L3 | W1 | L3 | {repo_a} | n/a | n/a | n/a | done |",
+    ]) + "\n", encoding="utf-8")
+    data = td_data(declared_glob)
+    data["repos"] = [{"name": "td-1-declared", "path": str(tmp_path / "td-1-declared"),
+                      "host": "gitlab"}]
+    cfg = tower_config_from_wall(data, tmp_path)
+    declared_entry = RepoConfig("td-1-declared", str(tmp_path / "td-1-declared"), "gitlab")
+    assert cfg.repos == (declared_entry,
+                         RepoConfig("td-1-repo-a", str(repo_a), "github"),
+                         RepoConfig("td-1-home-b", str(tmp_path / "td-1-home-b"), "gitlab"))
+    assert cfg.discovery_degraded == ()
+
+
+def test_td1_repo_skip_degraded(tmp_path, monkeypatch):
+    # AC-6: seven isolated skip classes — each costs exactly its decision-2
+    # line and keeps the repo out of the boot set (checks in decision-6 order:
+    # isdir -> name -> conflict -> git rc -> fetch URL); the same-path repeat
+    # across two discovered notes is the one SILENT case. _run_git always faked.
+    ok_fetch = "origin\thttps://gitlab.com/o/ok.git (fetch)\n"
+
+    def boot(sub, token, declared_repos=(), git=None):
+        monkeypatch.setattr(discovery, "_run_git",
+                            git if git is not None else lambda path: (0, ok_fetch))
+        d = tmp_path / sub
+        declared = td_note(d, "td-1-declared.md")
+        td_note(d, "mission-control-cand-program.md", repo=token)
+        data = td_data(declared)
+        data["repos"] = list(declared_repos)
+        return tower_config_from_wall(data, tmp_path)
+
+    absent = tmp_path / "td-1-absent-repo"
+    cfg = boot("td-1-skip-a", str(absent))
+    assert cfg.repos == ()
+    assert cfg.discovery_degraded == (f"discovery degraded: repo {absent} not a directory",)
+
+    file_repo = tmp_path / "td-1-file-repo"
+    file_repo.write_text("", encoding="utf-8")
+    cfg = boot("td-1-skip-b", str(file_repo))
+    assert cfg.repos == ()
+    assert cfg.discovery_degraded == (f"discovery degraded: repo {file_repo} not a directory",)
+
+    dir_c = tmp_path / "td-1-rc-repo"
+    dir_c.mkdir()
+    cfg = boot("td-1-skip-c", str(dir_c), git=lambda path: (1, ""))
+    assert cfg.repos == ()
+    assert cfg.discovery_degraded == (f"discovery degraded: repo {dir_c} git remote failed",)
+
+    dir_d = tmp_path / "td-1-push-repo"
+    dir_d.mkdir()
+    cfg = boot("td-1-skip-d", str(dir_d),
+               git=lambda path: (0, "origin\tgit@x:o/p.git (push)\n"))
+    assert cfg.repos == ()
+    assert cfg.discovery_degraded == (f"discovery degraded: repo {dir_d} has no git remote",)
+
+    cfg = boot("td-1-skip-e", "/")
+    assert cfg.repos == ()
+    assert cfg.discovery_degraded == ("discovery degraded: repo / has no name",)
+
+    dir_f = tmp_path / "td-1-clash"
+    dir_f.mkdir()
+    declared_clash = tmp_path / "td-1-declared-clash"
+    cfg = boot("td-1-skip-f", str(dir_f),
+               declared_repos=[{"name": "td-1-clash", "path": str(declared_clash),
+                                "host": "gitlab"}])
+    assert cfg.repos == (RepoConfig("td-1-clash", str(declared_clash), "gitlab"),)
+    assert cfg.discovery_degraded == (
+        f"discovery degraded: repo name td-1-clash at {dir_f}"
+        f" conflicts with {declared_clash}",)
+
+    dir_g = tmp_path / "td-1-silent-repo"
+    dir_g.mkdir()
+    monkeypatch.setattr(discovery, "_run_git", lambda path: (0, ok_fetch))
+    d = tmp_path / "td-1-skip-g"
+    declared = td_note(d, "td-1-declared.md")
+    td_note(d, "mission-control-sil-one-program.md", repo=str(dir_g))
+    td_note(d, "mission-control-sil-two-program.md", repo=str(dir_g))
+    cfg = tower_config_from_wall(td_data(declared), tmp_path)
+    assert cfg.repos == (RepoConfig("td-1-silent-repo", str(dir_g), "gitlab"),)
+    assert cfg.discovery_degraded == ()
+
+
+def test_td1_e2e_state_document(tmp_path, monkeypatch):
+    # AC-8 (consuming surface): a discovered program flows through
+    # collect_state in the declared data shape — objective, note_path, lanes —
+    # and its lane's repo resolves to the DERIVED RepoConfig's name; the
+    # malformed sibling surfaces as the single seeded degraded line. The repo
+    # dir must EXIST or _derive_repos skips it and the lane-repo assert fails
+    # for a non-obvious reason.
+    monkeypatch.setenv("MC_WALL_DB", mcwallt_make_db(tmp_path))
+    e2e_repo = tmp_path / "td-1-e2e-repo"
+    e2e_repo.mkdir()
+    monkeypatch.setattr(discovery, "_run_git",
+                        lambda path: (0, "origin\thttps://gitlab.com/o/e2e.git (fetch)\n"))
+    monkeypatch.setattr(netcache_module, "_run_cmd",
+                        mcwallt_fake_cmd(mcwallt_world_default_handler)[0])
+    d = tmp_path / "td-1-e2e"
+    alpha_glob = td_note(d, "alpha-declared.md", objective="td-1 alpha")
+    cand = d / "mission-control-e2e-prog-program.md"
+    cand.write_text("\n".join(["objective: td-1 objective", MCWALLT_HEADER_A, MCWALLT_SEP,
+        f"| W1-L1 | W1 | L1 | {e2e_repo} loop/mcwall-tower-discovery | td-1-slug | n/a | !5 | done |",
+    ]) + "\n", encoding="utf-8")
+    malformed = d / "mission-control-e2e-bad-program.md"
+    malformed.write_text("\n".join([MCWALLT_HEADER_A, MCWALLT_SEP,
+        "| W1-L1 | W1 | L1 | n/a | n/a | n/a | n/a | done |"]) + "\n", encoding="utf-8")
+    doc = collect_state(tower_config_from_wall(td_wall("alpha", alpha_glob), tmp_path))
+    programs = {p["program"]: p for p in doc["programs"]}
+    assert set(programs) == {"alpha", "e2e-prog"}
+    e2e, alpha = programs["e2e-prog"], programs["alpha"]
+    assert e2e["objective"] == "td-1 objective"
+    assert e2e["note_path"] == str(cand)
+    assert sorted(e2e) == sorted(alpha)
+    assert e2e["lanes"][0]["repo"] == "td-1-e2e-repo"
+    assert doc["server"]["degraded"] == [f"discovery degraded: no objective in {malformed}"]
+
+
+def test_td1_empty_dirname_glob(tmp_path):
+    # td1-review coverage nit (spec Edge cases): a bare "*.md" glob contributes
+    # NO search dir, but its mere presence must not force fallback-only mode —
+    # the sibling real-dir glob still scans and discovers its candidate.
+    real = tmp_path / "td-1-real"
+    real_declared = td_note(real, "td-1-declared.md")
+    cand = td_note(real, "mission-control-cand-program.md")
+    cfg = tower_config_from_wall(td_data("*.md", real_declared), tmp_path)
+    assert cfg.programs == (ProgramConfig("p0", "p0", "*.md", None),
+                            ProgramConfig("p1", "p1", real_declared, None),
+                            ProgramConfig("cand", "cand", cand, None))
+    assert cfg.discovery_degraded == ()
+
+
+def test_td1_degraded_multi_line_order(tmp_path, monkeypatch):
+    # td1-review coverage nit (decision 7): multiple boot lines seed in
+    # EMISSION order as group 7 — after the note groups, line-a before line-b.
+    cfg, _ = mcwallt_world(tmp_path, monkeypatch, rows=["| W1-L1 | W1 |"],
+                           discovery_degraded=("discovery degraded: line-a",
+                                               "discovery degraded: line-b"))
+    assert collect_state(cfg)["server"]["degraded"] == ["note rows skipped: 1",
+                                                        "discovery degraded: line-a",
+                                                        "discovery degraded: line-b"]
