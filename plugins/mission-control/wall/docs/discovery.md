@@ -82,3 +82,60 @@ line naming the path when it is absent or not a directory
 (`… has no git remote`); the same name at the same path dedupes silently.
 Derived repos are appended after the declared ones — declared `repos[]`
 entries are never duplicated or modified.
+
+## Degraded vocabulary
+
+Every non-silent skip emits one `discovery degraded:` line; `<path>` is
+always the absolute candidate/repo path. All ten formats, grouped by
+stage (trigger details and check order in the sections above):
+
+Candidates:
+
+- unreadable as UTF-8 → `discovery degraded: unreadable note <path>`
+- no recognized table → `discovery degraded: no prompt-log table in <path>`
+- table but empty objective → `discovery degraded: no objective in <path>`
+- slug seen earlier in scan order →
+  `discovery degraded: duplicate program <slug> at <path>`
+
+Derived repos:
+
+- not a directory → `discovery degraded: repo <path> not a directory`
+- empty basename (root path) → `discovery degraded: repo <path> has no name`
+- name taken at a different path →
+  `discovery degraded: repo name <name> at <path> conflicts with <other path>`
+- git probe nonzero rc (missing git, 5 s timeout) →
+  `discovery degraded: repo <path> git remote failed`
+- rc 0 but no `(fetch)` URL →
+  `discovery degraded: repo <path> has no git remote`
+
+Last resort (whole-scan, not per-item):
+
+- unexpected exception in the scan →
+  `discovery degraded: internal error (<ExcTypeName>)`
+
+## Opt-out
+
+Env `MC_WALL_DISCOVERY` disables the pass: when its value, after
+`strip().lower()`, is `0`, `off`, `no`, or `false`, boot builds the
+declared-only config — no scan, no discovery degraded lines. Unset,
+empty, or any other value leaves discovery on (the default).
+
+Disabled boots log `MC_WALL_DISCOVERY set — boot-time discovery disabled`
+(INFO, logger `mc_wall.server`) — at the wiring site on the lazy app boot
+path, and once per process from `collect_state` on the `__main__` path
+(whose config build precedes `setup_logging`, so collect re-emits the
+line into wall.log). Board unexpectedly empty? Check whether
+`MC_WALL_DISCOVERY` is exported in the server's environment.
+
+Hermetic suite: on a vault-equipped machine a bare `.venv/bin/pytest -q`
+makes the zero-program boot tests discover the real vault (real lanes,
+serial network spawns — network-weather-dependent there). Run
+`MC_WALL_DISCOVERY=0 .venv/bin/pytest -q` to keep them off the vault.
+
+## Consumer boundary
+
+Discovery lives in `tower_config_from_wall`
+(`mc_wall/server/tower_boot.py`) — the wall SERVER discovers. The
+mc-status board (`scripts/mc_status.py`) and the e2e helpers
+(`tests/e2e/e2e_common.py`) build `TowerConfig` directly from tower.json
+and do NOT discover (pre-existing split, unchanged).
