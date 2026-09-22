@@ -1770,8 +1770,10 @@ test("AC-15: merge cards — one inline row, badges, ready/pipeline states, unkn
   assert.ok(collectText(ph).indexOf("HUMAN ACTIONS OWED") !== -1, "sub-panel header");
   const c34 = findByData(ph, "data-row-id", "!34");
   assert.ok(c34, "merge card carries data-row-id=<ref>");
+  // critic-2 fix c: the exact-row pins describe the INLINE row — scope them to
+  // .merge-line so the appended ready-badge sibling cannot perturb them
   assert.equal(
-    collectText(c34),
+    collectText(byClass(c34, "merge-line")[0]),
     "[cleo] !34 secfix: join hardening — pipeline: green · ready",
     "exact inline row: [repo] badge title — pipeline · ready"
   );
@@ -1779,21 +1781,33 @@ test("AC-15: merge cards — one inline row, badges, ready/pipeline states, unkn
   assert.equal(collectText(byClass(c34, "mr-badge")[0]), "!34", "gitlab ref badge verbatim");
   const c56 = findByData(ph, "data-row-id", "#56");
   assert.equal(
-    collectText(c56),
+    collectText(byClass(c56, "merge-line")[0]),
     "[omniforge] #56 secfix: partial band fix — pipeline: unknown · NOT ready",
     "ready:false -> NOT ready; empty pipeline -> pipeline: unknown"
   );
   assert.equal(collectText(byClass(c56, "mr-badge")[0]), "#56", "github ref badge verbatim");
   assert.ok(byClass(c56, "pipeline-unknown")[0], "empty-pipeline span");
   assert.ok(byClass(c56, "not-ready").length >= 1, "NOT ready span");
-  // single visual line is CSS-pinned; pipeline: unknown is stale-styled
+  // sp-4 (critic amendment 4): readiness also rides a ready-badge SIBLING of
+  // .merge-line (outside it) — the inline row text stays byte-identical
+  for (const card of byClass(ph, "merge-card")) {
+    const badge = byClass(card, "ready-badge")[0];
+    assert.ok(badge, "every merge card carries a ready-badge");
+    assert.ok(badge.parentNode === card, "the badge is a SIBLING of .merge-line (outside it)");
+    const badgeTxt = collectText(badge);
+    assert.ok(badgeTxt === "ready" || badgeTxt === "NOT ready", "badge text ready/NOT ready: '" + badgeTxt + "'");
+  }
+  assert.equal(collectText(byClass(c34, "ready-badge")[0]), "ready", "ready card badge text");
+  assert.equal(collectText(byClass(c56, "ready-badge")[0]), "NOT ready", "not-ready card badge text");
+  // single visual line is CSS-pinned; pipeline: unknown is amber
   const css = readWebFile("style.css");
   const rules = parseCssRules(css);
   const line = rules.find((r) => r.selector === ".merge-line" && r.media === "");
   assert.ok(line, ".merge-line rule exists");
   assert.equal(line.decls["flex-wrap"], "nowrap", "merge row never stacks");
+  assert.equal(line.decls["white-space"], "nowrap", "merge row stays a single visual line");
   const pu = rules.find((r) => r.selector === ".pipeline-unknown" && r.media === "");
-  assert.ok(pu && /var\(--stale\)/.test(pu.decls["color"]), "pipeline: unknown styled stale");
+  assert.ok(pu && /var\(--amber\)/.test(pu.decls["color"]), "pipeline: unknown styled amber");
   // unknown kind skipped + count note (in-test doc)
   const skip = makeQaApp("minimal");
   skip.app.setDocument(
@@ -2433,35 +2447,35 @@ test("AC-20: armed wordings verbatim for every status; attention border; null ab
   const full = makeQaApp("full");
   const ind1 = byClass(slotOf(full.dom), "armed-indicator")[0];
   assert.ok(ind1, "indicator renders for prompt-armed");
-  assert.equal(ind1.text, "📋 prompt armed: [secfix W2-L7] — paste in ZCode");
+  assert.equal(ind1.text, "prompt armed: [secfix W2-L7] — paste in ZCode");
   assert.ok(ind1.classList.contains("armed--armed"));
   // await-birth: same armed wording
   const ab = makeQaApp("minimal");
   ab.app.setDocument(pendingDocWith(mocks, "await-birth"));
   ab.app.render();
-  assert.equal(byClass(slotOf(ab.dom), "armed-indicator")[0].text, "📋 prompt armed: [secfix W2-L7] — paste in ZCode");
+  assert.equal(byClass(slotOf(ab.dom), "armed-indicator")[0].text, "prompt armed: [secfix W2-L7] — paste in ZCode");
   // goal-armed
   const ga = makeQaApp("minimal");
   ga.app.setDocument(pendingDocWith(mocks, "goal-armed"));
   ga.app.render();
   const ind3 = byClass(slotOf(ga.dom), "armed-indicator")[0];
-  assert.equal(ind3.text, "📋 goal copied — paste in the SAME session");
+  assert.equal(ind3.text, "goal copied — paste in the SAME session");
   assert.ok(ind3.classList.contains("armed--armed"), "both armed wordings carry the attention styling");
   // flagged: stale style + reason; null reason -> check pending
   const pf = makeQaApp("pending-flagged");
   const ind4 = byClass(slotOf(pf.dom), "armed-indicator")[0];
-  assert.equal(ind4.text, "🚩 launch flagged — ambiguous tags");
+  assert.equal(ind4.text, "launch flagged — ambiguous tags");
   assert.ok(ind4.classList.contains("armed--flagged"));
   const fnr = makeQaApp("minimal");
   fnr.app.setDocument(pendingDocWith(mocks, "flagged", { reason: null }));
   fnr.app.render();
-  assert.equal(byClass(slotOf(fnr.dom), "armed-indicator")[0].text, "🚩 launch flagged — check pending");
+  assert.equal(byClass(slotOf(fnr.dom), "armed-indicator")[0].text, "launch flagged — check pending");
   // cleared tombstone: dim, not armed styling; with + without reason
   const cr = makeQaApp("minimal");
   cr.app.setDocument(pendingDocWith(mocks, "cleared", { reason: "merged" }));
   cr.app.render();
   const ind5 = byClass(slotOf(cr.dom), "armed-indicator")[0];
-  assert.equal(ind5.text, "✔ cleared — merged");
+  assert.equal(ind5.text, "cleared — merged");
   assert.ok(ind5.classList.contains("armed--cleared"), "tombstone class");
   assert.ok(!ind5.classList.contains("armed--armed"), "tombstone is NOT armed styling");
   // unknown status: stale 'pending: <status>'
@@ -2474,11 +2488,23 @@ test("AC-20: armed wordings verbatim for every status; attention border; null ab
   // pending null -> indicator absent
   assert.equal(slotOf(makeQaApp("pending-null").dom).children.length, 0, "pending-null case");
   assert.equal(slotOf(makeQaApp("minimal").dom).children.length, 0, "wall.pending null");
-  // armed border CSS maps to the DERIVED (amber) token — round 4 accent
-  // discipline: armed is "pending human action" (the your-move family), not
+  // armed border CSS maps to the AMBER token — round 4 accent discipline:
+  // armed is "pending human action" (the your-move family), not
   // cyan-informational; red stays reserved for blocked/broken
-  const armedRule = parseCssRules(readWebFile("style.css")).find((r) => r.selector === ".armed--armed" && r.media === "");
-  assert.ok(armedRule && /var\(--derived\)/.test(armedRule.decls["border"]), "armed border uses the amber (your-move) token");
+  const armedRules = parseCssRules(readWebFile("style.css"));
+  const armedRule = armedRules.find((r) => r.selector === ".armed--armed" && r.media === "");
+  assert.ok(armedRule && /var\(--amber\)/.test(armedRule.decls["border"]), "armed border uses the amber (your-move) token");
+  // sp-4 (A7): the wordings lose their glyph prefixes — a 7px amber pulse dot
+  // carries the armed state instead (reduced-motion safe)
+  const dotRule = armedRules.find((r) => r.selector === ".armed-dot" && r.media === "");
+  assert.ok(dotRule, ".armed-dot unconditional rule exists");
+  assert.equal(dotRule.decls["width"], "7px", "armed dot is 7px wide");
+  assert.equal(dotRule.decls["height"], "7px", "armed dot is 7px tall");
+  assert.ok(/var\(--amber\)/.test(dotRule.decls["background"] || ""), "armed dot rides the amber token");
+  assert.ok(
+    armedRules.some((r) => /prefers-reduced-motion: reduce/.test(r.media) && r.selector === ".armed-dot"),
+    "reduced-motion neutralizes the armed dot pulse"
+  );
 });
 
 test("AC-20 QA demo: cycle exercises prompt-armed -> goal-armed -> cleared tombstone; x sets null-not-mock", () => {
@@ -2489,10 +2515,10 @@ test("AC-20 QA demo: cycle exercises prompt-armed -> goal-armed -> cleared tombs
   assert.equal(app.qaArmCycle(), "prompt-armed");
   assert.ok(ind().classList.contains("armed--armed"));
   assert.equal(app.qaArmCycle(), "goal-armed");
-  assert.equal(ind().text, "📋 goal copied — paste in the SAME session");
+  assert.equal(ind().text, "goal copied — paste in the SAME session");
   assert.equal(app.qaArmCycle(), "cleared");
   const cleared = ind();
-  assert.equal(cleared.text, "✔ cleared", "cleared tombstone (mock reason null)");
+  assert.equal(cleared.text, "cleared", "cleared tombstone (mock reason null)");
   assert.ok(cleared.classList.contains("armed--cleared"));
   assert.ok(!cleared.classList.contains("armed--armed"));
   assert.strictEqual(app.qaArmCycle(), null);
@@ -2604,14 +2630,19 @@ test("AC-24 render: freeze — frozen body class, verbatim non-dismissable freez
     "entry verbatim in the badge");
   assert.equal(byClass(badgesEl, "banner-dismiss").length, 0, "freeze badge is NOT dismissable");
   assert.ok(fz.dom.getElementById("live-dot").classList.contains("frozen"), "dot frozen while frozen");
-  // freeze CSS machinery exists (page lock + hatched derived chips)
+  // freeze CSS machinery exists (page lock + quiet grammar under the curtain)
   const rules = parseCssRules(readWebFile("style.css"));
   const frozenBody = rules.find((r) => r.selector === "body.frozen" && r.media === "");
   assert.ok(frozenBody && frozenBody.decls["pointer-events"] === "none", "body.frozen pointer-events none");
-  const frozenDerived = rules.find((r) => r.selector === "body.frozen .chip--derived" && r.media === "");
+  const frozenDot = rules.find((r) => r.selector === "body.frozen .status-dot" && r.media === "");
   assert.ok(
-    frozenDerived && /repeating-linear-gradient/.test(frozenDerived.decls["background-image"] || ""),
-    "derived chips hatch under freeze (render stops trusting derived)"
+    frozenDot && /var\(--faint\)/.test(frozenDot.decls["background"] || ""),
+    "status dots go faint under freeze (render stops trusting severity)"
+  );
+  const frozenSig = rules.find((r) => r.selector === "body.frozen .sig" && r.media === "");
+  assert.ok(
+    frozenSig && (/var\(--faint\)/.test(frozenSig.decls["color"] || "") || parseFloat(frozenSig.decls["opacity"] || "1") <= 0.6),
+    "derived sig text dims under freeze"
   );
   // a later valid doc without such entries clears the frozen class + hides the strip
   fz.app.mountQA("minimal");
@@ -2723,12 +2754,16 @@ test("AC-29: degraded prefix reactions — notes/goals hatch, advisory badges, u
   const goalLines = byClass(col1, "goal-line");
   assert.equal(goalLines.length, 4, "full has four goal lines (W2-L1, W2-L2, W2-L3, W2-L7)");
   for (const g of goalLines) assert.ok(g.classList.contains("stale"), "cleo goal line stale-styled");
-  // CSS pins for the two chip reactions
+  // CSS pins for the two reactions: amber left rule (hatch gone) + amber stale goals
   const rules = parseCssRules(readWebFile("style.css"));
   const hatchRule = rules.find((r) => r.selector === ".program-card.degraded-notes" && r.media === "");
-  assert.ok(hatchRule && /repeating-linear-gradient/.test(hatchRule.decls["background-image"] || ""), "hatched card rule");
+  assert.ok(
+    hatchRule && /var\(--amber\)/.test(hatchRule.decls["border-left"] || ""),
+    "degraded-notes card carries the amber left rule"
+  );
+  assert.ok(!/repeating-linear-gradient/.test(hatchRule.decls["background-image"] || ""), "hatch removed from the degraded card");
   const goalStale = rules.find((r) => r.selector === ".goal-line.stale" && r.media === "");
-  assert.ok(goalStale && /var\(--stale\)/.test(goalStale.decls["color"]), "stale goal-line rule");
+  assert.ok(goalStale && /var\(--amber\)/.test(goalStale.decls["color"]), "stale goal-line rides the amber token");
 });
 
 test("AC-22: all nine cases parse+render with their pinned outcomes", () => {
@@ -2773,7 +2808,7 @@ test("AC-22: all nine cases parse+render with their pinned outcomes", () => {
   const pf = makeQaApp("pending-flagged");
   const ind = byClass(pf.dom.getElementById("armed-indicator-slot"), "armed-indicator")[0];
   assert.ok(ind && ind.classList.contains("armed--flagged"));
-  assert.equal(ind.text, "🚩 launch flagged — ambiguous tags");
+  assert.equal(ind.text, "launch flagged — ambiguous tags");
   // empty-lanes: col1 note + col3 empty (its master is all-null)
   const el = makeQaApp("empty-lanes");
   assert.ok(collectText(el.dom.getElementById("col1-programs")).indexOf("no lanes") !== -1);
@@ -3233,8 +3268,15 @@ test("sweep: no raw seconds in UI-composed age text", () => {
   // .session-idle lines, .verify-signals rows. The verbatim server-string
   // containers (.stalled-note, #degraded-badges, #banner-strip, verify_cmd /
   // captions) legitimately carry 21600s-style text and are NOT collected.
+  // EMOJI half (critic-2 fix b, extended at sp-4): the armed wordings dropped
+  // their glyph prefixes (A7) — planes U+1F300..U+1FAFF must never render; the
+  // whitelist glyphs (legend, chevrons, ↳, ⓘ) all live below U+1F300.
   for (const name of NINE_CASES) {
     const { dom } = makeQaApp(name);
+    assert.ok(
+      !/[\u{1F300}-\u{1FAFF}]/u.test(collectText(dom.body)),
+      name + ": emoji-plane glyph rendered on the page"
+    );
     const scopes = []
       .concat(byClass(dom.body, "sig"))
       .concat(byClass(dom.body, "session-idle"))
@@ -3330,15 +3372,21 @@ test("T7-A: freeze renders the verbatim entry exactly once (badge surface, no du
   assert.ok(fz.dom.body.classList.contains("frozen"), "freeze still freezes the body");
 });
 
-test("T7-B: freeze full-page hatch toned to roughly half intensity, still --stale-derived", () => {
+test("T7-B: freeze dim curtain — color-mix veil over the frozen page, no hatch", () => {
   const rule = parseCssRules(readWebFile("style.css")).find(
     (r) => r.selector === "body.frozen::after" && r.media === ""
   );
-  assert.ok(rule && rule.decls["background-image"], "the freeze full-page hatch overlay rule exists");
-  const m = /var\(--stale\)\s+(\d+)%/.exec(rule.decls["background-image"]);
-  assert.ok(m, "hatch stripes still derive from the --stale token");
-  const pct = parseInt(m[1], 10);
-  assert.ok(pct > 0 && pct <= 15, "hatch alpha roughly halved (was 30%, now <= 15%): got " + pct + "%");
+  assert.ok(rule, "the freeze full-page curtain rule exists");
+  assert.ok(
+    /color-mix\(in srgb, var\(--bg\) 55%, transparent\)/.test(rule.decls["background"] || ""),
+    "curtain is a dim bg veil (55% bg)"
+  );
+  assert.ok(
+    !/repeating-linear-gradient/.test((rule.decls["background"] || "") + (rule.decls["background-image"] || "")),
+    "no hatch stripes in the curtain"
+  );
+  assert.equal(rule.decls["position"], "fixed", "curtain covers the full viewport");
+  assert.equal(rule.decls["pointer-events"], "none", "curtain never eats the freeze lock's pointer events");
 });
 
 test("T7-C: QA dot renders neutral — never the live green; LIVE keeps its semantics", async () => {
@@ -3877,8 +3925,8 @@ test("round 4: NOT-ready merges float above ready ones; readiness rides the card
   const rules = parseCssRules(readWebFile("style.css"));
   const notReady = rules.find((r) => r.selector === ".merge-card--not-ready" && r.media === "");
   const ready = rules.find((r) => r.selector === ".merge-card--ready" && r.media === "");
-  assert.ok(notReady && /var\(--stale\)/.test(notReady.decls["border-left"]), "not-ready edge is red");
-  assert.ok(ready && /var\(--note\)/.test(ready.decls["border-left"]), "ready edge is green");
+  assert.ok(notReady && /var\(--red\)/.test(notReady.decls["border-left"]), "not-ready edge is red");
+  assert.ok(ready && /var\(--green\)/.test(ready.decls["border-left"]), "ready edge is green");
 });
 
 test("round 4: LIVE boot dot is 'booting' (amber) before the first poll settles — never red", () => {
@@ -3935,10 +3983,17 @@ test("round 4b: adaptive grid — sole content goes full width; empty columns le
   const hero = dom.getElementById("empty-hero");
   assert.ok(hero.classList.contains("hero--slim"), "slim hero form");
   assert.ok(collectText(hero).indexOf("3 unmapped sessions below") !== -1, "slim hero names the count");
-  // CSS: the sessions-only template + full-empty hide are pinned
+  // CSS: the fr-only ledger + column rules + the 900px stacking pin (SC-7)
   const rules = parseCssRules(readWebFile("style.css"));
+  const gridBase = rules.find((r) => r.selector === "#grid" && r.media === "");
+  assert.ok(gridBase, "base #grid rule exists");
+  assert.equal(gridBase.decls["grid-template-columns"], "1.15fr 1fr 0.85fr", "3-col fr-only ledger tracks (no minmax pixel floors)");
+  assert.equal(gridBase.decls["gap"], "0", "gap 0 — columns separate by rules, not gutters");
+  const colRule = rules.find((r) => r.selector === "#col2, #col3-sessions" && r.media === "");
+  assert.ok(colRule && colRule.decls["border-left"] === "1px solid var(--border)", "column separator hairline rules");
   const solo = rules.find((r) => r.selector === "#grid.no-programs.no-owed.has-sessions" && r.media === "");
   assert.ok(solo && /sessions/.test(solo.decls["grid-template-areas"] || ""), "sessions-only template pinned");
+  assert.ok(!/minmax\(/.test(solo.decls["grid-template-columns"] || ""), "solo template carries no minmax pixel minimum");
   const emptyHide = rules.find((r) => r.selector === "#grid.is-empty" && r.media === "");
   assert.ok(emptyHide && emptyHide.decls["display"] === "none", "fully-empty grid hides behind the big hero");
   // dangling-area columns must be REMOVED from placement, or their implicit
@@ -3947,6 +4002,19 @@ test("round 4b: adaptive grid — sole content goes full width; empty columns le
     (r) => r.selector === "#grid.no-programs.no-owed #col1-programs, #grid.no-programs.no-owed #col2" && r.media === ""
   );
   assert.ok(hideIdle && hideIdle.decls["display"] === "none", "contentless columns leave the grid entirely");
+  // SC-7: at 900px the ledger stacks into one column; column rules become top rules
+  const narrow = rules.filter((r) => /@media \(max-width: 900px\)/.test(r.media));
+  assert.ok(narrow.length >= 2, "900px media block exists");
+  const mGrid = narrow.find((r) => r.selector === "#grid");
+  assert.ok(
+    mGrid && mGrid.decls["grid-template-areas"] === "\"programs\" \"verify\" \"sessions\"",
+    "single-column stacking at 900px"
+  );
+  const mCols = narrow.find((r) => r.selector === "#col2, #col3-sessions");
+  assert.ok(
+    mCols && mCols.decls["border-left"] === "none" && mCols.decls["border-top"] === "1px solid var(--border)",
+    "column rules become top rules at 900px"
+  );
 });
 
 test("round 4: unmapped rows group by dir — heads show the project NAME, full path hover-only; id demoted to a copy handle", () => {
