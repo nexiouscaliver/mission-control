@@ -10,11 +10,18 @@ seconds-magnitude values.
 
 import json
 import os
+import pytest
 import sqlite3
 import threading
 
 from mc_wall.tower import NetCache, ProgramConfig, RepoConfig, TowerConfig
 from mc_wall.tower import netcache as netcache_module
+
+
+@pytest.fixture(autouse=True)
+def _mcwallt_discovery_env_default(monkeypatch):
+    """Tower tests observe the REAL discovery default regardless of suite env (decision 3b)."""
+    monkeypatch.delenv("MC_WALL_DISCOVERY", raising=False)
 
 
 def mcwallt_make_note(tmp_path, name, lines):
@@ -169,7 +176,8 @@ def mcwallt_world_default_handler(argv, cwd):
 def mcwallt_world(tmp_path, monkeypatch, *, include=("db", "notes", "goals", "net", "launch"),
                   lane1_age_s=400.0, queue_age_s=3600.0, manifest=None,
                   master_tag="secfix-master", rows=None, extra_sessions=(),
-                  second_program_done_lane=False, handler=None, name="mcwallt_world"):
+                  second_program_done_lane=False, handler=None, name="mcwallt_world",
+                  discovery_degraded=()):
     """Full §10 AC-E2E-1 fixture world: 1 program (tag secfix, master_tag
     secfix-master), 1 repo (gitlab, name mcwallt-repo), a variant-A note with
     lanes W1-L1 (done, configured repo+branch, !5 artifacts ref, sess_9a690ab2
@@ -264,5 +272,6 @@ def mcwallt_world(tmp_path, monkeypatch, *, include=("db", "notes", "goals", "ne
         repos=(RepoConfig(name="mcwallt-repo", path=str(repo_path), host="gitlab"),),
         pending_launch_path=str(launch_path),
         now_s=now_s,
-        network_cache=NetCache())
+        network_cache=NetCache(),
+        discovery_degraded=discovery_degraded)
     return cfg, set_now

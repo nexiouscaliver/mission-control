@@ -18,7 +18,7 @@ class NetworkSettings:
 class RepoConfig:
     name: str  # e.g. "cleo" — used in lanes[].repo and degraded strings
     path: str  # absolute path to local checkout
-    host: str  # "gitlab" | "github"
+    host: str  # "gitlab" | "github" | "other" (discovery mints "other")
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,3 +44,4 @@ class TowerConfig:
     verify_grace_s: int = 300        # min finished age before suggest_verify fires
     network: NetworkSettings = NetworkSettings()
     network_cache: NetCache = field(default_factory=NetCache)  # fresh cache per config build
+    discovery_degraded: tuple[str, ...] = ()  # boot-time discovery lines (DegradedLog group 7)
