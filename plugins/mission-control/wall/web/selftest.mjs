@@ -1104,7 +1104,7 @@ test("AC-23 L4: nullable — wrong-typed nullables read as null; ladder never th
   }
 });
 
-test("T2-util: humanizeAge bands (45s / 3m / 2h / 4d; floors 0, negative, non-number)", () => {
+test("T2-util: humanizeAge bands (45s / 3m / 2h / 2.9d / 4d; floors 0, negative, non-number)", () => {
   const h = loadApp().util.humanizeAge;
   assert.equal(h(0), "0s");
   assert.equal(h(45), "45s");
@@ -1116,6 +1116,8 @@ test("T2-util: humanizeAge bands (45s / 3m / 2h / 4d; floors 0, negative, non-nu
   assert.equal(h(7200), "2h");
   assert.equal(h(86399), "23h");
   assert.equal(h(86400), "1d");
+  assert.equal(h(172800), "2d", "whole days drop the trailing .0");
+  assert.equal(h(250000), "2.9d", "fractional days gain ONE decimal (SPEC 5 / A5)");
   assert.equal(h(345600), "4d");
   assert.equal(h(-5), "0s", "ages floor at 0 (SPEC 3.1)");
   assert.equal(h("x"), "0s", "non-number degrades to the zero value");
@@ -1248,18 +1250,16 @@ test("AC-9[S]: every lane in every fixture maps to its status dot+badge pair; th
           -1,
           caseName + " " + lane.row_id + ": no stamp text on lane rows (stamp lives on the card head)"
         );
-        // derived bits (raw-second strings until sp-3 humanizes them), on .sig
+        // derived bits humanized via the app's own humanizeAge (SPEC 5)
+        const h = loadApp().util.humanizeAge;
         const sig = lane.signals;
         if (sig && sig.pushed !== null && (sig.pushed.value === true || sig.pushed.value === false)) {
-          const want =
-            sig.pushed.value === true
-              ? "push: ls-remote " + sig.pushed.age_s + "s"
-              : "push: not pushed";
+          const want = sig.pushed.value === true ? "push " + h(sig.pushed.age_s) : "push —";
           const chip = byClass(laneEl, "sig").find((c) => collectText(c).indexOf(want) !== -1);
           assert.ok(chip, caseName + " " + lane.row_id + ": derived sig '" + want + "'");
         }
         if (sig && sig.mr !== null) {
-          const want = "mr: " + sig.mr.ref + " " + sig.mr.state + " " + sig.mr.age_s + "s";
+          const want = "mr " + sig.mr.ref + " " + sig.mr.state + " " + h(sig.mr.age_s);
           const chip = byClass(laneEl, "sig").find((c) => collectText(c).indexOf(want) !== -1);
           assert.ok(chip, caseName + " " + lane.row_id + ": derived sig '" + want + "'");
         }
@@ -1711,20 +1711,23 @@ test("AC-14: verify rows — signals line forms, master forms, COPY VERIFY wired
   assert.strictEqual(laneByRowId(mocks.full, "W2-L99"), null, "lookup miss -> null");
   assert.strictEqual(laneByRowId(null, "W2-L3"), null, "null doc degrades");
 
+  // signals lines: "signals: <status> · <humanized age>" via the app's own
+  // humanizeAge; the miss case drops the status word, age 0 stays literal.
+  const h = MCW.util.humanizeAge;
   const l3 = findByData(pv, "data-row-id", "W2-L3");
   assert.ok(l3, "verify row carries data-row-id");
   assert.ok(collectText(l3).indexOf("W2-L3 · secfix") !== -1, "caption row_id · program");
-  assert.ok(collectText(l3).indexOf("signals: done·250000s") !== -1, "signals: <status>·<age>s (banned-word-safe)");
+  assert.ok(collectText(l3).indexOf("signals: done · " + h(250000)) !== -1, "signals: <status> · <age> (banned-word-safe)");
   assert.ok(collectText(l3).indexOf("master s-master-1") !== -1, "master <hint> when non-empty");
   const l4 = findByData(pv, "data-row-id", "W2-L4");
-  assert.ok(collectText(l4).indexOf("signals: partial·2400s") !== -1, "status via row_id->lane lookup");
+  assert.ok(collectText(l4).indexOf("signals: partial · " + h(2400)) !== -1, "status via row_id->lane lookup");
   const l99 = findByData(pv, "data-row-id", "W2-L99");
-  assert.ok(collectText(l99).indexOf("signals: 600s") !== -1, "lookup miss drops the status word");
+  assert.ok(collectText(l99).indexOf("signals: " + h(600)) !== -1, "lookup miss drops the status word");
   const mLine = byClass(l99, "verify-master")[0];
   assert.ok(mLine.classList.contains("dim"), "no-master note is dim");
   assert.ok(collectText(mLine).indexOf("no master mapped") !== -1, "no master mapped note");
   const l1om = findByData(pv, "data-row-id", "W3-L1");
-  assert.ok(collectText(l1om).indexOf("signals: done·0s (unknown)") !== -1, "finished_ago_s 0 -> '0s (unknown)'");
+  assert.ok(collectText(l1om).indexOf("signals: done · 0s (unknown)") !== -1, "finished_ago_s 0 -> '0s (unknown)'");
   const copyDisabled = byClass(l1om, "copy-verify-btn")[0];
   assert.ok("disabled" in copyDisabled.attrs, "COPY VERIFY disabled when verify_cmd === ''");
   assert.ok(
@@ -2279,7 +2282,7 @@ test("AC-16: Col 3 — repo groups, master row, idle>24h collapse, unmapped stri
   const idleLines = byClass(col3, "session-idle");
   assert.ok(idleLines.length >= 5);
   for (const line of idleLines) {
-    assert.match(collectText(line), /^idle \d+[smhd] · /, "idle text is never bare: '" + collectText(line) + "'");
+    assert.match(collectText(line), /^idle \d+(\.\d+)?[smhd] · /, "idle text is never bare (fractional days tolerated): '" + collectText(line) + "'");
   }
   const s101 = findByData(col3, "data-session-id", "s-101");
   assert.ok(
@@ -3212,17 +3215,38 @@ test("T6-carry(a): idle bits compose signal ages — 'push <age>s' / 'mr <ref> <
   assert.ok(a1.indexOf("push 45s") !== -1, "push age bit composes: " + a1);
   assert.ok(a1.indexOf("signals unknown") === -1, "goal:null + live push is never 'signals unknown'");
   const a2 = line("s-b");
-  assert.ok(a2.indexOf("mr !7 240s") !== -1, "mr age bit composes: " + a2);
+  assert.ok(a2.indexOf("mr !7 4m") !== -1, "mr age bit composes humanized (240s -> 4m): " + a2);
   assert.ok(a2.indexOf("signals unknown") === -1);
   const a3 = line("s-c");
   assert.ok(a3.indexOf("signals unknown") !== -1, "a false push carries no age -> nothing composable (SPEC 6.3: signal AGES compose)");
-  // full-mock regression: s-101 composes goal bits AND signal ages now
+  // full-mock regression: s-101 composes goal bits AND humanized signal ages
   const full = makeQaApp("full");
   const s101 = collectText(findByData(full.dom.getElementById("col3-sessions"), "data-session-id", "s-101"));
-  assert.ok(s101.indexOf("push 900s") !== -1, "s-101 idle line carries the push age: " + s101);
-  assert.ok(s101.indexOf("mr !34 3600s") !== -1, "s-101 idle line carries the mr age");
+  assert.ok(s101.indexOf("push 15m") !== -1, "s-101 idle line carries the push age (900s -> 15m): " + s101);
+  assert.ok(s101.indexOf("mr !34 1h") !== -1, "s-101 idle line carries the mr age (3600s -> 1h)");
   const s105 = collectText(findByData(full.dom.getElementById("col3-sessions"), "data-session-id", "s-105"));
   assert.ok(s105.indexOf("signals unknown") !== -1, "all-null signals keep the honest 'signals unknown'");
+});
+
+test("sweep: no raw seconds in UI-composed age text", () => {
+  // SCOPED (critic amendment 2): only UI-COMPOSED containers — .sig signals,
+  // .session-idle lines, .verify-signals rows. The verbatim server-string
+  // containers (.stalled-note, #degraded-badges, #banner-strip, verify_cmd /
+  // captions) legitimately carry 21600s-style text and are NOT collected.
+  for (const name of NINE_CASES) {
+    const { dom } = makeQaApp(name);
+    const scopes = []
+      .concat(byClass(dom.body, "sig"))
+      .concat(byClass(dom.body, "session-idle"))
+      .concat(byClass(dom.body, "verify-signals"));
+    for (const el of scopes) {
+      const text = collectText(el);
+      assert.ok(
+        !/\b\d{4,}s\b/.test(text),
+        name + ": raw seconds leaked into UI-composed age text: '" + text + "'"
+      );
+    }
+  }
 });
 
 test("T6-carry(b): operator-banner dismissal persists across re-renders until the banner text changes", () => {
@@ -3514,28 +3538,14 @@ test("sev-grammar: every lane's dot+badge carry the severity hue; sigs carry non
           ["status-dot--" + want],
           caseName + " " + lane.row_id + ": expected dot hue " + want
         );
-        // derived sigs carry NO grammar classes
+        // derived sigs carry NO grammar classes (their humanized text pins
+        // live in AC-9[S], which sweeps every case with humanizeAge-composed
+        // expectations — no duplication here)
         for (const c of byClass(laneEl, "sig")) {
           const grammar = String(c.className)
             .split(/\s+/)
             .filter((k) => k.indexOf("status-badge--") === 0 || k.indexOf("status-dot--") === 0);
           assert.equal(grammar.length, 0, caseName + " " + lane.row_id + ": sigs carry NO grammar class");
-        }
-        // derived text assertions per the current strings (sp-3 humanizes these)
-        const sig = lane.signals;
-        if (sig && sig.pushed !== null && (sig.pushed.value === true || sig.pushed.value === false)) {
-          const wantTxt = sig.pushed.value === true ? "push: ls-remote " + sig.pushed.age_s + "s" : "push: not pushed";
-          assert.ok(
-            byClass(laneEl, "sig").some((c) => collectText(c).indexOf(wantTxt) !== -1),
-            caseName + " " + lane.row_id + ": sig '" + wantTxt + "'"
-          );
-        }
-        if (sig && sig.mr !== null) {
-          const wantTxt = "mr: " + sig.mr.ref + " " + sig.mr.state + " " + sig.mr.age_s + "s";
-          assert.ok(
-            byClass(laneEl, "sig").some((c) => collectText(c).indexOf(wantTxt) !== -1),
-            caseName + " " + lane.row_id + ": sig '" + wantTxt + "'"
-          );
         }
       }
     }
