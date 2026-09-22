@@ -87,5 +87,39 @@ def _scan(declared, declared_repos, run_git):
     return DiscoveryResult(programs, repos, tuple(degraded))
 
 
-def _derive_repos(ordered, declared_repos, run_git, degraded):
-    return ()  # td2 replaces this body (R2+R3)
+def _derive_repos(ordered: list[tuple[str, notes.NoteParse, str]],
+                  declared_repos, run_git: Callable[[str], tuple[int, str]],
+                  degraded: list[str]) -> tuple[RepoConfig, ...]:
+    by_name = {r.name: r.path for r in declared_repos}   # declared ∪ already-derived
+    seen: set[str] = set()  # EVERY expanded token incl. failures (decision 6: dedupe BEFORE checks)
+    out: list[RepoConfig] = []
+    for _note_path, parsed, _slug in ordered:            # slug order; row order within
+        for row in parsed.rows:
+            if row.repo_token is None:
+                continue
+            path = os.path.expanduser(row.repo_token)
+            if path in seen:
+                continue                                  # pure path dedupe: silent
+            seen.add(path)
+            if not os.path.isdir(path):
+                degraded.append(f"discovery degraded: repo {path} not a directory"); continue
+            name = os.path.basename(path.rstrip("/"))
+            if not name:
+                degraded.append(f"discovery degraded: repo {path} has no name"); continue
+            if name in by_name:
+                if by_name[name] == path:
+                    continue                              # same path: silent
+                degraded.append(f"discovery degraded: repo name {name} at {path}"
+                                f" conflicts with {by_name[name]}"); continue
+            rc, outp = run_git(path)
+            if rc != 0:
+                degraded.append(f"discovery degraded: repo {path} git remote failed"); continue
+            urls = [ln.split()[1] for ln in outp.splitlines()
+                    if "(fetch)" in ln and len(ln.split()) >= 2]
+            if not urls:
+                degraded.append(f"discovery degraded: repo {path} has no git remote"); continue
+            host = ("github" if any("github" in u for u in urls)
+                    else "gitlab" if any("gitlab" in u for u in urls) else "other")
+            by_name[name] = path
+            out.append(RepoConfig(name=name, path=path, host=host))
+    return tuple(out)
