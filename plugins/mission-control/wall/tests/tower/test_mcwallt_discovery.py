@@ -263,10 +263,12 @@ def test_td1_repos_derivation(tmp_path, monkeypatch):
     # AC-5: repo path tokens on an accepted candidate's rows become RepoConfig
     # entries appended AFTER the declared repos, in first-row-appearance
     # order, deduped by expanded path (~ via the temp HOME, decision 10);
-    # host is inferred from the (fetch) URLs; zero real subprocess.
+    # host is inferred from the (fetch) URLs (github/gitlab/other — td2
+    # review: bitbucket lands as "other"); zero real subprocess.
     monkeypatch.setenv("HOME", str(tmp_path))
     (tmp_path / "td-1-repo-a").mkdir()
     (tmp_path / "td-1-home-b").mkdir()
+    (tmp_path / "td-1-repo-c").mkdir()
     (tmp_path / "td-1-declared").mkdir()
 
     def fake_git(path):
@@ -274,6 +276,8 @@ def test_td1_repos_derivation(tmp_path, monkeypatch):
             return (0, "origin\thttps://github.com/o/a.git (fetch)\n")
         if "home-b" in path:
             return (0, "origin\thttps://gitlab.com/o/b.git (fetch)\n")
+        if "repo-c" in path:
+            return (0, "origin\tgit@bitbucket.org/o/c.git (fetch)\n")
         return (1, "")
 
     monkeypatch.setattr(discovery, "_run_git", fake_git)
@@ -281,10 +285,12 @@ def test_td1_repos_derivation(tmp_path, monkeypatch):
     declared_glob = td_note(d, "td-1-declared.md")
     cand = d / "mission-control-derive-program.md"
     repo_a = tmp_path / "td-1-repo-a"
+    repo_c = tmp_path / "td-1-repo-c"
     cand.write_text("\n".join(["objective: td-1 derive", MCWALLT_HEADER_A, MCWALLT_SEP,
         f"| W1-L1 | W1 | L1 | {repo_a} | n/a | n/a | n/a | done |",
         "| W1-L2 | W1 | L2 | ~/td-1-home-b | n/a | n/a | n/a | done |",
         f"| W1-L3 | W1 | L3 | {repo_a} | n/a | n/a | n/a | done |",
+        f"| W1-L4 | W1 | L4 | {repo_c} | n/a | n/a | n/a | done |",
     ]) + "\n", encoding="utf-8")
     data = td_data(declared_glob)
     data["repos"] = [{"name": "td-1-declared", "path": str(tmp_path / "td-1-declared"),
@@ -293,7 +299,8 @@ def test_td1_repos_derivation(tmp_path, monkeypatch):
     declared_entry = RepoConfig("td-1-declared", str(tmp_path / "td-1-declared"), "gitlab")
     assert cfg.repos == (declared_entry,
                          RepoConfig("td-1-repo-a", str(repo_a), "github"),
-                         RepoConfig("td-1-home-b", str(tmp_path / "td-1-home-b"), "gitlab"))
+                         RepoConfig("td-1-home-b", str(tmp_path / "td-1-home-b"), "gitlab"),
+                         RepoConfig("td-1-repo-c", str(repo_c), "other"))
     assert cfg.discovery_degraded == ()
 
 
@@ -362,6 +369,25 @@ def test_td1_repo_skip_degraded(tmp_path, monkeypatch):
     td_note(d, "mission-control-sil-two-program.md", repo=str(dir_g))
     cfg = tower_config_from_wall(td_data(declared), tmp_path)
     assert cfg.repos == (RepoConfig("td-1-silent-repo", str(dir_g), "gitlab"),)
+    assert cfg.discovery_degraded == ()
+
+
+def test_td1_repo_declared_same_path_silent(tmp_path, monkeypatch):
+    # td2-review coverage nit (decision 6): a candidate row tokening EXACTLY a
+    # declared repo's path is the declared-same-path SILENT dedupe — cfg.repos
+    # holds ONLY the declared entry, no conflicts line, no duplicate; git is
+    # faked but never reached past the name check.
+    same = tmp_path / "td-1-same"
+    same.mkdir()
+    monkeypatch.setattr(discovery, "_run_git",
+                        lambda path: (0, "origin\thttps://gitlab.com/o/ok.git (fetch)\n"))
+    d = tmp_path / "td-1-same-case"
+    declared = td_note(d, "td-1-declared.md")
+    td_note(d, "mission-control-cand-program.md", repo=str(same))
+    data = td_data(declared)
+    data["repos"] = [{"name": "td-1-same", "path": str(same), "host": "gitlab"}]
+    cfg = tower_config_from_wall(data, tmp_path)
+    assert cfg.repos == (RepoConfig("td-1-same", str(same), "gitlab"),)
     assert cfg.discovery_degraded == ()
 
 

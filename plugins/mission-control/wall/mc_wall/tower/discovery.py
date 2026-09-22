@@ -1,4 +1,4 @@
-"""Boot-time program-note discovery (mcwall-tower-discovery; decisions 1-5, 9)."""
+"""Boot-time program-note discovery (mcwall-tower-discovery; decisions 1-6, 9)."""
 
 from __future__ import annotations
 import os, re, subprocess
