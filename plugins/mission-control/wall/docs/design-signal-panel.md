@@ -153,6 +153,19 @@ The launch-panel status mirror uses the same render map.
 - Armed strip: full-width `--raise` band; `.armed-dot` = 7px amber circle pulsing
   (`armed-pulse` 1.6s); `.armed--armed` border `var(--amber)`. With the launch panel open
   the strip docks via `margin-right: min(420px, 92vw)` (z-index 25 pin).
+- Armed-strip state machine (the strip carries the wall's pending record — one band,
+  five renderings):
+
+  | Pending status | Class | Rendering |
+  |---|---|---|
+  | `prompt-armed` / `goal-armed` / `await-birth` | `.armed--armed` | amber pulse dot + amber border; wordings `prompt armed: [tag] — paste in ZCode` / `goal copied — paste in the SAME session`; white primary RE-COPY + ghost cancel |
+  | `flagged` | `.armed--flagged` | amber border/dot/text (amber = pending human decision — red is reserved for blocked/frozen; changed from red per accent discipline) |
+  | unrecognized status | `.armed--unknown` | red border/dot/text (protocol anomaly) |
+  | `cleared` | `.armed--cleared` | dim tombstone (`cleared — <reason>` / `cleared`); faint STATIC dot — no pulse |
+
+- Launch panel open/close toggles the `hidden` ATTRIBUTE on `#launch-panel`
+  (`openLaunchPanel`/`closeLaunchPanel`), not a CSS `!important` override — the
+  `.open` class stays for styling only.
 - Launch panel: fixed right, `--raise` bg, 1px `--border` left edge, width
   `min(420px, 92vw)`.
 - Footer `#kbd-hint`: ONE mono legend line, maintained in BOTH `index.html` (static) and
