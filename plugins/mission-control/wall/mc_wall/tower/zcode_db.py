@@ -56,9 +56,12 @@ REQUIRED = {
 # SQL LIKE prefilter applied BEFORE any payload JSON parsing / content hashing.
 TAG_PREFILTER = "%Session title:%"
 
-# §5 tag grammar: literal "Session title: [", tag = any chars except ] and
-# newline, literal "]"; anchored, applied to line.strip().
-TAG_LINE_RE = re.compile(r"^Session title: \[(?P<tag>[^\]\n]+)\]$")
+# §5 tag grammar (widened, goal mcwall-autonomy): literal "Session title: [",
+# bracket = any chars except ] and newline, literal "]", then an optional
+# trailing name tail. Anchored, applied to line.strip(); the tag-line prefix
+# itself keeps EXACT single-space matching — whitespace tolerance comes from
+# str.split() INSIDE the bracket only.
+TAG_LINE_RE = re.compile(r"^Session title: \[(?P<bracket>[^\]\n]+)\](?P<name>.*)$")
 
 
 def open_db_ro(path: str) -> sqlite3.Connection:
@@ -111,21 +114,48 @@ def to_seconds(v) -> float | None:
     return v / 1000 if v > 1e11 else float(v)
 
 
+def parse_tag_line(line: str) -> tuple[str, str | None] | None:
+    """(program_tag, row_id | None) for a tag line; None for a non-tag line.
+
+    Applied to line.strip(). Bare form (empty name tail AND at most one
+    bracket token) is bit-for-bit the v1 grammar: the RAW bracket string with
+    row None (covers ``[secfix]`` and the pathological ``[ ]`` alike). Titled
+    form (everything else): ``tokens[0]`` is the program tag, ``tokens[1]``
+    the row id when present; further bracket tokens and the entire name tail
+    are IGNORED. Degenerate titled (whitespace-only bracket + non-empty name
+    → ``tokens == []``) yields no product. A multi-token bracket with NO
+    trailing name (one opaque tag under the v1 grammar) is DELIBERATELY a
+    titled form: the app may trim the name, so binding cannot depend on it."""
+    m = TAG_LINE_RE.match(line.strip())
+    if m is None:
+        return None
+    tokens = m.group("bracket").split()
+    if m.group("name").strip() == "" and len(tokens) <= 1:
+        return (m.group("bracket"), None)
+    if not tokens:
+        return None  # degenerate titled: whitespace-only bracket + non-empty name
+    return (tokens[0], tokens[1] if len(tokens) >= 2 else None)
+
+
 def parse_tags(text: str) -> set[str]:
-    """§5 tag grammar over split('\\n') lines (each line stripped first)."""
+    """§5 tag grammar over split('\\n') lines (each line stripped first):
+    PROGRAM tags only — bare lines contribute the raw bracket, titled lines
+    their first bracket token."""
     tags = set()
     for line in text.split("\n"):
-        m = TAG_LINE_RE.match(line.strip())
-        if m:
-            tags.add(m.group("tag"))
+        product = parse_tag_line(line)
+        if product is not None:
+            tags.add(product[0])
     return tags
 
 
-def scan_tags(cur, cutoff: int) -> dict[str, set[str]]:
-    """Windowed, LIKE-prefiltered sendText tag scan -> session_id -> tag set.
-    Never full-scans session_input; never touches message; unparseable payloads
-    and non-str .text values are skipped, never fatal."""
-    result: dict[str, set[str]] = {}
+def scan_tag_products(cur, cutoff: int) -> dict[str, list[tuple[str, str | None]]]:
+    """ONE windowed, LIKE-prefiltered sendText scan -> session_id -> ordered
+    (program_tag, row_id | None) products (union across the sid's rows, SQL
+    fetch order; no ORDER BY — every consumer is a set, order is
+    non-load-bearing). Never full-scans session_input; never touches message;
+    unparseable payloads and non-str .text values are skipped, never fatal."""
+    result: dict[str, list[tuple[str, str | None]]] = {}
     rows = cur.execute(
         "SELECT session_id, payload FROM session_input"
         " WHERE kind='sendText' AND time_created > ? AND payload LIKE ?",
@@ -142,10 +172,39 @@ def scan_tags(cur, cutoff: int) -> dict[str, set[str]]:
         text = obj.get("text")
         if not isinstance(text, str):
             continue
-        tags = parse_tags(text)
-        if tags:
-            result.setdefault(sid, set()).update(tags)
+        for line in text.split("\n"):
+            product = parse_tag_line(line)
+            if product is not None:
+                result.setdefault(sid, []).append(product)
     return result
+
+
+def products_to_tags(products: list[tuple[str, str | None]]) -> set[str]:
+    """{p[0] for p in products} — the scan's tag view: bare contributes the
+    raw bracket, titled its first token (masters/entry-7 operate on this)."""
+    return {p[0] for p in products}
+
+
+def products_to_bindings(products: list[tuple[str, str | None]]) -> set[tuple[str, str]]:
+    """The scan's binding view: titled products only — {(tag, row_id)} for
+    products carrying a row id; bare and no-row titled products contribute
+    nothing."""
+    return {(t, r) for t, r in products if r is not None}
+
+
+def scan_tags(cur, cutoff: int) -> dict[str, set[str]]:
+    """Windowed, LIKE-prefiltered sendText tag scan -> session_id -> PROGRAM
+    tag set (the products_to_tags view of the one scan; a sid appears only
+    with a non-empty set)."""
+    return {sid: products_to_tags(p)
+            for sid, p in scan_tag_products(cur, cutoff).items()}
+
+
+def scan_tag_bindings(cur, cutoff: int) -> dict[str, set[tuple[str, str]]]:
+    """The products_to_bindings view of the one scan: session_id -> titled
+    (program_tag, row_id) pairs (bare products never appear)."""
+    return {sid: products_to_bindings(p)
+            for sid, p in scan_tag_products(cur, cutoff).items()}
 
 
 def _has_parent_id(cur) -> bool:
