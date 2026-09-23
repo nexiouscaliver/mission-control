@@ -1,8 +1,9 @@
-"""Wall-autonomy tests (goal mcwall-autonomy, matrix 1-22 + 26-28): the widened
+"""Wall-autonomy tests (goal mcwall-autonomy, matrix 1-28): the widened
 tag grammar (bare vs titled split, pinned bit-for-bit), the ONE-scan products
 split with its two pure views, the sessions_unmapped exclusion holding for
-BOTH paste forms, and the tag-driven lane binding (paste-primary, title
-fallback, newest-wins ambiguity, stale-token/orphan/foreign-tag guards).
+BOTH paste forms, the tag-driven lane binding (paste-primary, title
+fallback, newest-wins ambiguity, stale-token/orphan/foreign-tag guards),
+and the verify:ok token clearing the lane-level verify cue (queue row kept).
 Pure-grammar tests pin parse_tag_line/parse_tags directly; the scan test pins
 the products views read-only; the world tests pin the exclusion and the
 binding through the full collect_state document. Sids are fresh full
@@ -14,7 +15,7 @@ import os
 from pathlib import Path
 
 from mc_wall.tower import ProgramConfig, TowerConfig, collect_state, contract
-from mc_wall.tower import zcode_db
+from mc_wall.tower import derive, notes, zcode_db
 from tests.tower.conftest import (MCWALLT_WORLD_LANE, MCWALLT_WORLD_NOW,
                                   MCWALLT_WORLD_UNMAPPED, mcwallt_clock,
                                   mcwallt_make_db, mcwallt_make_note,
@@ -529,3 +530,61 @@ def test_wa_1_bind_title_prefixed_form(tmp_path, monkeypatch):
     state = collect_state(cfg)
     lanes = {l["row_id"]: l for l in state["programs"][0]["lanes"]}
     assert lanes["W1-L3"]["session"]["id"] == s28
+
+
+# --- matrix 23-25: the verified token clears the verify cue (goal T3) ---------
+
+def test_wa_1_verified_token_parses():
+    # Matrix 23: the artifacts cell "!5; sess_9a690ab2; verify:ok" sets the
+    # verified flag WITHOUT disturbing token extraction — the token cannot
+    # collide with SESS_RE/BANG_RE/HASH_RE, so sess_token/mr_bang parse exactly
+    # as in a token-less twin row (which stays verified=False, the defaulted
+    # field). The token is a controller-only convention: incidental substring
+    # occurrences are accepted by design, not ruled out.
+    text = "\n".join([
+        "| id | wave | lane | repo/branch | slug | base | session/MR artifacts | status |",
+        "|---|---|---|---|---|---|---|---|",
+        "| W1-L1 | W1 | L1 | n/a | n/a | n/a | !5; sess_9a690ab2; verify:ok | done |",
+        "| W1-L2 | W1 | L2 | n/a | n/a | n/a | !5; sess_9a690ab2 | done |",
+    ])
+    rows = notes.parse_note(text).rows
+    assert rows[0].verified is True
+    assert rows[0].sess_token == "sess_9a690ab2"
+    assert rows[0].mr_bang == "!5"
+    assert rows[1].verified is False
+
+
+def test_wa_1_verified_clears_suggest():
+    # Matrix 24: verified=True short-circuits the cue (None) even past grace;
+    # the keyword default preserves today's behavior for every existing
+    # positional caller (omitted == explicit False).
+    assert derive.derive_suggest_verify("done", 400, 300) is not None
+    assert derive.derive_suggest_verify("done", 400, 300, verified=False) is not None
+    assert derive.derive_suggest_verify("done", 400, 300, verified=True) is None
+
+
+def test_wa_1_verified_e2e_clears_cue(tmp_path, monkeypatch):
+    # Matrix 25: the full pipeline — control (default world: W1-L1 done,
+    # token-joined, aged 400 s > grace 300 s) fires suggest_verify; the same
+    # world with W1-L1's artifacts cell carrying verify:ok clears ONLY the lane
+    # cue — the verify_queue row stays with the joined full db id in verify_cmd
+    # (the operator's entry point, Q6 queue-unchanged pin).
+    ctl_cfg, _set = mcwallt_world(tmp_path, monkeypatch)
+    ctl_state = collect_state(ctl_cfg)
+    ctl_lanes = {l["row_id"]: l for l in ctl_state["programs"][0]["lanes"]}
+    assert ctl_lanes["W1-L1"]["suggest_verify"] is not None
+    # Same world rebuilt (default name, files overwritten), W1-L1's artifacts
+    # cell alone changed; the repo path is the default name's own derivation.
+    repo = tmp_path / "mcwallt_world_repo"
+    rows = [
+        f"| W1-L1 | W1 | L1 | {repo} loop/mcwall-tower | mcwallt-slug | n/a | !5; sess_9a690ab2; verify:ok | done |",
+        "| W1-L2 | W1 | L2 | plugin cache 1.3.0 (plain lane) | n/a | n/a | n/a | launched |",
+        f"| W1-L3 | W1 | L3 | {repo} main | mcwallt-slug-3 | n/a | n/a | done |",
+    ]
+    cfg, _set = mcwallt_world(tmp_path, monkeypatch, rows=rows)
+    state = collect_state(cfg)
+    lanes = {l["row_id"]: l for l in state["programs"][0]["lanes"]}
+    assert lanes["W1-L1"]["suggest_verify"] is None
+    w1l1 = [r for r in state["verify_queue"] if r["row_id"] == "W1-L1"]
+    assert len(w1l1) == 1
+    assert w1l1[0]["verify_cmd"] == f"/mission-control-verify {MCWALLT_WORLD_LANE}"
