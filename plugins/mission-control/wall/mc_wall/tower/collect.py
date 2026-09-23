@@ -53,8 +53,8 @@ def _collect(config: TowerConfig) -> dict:
     # records; the contract lane dict itself never exposes sess_token.
     lane_records = []  # (program_idx, lane_dict, sess_token, repo_name_or_None,
                        #  repo_idx_or_None, branch, status_parsed, mr_bang,
-                       #  mr_hash) — _read_signals appends (mr, mr_failed) per
-                       #  record for T-6's human_actions.
+                       #  mr_hash, verified) — _read_signals appends (mr,
+                       #  mr_failed) per record for T-6's human_actions.
     for i, p in enumerate(config.programs):
         programs.append(_read_program_notes(config, p, i, log, lane_records))
     sessions_unmapped, session_epochs = _read_sessions(config, now, log, programs,
@@ -110,7 +110,7 @@ def _read_program_notes(config: TowerConfig, program, idx: int,
         lanes.append(lane)
         lane_records.append((idx, lane, row.sess_token, repo_name, repo_idx,
                              row.branch, row.status_parsed, row.mr_bang,
-                             row.mr_hash))
+                             row.mr_hash, row.verified))
     if parsed.skipped >= 1:
         log.add((1, idx, 1, ""), f"note rows skipped: {parsed.skipped}")
     return {"program": program.program, "note_path": os.path.abspath(path),
@@ -367,8 +367,8 @@ def _derive(config: TowerConfig, programs: list, log: "DegradedLog",
         repo_idx = rec[4]
         status_parsed = rec[6]
         # Lanes without a configured repo were never extended by _read_signals.
-        mr = rec[9] if len(rec) > 9 else None
-        mr_failed = rec[10] if len(rec) > 10 else False
+        mr = rec[10] if len(rec) > 10 else None
+        mr_failed = rec[11] if len(rec) > 11 else False
         session = lane["session"]
         session_id = session["id"] if session is not None else None
         # §6.2/§6.3: finished_ago_s is the lane session's age, 0 unknown.
@@ -379,7 +379,8 @@ def _derive(config: TowerConfig, programs: list, log: "DegradedLog",
             _queue_mtime(manifest), now,
             manifest["stall_t_hours"] if manifest is not None else None)
         lane["suggest_verify"] = derive.derive_suggest_verify(
-            status_parsed, finished_ago_s, config.verify_grace_s)
+            status_parsed, finished_ago_s, config.verify_grace_s,
+            verified=rec[9])
         master = programs[pidx]["master"]
         verify_views.append({
             "row_id": lane["row_id"],

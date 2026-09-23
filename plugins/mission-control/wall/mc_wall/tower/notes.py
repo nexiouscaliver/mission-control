@@ -4,9 +4,9 @@ of header variants A/B (column names normalized: casefold + all whitespace
 removed; the stored constants are POST-normalization so the comparison cannot
 self-defeat), defensive row parsing with the explicit cell-count skip rule,
 the closed status vocabulary, variant-A slug null rules, the repo/branch
-whitespace-token grammar, artifacts-cell session-token / MR-ref extraction,
-and the objective line. stdlib-only; ~ expansion belongs to collect (it owns
-config), never here.
+whitespace-token grammar, artifacts-cell session-token / MR-ref / verified-
+token extraction, and the objective line. stdlib-only; ~ expansion belongs to
+collect (it owns config), never here.
 
 Cells containing escaped pipes (``\\|``) get no special handling — the spec
 defines no escape grammar and the corpus has none; a row with MORE cells than
@@ -44,6 +44,11 @@ SESS_RE = re.compile(r"sess_[0-9a-f]{8,}")  # vault shorthand: >= 8 hex after se
 BANG_RE = re.compile(r"!\d+")               # gitlab MR ref
 HASH_RE = re.compile(r"#\d+")               # github PR ref
 
+# Controller-written verified flag: a substring test on the artifacts cell (a
+# controller-only convention — incidental occurrences in free text are accepted
+# by design; it cannot collide with the SESS_RE/BANG_RE/HASH_RE extractions).
+VERIFY_TOKEN = "verify:ok"
+
 _BRANCH_RE = re.compile(r"^(loop/[A-Za-z0-9._-]+|main|master)$")
 _SEP_CELL_RE = re.compile(r"^:?-+:?$")
 
@@ -59,6 +64,7 @@ class NoteRow:
     sess_token: str | None     # first sess_[0-9a-f]{8,} match in the artifacts cell
     mr_bang: str | None        # first "!\d+" match (gitlab ref)
     mr_hash: str | None        # first "#\d+" match (github ref)
+    verified: bool = False     # VERIFY_TOKEN substring in the artifacts cell
 
 
 @dataclass(frozen=True)
@@ -169,6 +175,7 @@ def _parse_row(cells: list[str], variant: int) -> NoteRow:
         sess_token=sess.group(0) if sess else None,
         mr_bang=bang.group(0) if bang else None,
         mr_hash=ref.group(0) if ref else None,
+        verified=VERIFY_TOKEN in artifacts,
     )
 
 

@@ -62,12 +62,20 @@ def derive_stalled(manifest: dict | None, session_epoch_s: float | None,
             "last_event": last_event}
 
 
-def derive_suggest_verify(status_parsed: str, finished_ago_s: int, grace_s: int) -> dict | None:
+def derive_suggest_verify(status_parsed: str, finished_ago_s: int, grace_s: int,
+                          verified: bool = False) -> dict | None:
     """§6.2: {"because": ["status=<s>", "finished_ago_s=<n>"]} exactly, or None.
 
     v1 has no verify-run record (spec assumption 10): status done/partial AND
-    finished_ago_s >= verify_grace_s is the only "not yet verified" proxy.
+    finished_ago_s >= verify_grace_s is the only "not yet verified" proxy —
+    unless the row's artifacts cell carried the controller-written ``verify:ok``
+    token (a controller-only convention parsed by ``notes``; incidental
+    substring occurrences in free text are accepted by design), reported here
+    as ``verified``: it short-circuits the cue to None. The ``verify_queue``
+    row is unaffected by design — it is the operator's entry point and stays.
     """
+    if verified:
+        return None
     if status_parsed in FINISHED_STATUSES and finished_ago_s >= grace_s:
         return {"because": [f"status={status_parsed}", f"finished_ago_s={finished_ago_s}"]}
     return None
