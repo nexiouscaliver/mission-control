@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 New changes accumulate here between releases, above the latest version entry (Keep a Changelog convention; the release gates skip this section when reading the head version).
 
+## [1.9.0] - 2026-09-24
+
+Wall autonomy: lanes bind to their sessions from the prompt's own tag line, and the verify cue is machine-clearable.
+
+### Added
+- **Titled-form tag grammar + unmapped exclusion** (wall tower, `zcode_db` parse layer) — a pasted `Session title: [<program-tag> <row-id>] <name>` line now parses (name optional, whitespace-tolerant inside the bracket); the bare single-token form is bit-for-bit unchanged. One `sendText` scan now yields two views (tags for masters/entry-7, bindings for lanes); titled configured-tag pastes are excluded from `sessions_unmapped` exactly like bare ones.
+- **Tag-driven lane binding** (wall tower) — precedence `row-token > pasted-tag > title-tag`: a lane whose artifacts cell carries a `sess_` token never binds by tag; token-less lanes bind from pasted tag lines, with a title fallback (24 h window) for goal-steered sessions the `sendText` scan never sees. Contention (≥2 sessions claiming one program,row) resolves newest `time_updated` wins, one degraded line naming the losers; losers and ambiguous sessions (≥2 pasted rows → nothing bound) render in `sessions_unmapped`. The session store remains strictly read-only (byte-hash proven).
+- **`verify:ok` verified token** — the controller writes it into the row's session/MR-artifacts cell at verdict time; the Wall's lane-level `suggest_verify` cue clears on reading it. `verify_queue` is unchanged — verified rows keep their queue entry.
+- **Autonomy docs** (wall) — `docs/autonomy.md` documents the binding precedence chain, the ambiguity rule, the verified token, and the read-only guarantee; README §5 names the chain and links the doc.
+
+### Changed
+- **Launch paste-back retired** (SKILL §5/§1/§4, prompt anatomy) — the prompt-anatomy launch block's base-recheck field and SKILL §5's stall sweep now advance `forged` rows from machine launch evidence (goal dir, branch on remote, tag-scanned session) in one batch sweep, never from operator prose; §4/§1 document the `verify:ok` convention; anatomy item 16's scan source corrected to `session_input`.
+- A multi-token bracket with no trailing name (previously one opaque tag) is now a titled form — binding cannot depend on a name the app may trim; masters/entry-7 semantics operate on program tags (normalization keeps the exact-singleton rule).
+
+Gates: wall hermetic pytest 285 passed (`MC_WALL_DISCOVERY=0`); web selftest 104/104; `tests/run_smoke.sh` cases 01-06 PASS; `scripts/verify_packaging.sh` green at 1.9.0.
+
 ## [1.8.0] - 2026-09-22
 
 Programs appear on the MC Wall the moment they are planned: plan mode registers them in `~/.mc-wall/wall.json` itself, and the program note gains the grammar the Wall's parser actually reads.
