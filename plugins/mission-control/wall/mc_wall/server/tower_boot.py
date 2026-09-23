@@ -10,16 +10,22 @@ every other TowerConfig field keeps its dataclass default. Malformed
 wall.json content raises ValueError with ONE clear line naming wall.json —
 main() prints it and exits 1 (install-time contract; the entry never
 guesses). Runtime collect failures are NOT boot failures: they degrade
-inside collect_state (fail-open), never here.
+inside collect_state (fail-open), never here. Boot-time program-note
+discovery (spec mcwall-tower-discovery): after the declared loops,
+discover_programs appends undeclared mission-control-*-program.md notes
+and their derived repos, carrying skip lines on
+TowerConfig.discovery_degraded; MC_WALL_DISCOVERY=0/off/no/false opts
+out with one INFO line.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import pathlib
 
-from mc_wall.tower import session_store
+from mc_wall.tower import discovery, session_store
 from mc_wall.tower.config import ProgramConfig, RepoConfig, TowerConfig
 
 
@@ -93,11 +99,21 @@ def tower_config_from_wall(data: dict, wall_home: pathlib.Path) -> TowerConfig:
         db_path = pathlib.Path(db)
     else:
         db_path = default_db_path()
+    if discovery.enabled():
+        disc = discovery.discover_programs(programs, declared_repos=tuple(repos))
+        discovery_disabled = False
+    else:
+        logging.getLogger("mc_wall.server").info(
+            "MC_WALL_DISCOVERY set — boot-time discovery disabled")
+        disc = discovery.DiscoveryResult((), (), ())
+        discovery_disabled = True  # collect re-emits the line once (decision 3b)
     return TowerConfig(
         db_path=str(db_path),
-        programs=tuple(programs),
+        programs=tuple(programs) + disc.programs,
         store=store,
-        repos=tuple(repos),
+        repos=tuple(repos) + disc.repos,
+        discovery_degraded=disc.degraded,
+        discovery_disabled=discovery_disabled,
         pending_launch_path=str(pending) if pending is not None
         else str(wall_home / "pending-launch.json"),
     )

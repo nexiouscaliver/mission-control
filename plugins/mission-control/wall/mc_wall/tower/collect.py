@@ -13,10 +13,13 @@ emissions run HERE — derive stays pure), and the no-escape boundary.
 """
 
 import json
+import logging
 import os
 
 from . import contract, derive, goals, notes, session_store, signals
 from .config import TowerConfig
+
+_DISCOVERY_DISABLED_LOGGED = False  # decision 3b: the wall.log disabled-line lands once per process
 
 
 def collect_state(config: TowerConfig) -> dict:
@@ -33,7 +36,15 @@ def collect_state(config: TowerConfig) -> dict:
 
 
 def _collect(config: TowerConfig) -> dict:
+    global _DISCOVERY_DISABLED_LOGGED
     log = DegradedLog()
+    for i, line in enumerate(config.discovery_degraded):
+        log.add((7, i, 0, ""), line)
+    if config.discovery_disabled and not _DISCOVERY_DISABLED_LOGGED:
+        # decision 3b: __main__ builds the config before setup_logging, so collect re-emits the line once per process.
+        logging.getLogger("mc_wall.server").info(
+            "MC_WALL_DISCOVERY set — boot-time discovery disabled")
+        _DISCOVERY_DISABLED_LOGGED = True
     now = config.now_s()
     launch = _read_launch(config.pending_launch_path, log)  # §4.5
     programs = []
@@ -388,7 +399,8 @@ class DegradedLog:
     seq and drops exact duplicates (keep first). Rank groups: db=0, program
     entries=1 (entry 3 -> sub 0, entry 10 -> sub 1), entry 4=2, net=3
     (entry 5 -> 0, entry 6 -> 1, entry 11 -> 2 with the ref as extra),
-    entry 7=4 (session_id as extra), entry 9=5 (token as extra), entry 8=6.
+    entry 7=4 (session_id as extra), entry 9=5 (token as extra), entry 8=6,
+    discovery=7 (boot lines; group_idx = emission order).
     Sorting is by the raw key tuples, so entry-11 refs order LEXICOGRAPHICALLY
     ("!10" before "!9") — a deliberate v1 choice T-5/T-6 inherit knowingly.
     """
