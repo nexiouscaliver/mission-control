@@ -1,7 +1,8 @@
 """Read-only zcode session-db access (spec §4.1, §5, §8): ro-open, schema
 check, the per-collect unit probe, the windowed LIKE-prefiltered tag scan, the
-lane-session prefix join, newest-wins master selection, the §6.5 unmapped
-enumeration, and the pure drift guard. The tower NEVER writes the db: the only
+title-fallback binding scan, the lane-session prefix join, newest-wins master
+selection, the §6.5 unmapped enumeration, and the pure drift guard. The tower
+NEVER writes the db: the only
 connection form is ``sqlite3.connect("file:...?mode=ro", uri=True)``. The
 ``message`` table is NEVER read (spec §1/§4.1; titles come from
 ``session.title``).
@@ -62,6 +63,13 @@ TAG_PREFILTER = "%Session title:%"
 # itself keeps EXACT single-space matching — whitespace tolerance comes from
 # str.split() INSIDE the bracket only.
 TAG_LINE_RE = re.compile(r"^Session title: \[(?P<bracket>[^\]\n]+)\](?P<name>.*)$")
+
+# Title-fallback grammar (goal mcwall-autonomy, SC-3): the SAME bracket shape
+# as TAG_LINE_RE over a session TITLE, with an OPTIONAL literal
+# "Session title: " prefix (the app plausibly stores either the full line or
+# the bare bracket form — Q1) and NO name group: the match is unanchored-right,
+# any tail after "]" is ignored.
+TITLE_TAG_RE = re.compile(r"^(?:Session title: )?\[(?P<bracket>[^\]\n]+)\]")
 
 
 def open_db_ro(path: str) -> sqlite3.Connection:
@@ -205,6 +213,39 @@ def scan_tag_bindings(cur, cutoff: int) -> dict[str, set[tuple[str, str]]]:
     (program_tag, row_id) pairs (bare products never appear)."""
     return {sid: products_to_bindings(p)
             for sid, p in scan_tag_products(cur, cutoff).items()}
+
+
+def scan_title_bindings(cur, now_s: float, factor: int, session_window_s: int,
+                        skip_ids: set[str]) -> dict[str, tuple[str, str]]:
+    """Title-fallback binding scan (SC-3): non-archived sessions created inside
+    session_window_s (the unmapped_rows stored-unit cutoff) -> session_id ->
+    (program_tag, row_id) when the TITLE carries a titled bracket with >= 2
+    tokens (the sendGoalCommand path: the goal block's title line never hits a
+    sendText row). The sess_subagent_ and skip_ids exclusions are PYTHON-side
+    (avoids LIKE '_' wildcard semantics, consistent with unmapped_rows;
+    skip_ids carries the paste-primary rule — a session with ANY pasted pair
+    never consults its title); a non-str title yields no pair; a session
+    contributes at most ONE pair (titles are single-line). Read-only; never
+    touches session_input or message."""
+    cutoff = cutoff_stored(now_s, session_window_s, factor)
+    rows = cur.execute(
+        "SELECT id, title FROM session"
+        " WHERE time_archived IS NULL AND time_created > ?", (cutoff,)).fetchall()
+    out: dict[str, tuple[str, str]] = {}
+    for sid, title in rows:
+        if sid.startswith("sess_subagent_"):
+            continue
+        if sid in skip_ids:
+            continue
+        if not isinstance(title, str):
+            continue
+        m = TITLE_TAG_RE.match(title.strip())
+        if m is None:
+            continue
+        tokens = m.group("bracket").split()
+        if len(tokens) >= 2:
+            out[sid] = (tokens[0], tokens[1])
+    return out
 
 
 def _has_parent_id(cur) -> bool:

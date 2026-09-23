@@ -178,10 +178,14 @@ def _join_sessions(config: TowerConfig, store, cur, now: float, factor: int,
                    log: "DegradedLog", programs: list, lane_records: list) -> tuple[list[dict], dict]:
     """Healthy-path §5 joins: windowed tag scan (entry 7 per ambiguous session,
     ordered by sid via the log key), newest-wins masters, token-prefix lane
-    joins (entry 9 on ambiguity), then the §6.5 unmapped enumeration. Returns
-    (unmapped rows, lane -> joined-session time_updated epoch in seconds)."""
-    tag_map = store.scan_tags(
+    joins (entry 9 on ambiguity), tag-driven binding of token-less lanes
+    (SC-3: paste-primary with title fallback, newest-wins on contention), then
+    the §6.5 unmapped enumeration. Returns (unmapped rows, lane ->
+    joined-session time_updated epoch in seconds)."""
+    prods = store.scan_tag_products(
         cur, store.cutoff_stored(now, config.tag_scan_window_s, factor))
+    tag_map = {sid: store.products_to_tags(p) for sid, p in prods.items()}
+    paste_pairs = {sid: store.products_to_bindings(p) for sid, p in prods.items()}
     for sid in sorted(tag_map):
         if len(tag_map[sid]) >= 2:
             log.add((4, 0, 0, sid), f"join degraded: ambiguous tags {sid}")
@@ -237,8 +241,57 @@ def _join_sessions(config: TowerConfig, store, cur, now: float, factor: int,
         joined_ids.add(obj["id"])
         if epoch is not None:
             session_epochs[id(lane)] = epoch
+    # Tag-driven binding (SC-3): fills token-less lanes from pasted/title tag pairs.
+    ambiguous_sessions = {sid for sid, pairs in paste_pairs.items() if len(pairs) >= 2}
+    for sid in sorted(ambiguous_sessions):
+        log.add((4, 1, 1, sid), f"tag bind degraded: ambiguous session {sid}")
+    skip_ids = {sid for sid, pairs in paste_pairs.items() if pairs}  # paste-primary per session
+    title_pairs = store.scan_title_bindings(cur, now, factor, config.session_window_s, skip_ids)
+    cand: dict[tuple[str, str], list[str]] = {}
+    for sid, pairs in paste_pairs.items():
+        if sid in ambiguous_sessions or sid in joined_ids or not pairs:
+            continue
+        pair = next(iter(pairs))   # unambiguous paste set is a singleton
+        cand.setdefault(pair, []).append(sid)
+    for sid, pair in title_pairs.items():
+        if sid in joined_ids:
+            continue
+        cand.setdefault(pair, []).append(sid)
+    invisible_drop: set[str] = set(ambiguous_sessions)
+    for pidx, lane, token, *_rest in lane_records:
+        if token:
+            continue  # condition (d): artifacts cell carries a sess_ token (parsed row) — declared wins
+        tag = config.programs[pidx].tag
+        claims = cand.get((tag, lane["row_id"]), [])
+        if not claims:
+            continue  # absence is not failure — no degraded line
+        rows = store.session_rows(cur, claims)
+        claims = [s for s in claims if s in rows]  # orphans dropped before newest-wins
+        if not claims:
+            continue
+        if len(claims) >= 2:
+            best = max(claims, key=lambda s: (
+                rows[s]["time_updated"] is not None, rows[s]["time_updated"],
+                rows[s]["time_created"] is not None, rows[s]["time_created"], s))
+            losers = sorted(s for s in claims if s != best)
+            log.add((4, 1, 0, f"{tag}/{lane['row_id']}"),
+                    f"tag bind degraded: {tag}/{lane['row_id']} newest wins, losers {','.join(losers)}")
+            invisible_drop.update(losers)
+            claims = [best]
+        sid = claims[0]
+        row = rows[sid]
+        epoch = store.to_seconds(row["time_updated"])
+        lane["session"] = {"id": row["id"], "title": row["title"],
+                           "title_pending": row["title"] is None or row["title"] == "",
+                           "dir": row["directory"],
+                           "last_active_ago_s": max(0, int(now - epoch)) if epoch is not None else 0,
+                           "parent_session_id": row.get("parent_session_id")}
+        joined_ids.add(sid)
+        if epoch is not None:
+            session_epochs[id(lane)] = epoch
+    tag_map_view = {sid: tags for sid, tags in tag_map.items() if sid not in invisible_drop}
     return (store.unmapped_rows(cur, now, factor, config.session_window_s,
-                                joined_ids, tag_map, configured_tags),
+                                joined_ids, tag_map_view, configured_tags),
             session_epochs)
 
 
