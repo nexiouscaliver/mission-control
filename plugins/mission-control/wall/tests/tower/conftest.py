@@ -67,6 +67,15 @@ def mcwallt_tag_input(sid, tags, t, extra=""):
         {"text": extra + "".join(f"Session title: [{t}]\n" for t in tags)}), "time_created": t}
 
 
+def mcwallt_titled_tag_input(sid, tag, row, t, name="", extra=""):
+    """A sendText input carrying the titled paste form ``Session title:
+    [{tag} {row}]`` (+ optional trailing name; ``extra`` prefixes the text) —
+    the pasted-prompt final line a goal-steered session emits."""
+    text = f"Session title: [{tag} {row}]" + (f" {name}" if name else "")
+    return {"session_id": sid, "payload": json.dumps({"text": extra + text}),
+            "time_created": t}
+
+
 def mcwallt_make_session_db(tmp_path, name="mcwallt_sessions.db"):
     """Minimal db satisfying the session-store schema check (both required tables)."""
     return mcwallt_make_db(tmp_path, name)
@@ -177,7 +186,7 @@ def mcwallt_world(tmp_path, monkeypatch, *, include=("db", "notes", "goals", "ne
                   lane1_age_s=400.0, queue_age_s=3600.0, manifest=None,
                   master_tag="secfix-master", rows=None, extra_sessions=(),
                   second_program_done_lane=False, handler=None, name="mcwallt_world",
-                  discovery_degraded=(), discovery_disabled=False):
+                  discovery_degraded=(), discovery_disabled=False, extra_inputs=()):
     """Full §10 AC-E2E-1 fixture world: 1 program (tag secfix, master_tag
     secfix-master), 1 repo (gitlab, name mcwallt-repo), a variant-A note with
     lanes W1-L1 (done, configured repo+branch, !5 artifacts ref, sess_9a690ab2
@@ -194,7 +203,9 @@ def mcwallt_world(tmp_path, monkeypatch, *, include=("db", "notes", "goals", "ne
     lane session's last-active age; ``queue_age_s`` sets queue.md's mtime (the
     §6.1 non-session activity epoch); ``manifest`` overrides manifest.json;
     ``master_tag``/``rows``/``extra_sessions``/``second_program_done_lane``/
-    ``handler`` reshape the join/derivation surface. Re-calling with the same
+    ``handler`` reshape the join/derivation surface; ``extra_inputs`` appends
+    session_input rows to the db build (tag pastes on extra sessions).
+    Re-calling with the same
     ``name`` in one test is safe (files are overwritten, the db re-created).
     """
     NOW = MCWALLT_WORLD_NOW
@@ -234,7 +245,8 @@ def mcwallt_world(tmp_path, monkeypatch, *, include=("db", "notes", "goals", "ne
             db_file.unlink()  # same-name rebuilds within one test stay fixture-safe
         db_path = mcwallt_make_db(tmp_path, name=name + ".db", sessions=sessions,
                                   inputs=[mcwallt_tag_input(MCWALLT_WORLD_MASTER,
-                                                            ["secfix-master"], ms(100))])
+                                                            ["secfix-master"], ms(100))]
+                                  + list(extra_inputs))
     else:
         db_path = str(tmp_path / (name + "_missing.db"))
 
