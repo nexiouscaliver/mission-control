@@ -532,6 +532,78 @@ def test_wa_1_bind_title_prefixed_form(tmp_path, monkeypatch):
     assert lanes["W1-L3"]["session"]["id"] == s28
 
 
+def test_wa_1_bind_title_unbracketed_live_form(tmp_path, monkeypatch):
+    # Live dogfood (read-only probe of the real session store, 2026-09-24):
+    # the app ALSO stores the bracket CONTENT without the brackets — the
+    # observed real title "wall-signal-panel W3-L4 lane binding MR to v1.9.0"
+    # — so the title fallback accepts the unbracketed form: the first two
+    # whitespace tokens of the stripped title when no bracket matches. This
+    # exact-shape title (no brackets, no inputs) binds W1-L3.
+    NOW = MCWALLT_WORLD_NOW
+
+    def ms(age):
+        return int((NOW - age) * 1000)
+
+    s31 = "sess_62626262-6262-4626-8626-626262626262"
+    cfg, _set = mcwallt_world(
+        tmp_path, monkeypatch,
+        extra_sessions=[{"id": s31, "title": "secfix W1-L3 lane binding to v1.9.0",
+                         "time_updated": ms(3600), "time_created": ms(3600)}])
+    state = collect_state(cfg)
+    lanes = {l["row_id"]: l for l in state["programs"][0]["lanes"]}
+    assert lanes["W1-L3"]["session"]["id"] == s31
+
+
+def test_wa_1_bind_title_unbracketed_foreign_inert(tmp_path, monkeypatch):
+    # The inert-pair safety pin: a random multi-word title ("Completely
+    # Random Words here") yields the foreign pair ("Completely", "Random"),
+    # and the binding loop looks pairs up by the exact (configured-tag,
+    # lane-row-id) key — so a loose two-token title can NEVER bind: no lane
+    # wired, no degraded line, and the session still enumerates in
+    # sessions_unmapped (zero tags, unjoined). Regression pin (passes under
+    # the bracket-only grammar too; guards the widened one).
+    NOW = MCWALLT_WORLD_NOW
+
+    def ms(age):
+        return int((NOW - age) * 1000)
+
+    s32 = "sess_63636363-6363-4636-8636-636363636363"
+    cfg, _set = mcwallt_world(
+        tmp_path, monkeypatch,
+        extra_sessions=[{"id": s32, "title": "Completely Random Words here",
+                         "time_updated": ms(3600), "time_created": ms(3600)}])
+    state = collect_state(cfg)
+    lanes = {l["row_id"]: l for l in state["programs"][0]["lanes"]}
+    assert all(l["session"] is None or l["session"]["id"] != s32
+               for l in lanes.values())
+    assert not any("tag bind degraded" in d for d in state["server"]["degraded"])
+    assert s32 in {r["id"] for r in state["sessions_unmapped"]}
+
+
+def test_wa_1_bind_title_unbracketed_beats_later_bracket(tmp_path, monkeypatch):
+    # Mixed case: the title starts unbracketed but carries a bracket LATER —
+    # "secfix junk [other row] x". The bracket arm is start-anchored, so it
+    # does not match; the unbracketed arm fires on the LEADING tokens with
+    # ("secfix", "junk") — inert (no lane "junk"): no binding, session
+    # unmapped. Pins that the fallback never scavenges a mid-title bracket.
+    NOW = MCWALLT_WORLD_NOW
+
+    def ms(age):
+        return int((NOW - age) * 1000)
+
+    s33 = "sess_64646464-6464-4664-8664-646464646464"
+    cfg, _set = mcwallt_world(
+        tmp_path, monkeypatch,
+        extra_sessions=[{"id": s33, "title": "secfix junk [other row] x",
+                         "time_updated": ms(3600), "time_created": ms(3600)}])
+    state = collect_state(cfg)
+    lanes = {l["row_id"]: l for l in state["programs"][0]["lanes"]}
+    assert all(l["session"] is None or l["session"]["id"] != s33
+               for l in lanes.values())
+    assert not any("tag bind degraded" in d for d in state["server"]["degraded"])
+    assert s33 in {r["id"] for r in state["sessions_unmapped"]}
+
+
 # --- matrix 23-25: the verified token clears the verify cue (goal T3) ---------
 
 def test_wa_1_verified_token_parses():
