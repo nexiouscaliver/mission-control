@@ -68,7 +68,9 @@ TAG_LINE_RE = re.compile(r"^Session title: \[(?P<bracket>[^\]\n]+)\](?P<name>.*)
 # as TAG_LINE_RE over a session TITLE, with an OPTIONAL literal
 # "Session title: " prefix (the app plausibly stores either the full line or
 # the bare bracket form — Q1) and NO name group: the match is unanchored-right,
-# any tail after "]" is ignored.
+# any tail after "]" is ignored. The bracket is the PREFERRED arm; the
+# unbracketed live form (first two whitespace tokens, no leading "[") is the
+# fallback arm inside scan_title_bindings (live dogfood 2026-09-24).
 TITLE_TAG_RE = re.compile(r"^(?:Session title: )?\[(?P<bracket>[^\]\n]+)\]")
 
 
@@ -221,7 +223,19 @@ def scan_title_bindings(cur, now_s: float, factor: int, session_window_s: int,
     session_window_s (the unmapped_rows stored-unit cutoff) -> session_id ->
     (program_tag, row_id) when the TITLE carries a titled bracket with >= 2
     tokens (the sendGoalCommand path: the goal block's title line never hits a
-    sendText row). The sess_subagent_ and skip_ids exclusions are PYTHON-side
+    sendText row). BOTH live title forms bind (live read-only probe 2026-09-24):
+    the bracketed "[tag row] name" AND the unbracketed "tag row name" the app
+    itself writes — the real stored title "wall-signal-panel W3-L4 lane
+    binding MR to v1.9.0" is the bracket CONTENT without brackets. The
+    bracket arm (TITLE_TAG_RE, optional "Session title: " prefix) is tried
+    FIRST and alone: a title it matches — even to a single-token bracket —
+    never falls through to the fallback, which additionally refuses a
+    tokens[0] starting with "[" (a malformed bracket opener is never read as
+    an unbracketed pair); with NO bracket match, the fallback pairs the first
+    two whitespace tokens of the whole stripped title. A FOREIGN pair from a
+    loose two-word title is inert: the binding loop looks pairs up by the
+    exact (configured-tag, lane-row-id) key, so it can never bind — absence,
+    not failure. The sess_subagent_ and skip_ids exclusions are PYTHON-side
     (avoids LIKE '_' wildcard semantics, consistent with unmapped_rows;
     skip_ids carries the paste-primary rule — a session with ANY pasted pair
     never consults its title); a non-str title yields no pair; a session
@@ -239,11 +253,15 @@ def scan_title_bindings(cur, now_s: float, factor: int, session_window_s: int,
             continue
         if not isinstance(title, str):
             continue
-        m = TITLE_TAG_RE.match(title.strip())
-        if m is None:
-            continue
-        tokens = m.group("bracket").split()
-        if len(tokens) >= 2:
+        stripped = title.strip()
+        m = TITLE_TAG_RE.match(stripped)
+        if m is not None:
+            tokens = m.group("bracket").split()
+            if len(tokens) >= 2:
+                out[sid] = (tokens[0], tokens[1])
+            continue  # bracket preferred: a bracket match never reaches the fallback
+        tokens = stripped.split()
+        if len(tokens) >= 2 and not tokens[0].startswith("["):
             out[sid] = (tokens[0], tokens[1])
     return out
 

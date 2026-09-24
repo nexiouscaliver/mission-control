@@ -30,7 +30,13 @@ A lane acquires at most one session, from the first source that claims it
    `session.title` (`zcode_db.py` `scan_title_bindings` over `TITLE_TAG_RE` —
    the same bracket with an optional `Session title: ` prefix), windowed by
    `session_window_s` = 86400 s = 24 h on session creation; subagent
-   (`sess_subagent_`) sessions are excluded.
+   (`sess_subagent_`) sessions are excluded. Both live title forms bind
+   (live read-only probe 2026-09-24): the bracketed `[<tag> <W-L>] name` and
+   the unbracketed `<tag> <W-L> <descriptive name>` the app itself writes
+   (`wall-signal-panel W3-L4 lane binding MR to v1.9.0`). A bracket match is
+   preferred and ends the parse; without one, the first two whitespace tokens
+   of the stripped title form the candidate pair — foreign by the rule below,
+   so a random two-word title never binds.
 
 The title fallback is load-bearing, not redundant with the paste window:
 goal-steered sessions get their title line from the `/goal` block, which
