@@ -213,8 +213,8 @@ def test_mcwallt_join_tag_grammar():
     assert zcode_db.parse_tags("Session title: [secfix]\n") == {"secfix"}
     # Leading/trailing line spaces tolerated.
     assert zcode_db.parse_tags("  Session title: [secfix]  ") == {"secfix"}
-    # Anchored grammar: trailing content after ] kills the match.
-    assert zcode_db.parse_tags("Session title: [a] x]") == set()
+    # titled form: bracket "a", name " x]" — trailing content is now the optional title tail
+    assert zcode_db.parse_tags("Session title: [a] x]") == {"a"}
     # The tag needs at least one character.
     assert zcode_db.parse_tags("Session title: []") == set()
 

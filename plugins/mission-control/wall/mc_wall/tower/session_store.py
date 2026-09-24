@@ -6,8 +6,9 @@ boot default is ``"zcode"``) and reaches it ONLY through ``resolve()``:
 collect's §4.1 read/join and the drift guard both dispatch on that name, so
 a new harness is a new registry entry plus a module implementing the
 zcode_db surface (open_db_ro, check_schema, probe_factor, cutoff_stored,
-to_seconds, scan_tags, session_rows, lane_join, unmapped_rows, check_drift,
-DEGRADED_*). A Claude Code adapter is an extension point — NOT IMPLEMENTED
+to_seconds, scan_tag_products, products_to_tags, products_to_bindings,
+scan_title_bindings, scan_tags, session_rows, lane_join, unmapped_rows,
+check_drift, DEGRADED_*). A Claude Code adapter is an extension point — NOT IMPLEMENTED
 (see the wall README's "Session-store adapter" paragraph).
 
 ``default_db_path`` is the canonical per-store default; tower_boot and
