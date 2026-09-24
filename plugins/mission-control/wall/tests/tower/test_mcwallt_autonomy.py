@@ -588,3 +588,37 @@ def test_wa_1_verified_e2e_clears_cue(tmp_path, monkeypatch):
     w1l1 = [r for r in state["verify_queue"] if r["row_id"] == "W1-L1"]
     assert len(w1l1) == 1
     assert w1l1[0]["verify_cmd"] == f"/mission-control-verify {MCWALLT_WORLD_LANE}"
+
+
+# --- MR-review pin: the newest-wins key is None-safe against SQL-NULL ts ------
+
+def test_wa_1_bind_newest_wins_null_timestamp_safe(tmp_path, monkeypatch):
+    # Two sessions paste [secfix W1-L3] for the token-less lane; one claimant
+    # carries a SQL-NULL time_updated (mcwallt_make_db inserts it verbatim),
+    # the other a real timestamp. The None-safe key prefix (ts is not None)
+    # makes ANY real timestamp beat the NULL one — no exception out of max(),
+    # the NULL claimant takes the loser's degraded line, and the bound lane
+    # reports the winner's REAL age (200), not the 0 a NULL winner's
+    # unknown-age convention would render.
+    NOW = MCWALLT_WORLD_NOW
+
+    def ms(age):
+        return int((NOW - age) * 1000)
+
+    s_null = "sess_60606060-6060-4606-8606-606060606060"
+    s_real = "sess_61616161-6161-4616-8616-616161616161"
+    cfg, _set = mcwallt_world(
+        tmp_path, monkeypatch,
+        extra_sessions=[
+            {"id": s_null, "title": "mcwallt null ts",
+             "time_updated": None, "time_created": ms(200)},
+            {"id": s_real, "title": "mcwallt real ts",
+             "time_updated": ms(200), "time_created": ms(200)}],
+        extra_inputs=[mcwallt_titled_tag_input(s_null, "secfix", "W1-L3", ms(200)),
+                      mcwallt_titled_tag_input(s_real, "secfix", "W1-L3", ms(200))])
+    state = collect_state(cfg)
+    lanes = {l["row_id"]: l for l in state["programs"][0]["lanes"]}
+    assert lanes["W1-L3"]["session"]["id"] == s_real
+    assert ("tag bind degraded: secfix/W1-L3 newest wins, losers " + s_null) \
+        in state["server"]["degraded"]
+    assert lanes["W1-L3"]["session"]["last_active_ago_s"] == 200

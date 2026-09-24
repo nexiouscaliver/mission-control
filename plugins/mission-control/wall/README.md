@@ -21,8 +21,10 @@ and fails loudly on an unknown name; the sole registered adapter today is
 Code adapter is an extension point — NOT IMPLEMENTED**: it would be a new
 registry entry plus a module implementing the zcode_db surface
 (`open_db_ro`, `check_schema`, `probe_factor`, `cutoff_stored`,
-`to_seconds`, `scan_tags`, `session_rows`, `lane_join`, `unmapped_rows`,
-`check_drift`, `DEGRADED_*`), with its own canonical default db path. No
+`to_seconds`, `scan_tag_products`, `products_to_tags`,
+`products_to_bindings`, `scan_title_bindings`, `scan_tags`,
+`session_rows`, `lane_join`, `unmapped_rows`, `check_drift`,
+`DEGRADED_*`), with its own canonical default db path. No
 such module exists in this repo; nothing under `mc_wall/` names a Claude
 Code path.
 
