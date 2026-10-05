@@ -391,6 +391,45 @@ def test_mcwallt_unmapped_rows_and_order(tmp_path):
     assert state["server"]["degraded"] == []
 
 
+def test_mcwallt_unmapped_activity_window_old_created_recent_touch(tmp_path):
+    # The live bug (verified 2026-10-05): a long-lived session CREATED weeks ago
+    # but touched an hour ago was invisible from sessions_unmapped forever —
+    # the window rode time_created, so old-born sessions never enumerated no
+    # matter how active. It now rides time_updated (activity window): a
+    # session touched inside the window enumerates regardless of birth age.
+    sid = "sess_1d1d1d1d-1d1d-41d1-81d1-1d1d1d1d1d1d"
+    db = mcwallt_make_db(tmp_path, sessions=[
+        {"id": sid, "title": "mcwallt old-born live", "directory": "/mcwallt/oldborn",
+         "time_updated": ms_ago(3600), "time_created": ms_ago(20 * 86400)}])
+    cfg = TowerConfig(db_path=db,
+                      programs=(ProgramConfig(program="secfix", tag="secfix",
+                                              note_glob=mcwallt_empty_note(tmp_path)),),
+                      now_s=mcwallt_clock(NOW))
+    state = collect_state(cfg)
+    assert state["sessions_unmapped"] == [
+        {"id": sid, "title": "mcwallt old-born live", "dir": "/mcwallt/oldborn",
+         "last_active_ago_s": 3600, "parent_session_id": None, "parent_title": None}]
+    assert state["server"]["degraded"] == []
+
+
+def test_mcwallt_unmapped_activity_window_recent_created_idle_excluded(tmp_path):
+    # Activity semantics locked from the other side: a session CREATED inside
+    # the window but last touched beyond it (10 days idle > the 7-day window)
+    # ages out of sessions_unmapped — recency of BIRTH alone never keeps a
+    # session listed.
+    sid = "sess_2e2e2e2e-2e2e-42e2-82e2-2e2e2e2e2e2e"
+    db = mcwallt_make_db(tmp_path, sessions=[
+        {"id": sid, "title": "mcwallt idle", "directory": "/mcwallt/idle",
+         "time_updated": ms_ago(10 * 86400), "time_created": ms_ago(3600)}])
+    cfg = TowerConfig(db_path=db,
+                      programs=(ProgramConfig(program="secfix", tag="secfix",
+                                              note_glob=mcwallt_empty_note(tmp_path)),),
+                      now_s=mcwallt_clock(NOW))
+    state = collect_state(cfg)
+    assert state["sessions_unmapped"] == []
+    assert state["server"]["degraded"] == []
+
+
 def test_mcwallt_db_parent_id_threaded(tmp_path):
     # Parent linkage (verified live 2026-09-22): session.parent_id reaches the
     # doc as parent_session_id on BOTH carriers — the lane join and the
