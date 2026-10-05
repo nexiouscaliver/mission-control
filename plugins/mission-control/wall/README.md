@@ -21,8 +21,10 @@ and fails loudly on an unknown name; the sole registered adapter today is
 Code adapter is an extension point — NOT IMPLEMENTED**: it would be a new
 registry entry plus a module implementing the zcode_db surface
 (`open_db_ro`, `check_schema`, `probe_factor`, `cutoff_stored`,
-`to_seconds`, `scan_tags`, `session_rows`, `lane_join`, `unmapped_rows`,
-`check_drift`, `DEGRADED_*`), with its own canonical default db path. No
+`to_seconds`, `scan_tag_products`, `products_to_tags`,
+`products_to_bindings`, `scan_title_bindings`, `scan_tags`,
+`session_rows`, `lane_join`, `unmapped_rows`, `check_drift`,
+`DEGRADED_*`), with its own canonical default db path. No
 such module exists in this repo; nothing under `mc_wall/` names a Claude
 Code path.
 
@@ -109,8 +111,18 @@ shape pinned by the frozen contract in `mc_wall/tower/contract.py`) → server
 page polls every 5 s and reloads itself when `schema_version` changes
 (flap-safe: checked against the last applied version only). The served
 document is the frozen tower doc plus one server-added key, `wall`, carrying
-the pending-launch record (`{"pending": null}` when idle) — so the page's
-root shape is contract.py's shape plus `wall`.
+  the pending-launch record (`{"pending": null}` when idle) — so the page's
+  root shape is contract.py's shape plus `wall`.
+
+Lane autonomy: a lane whose row declares no `sess_` token binds to a session
+on its own — precedence `row-token > pasted-tag > title-tag` (a pasted
+`Session title: [<tag> <W-L>]` line beats the session's title, which only
+carries the bracket when the goal block rode `sendGoalCommand` past the
+`sendText` scan). Contention for one lane resolves newest-wins with one
+`tag bind degraded: …` line and the losers still visible in
+`sessions_unmapped`; a controller-written `verify:ok` in the artifacts cell
+clears the lane's `suggest_verify` cue while its `verify_queue` row stays.
+Full reference: `docs/autonomy.md`.
 
 Launch handshake:
 
