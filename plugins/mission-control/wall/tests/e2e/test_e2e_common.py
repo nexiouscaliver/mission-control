@@ -219,7 +219,7 @@ def test_build_tower_config_fields(tmp_path, monkeypatch):
     assert [(r.name, r.path, r.host) for r in cfg.repos] == list(repos)
     assert cfg.pending_launch_path is None  # plan §7.3: prod default
     # TowerConfig defaults elsewhere (spec §1: windows/grace untouched).
-    assert cfg.session_window_s == 86400
+    assert cfg.session_window_s == 604800
     assert cfg.tag_scan_window_s == 259200
     assert cfg.verify_grace_s == 300
 

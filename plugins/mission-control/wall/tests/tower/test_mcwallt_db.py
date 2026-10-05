@@ -80,11 +80,11 @@ def test_mcwallt_db_ms_normalization(tmp_path, monkeypatch):
              "time_updated": t(100), "time_created": t(100)},
             {"id": unmapped_id, "title": "mcwallt unmapped", "directory": "/mcwallt/u",
              "time_updated": t(50), "time_created": t(50)},
-            # Below the 86400s session window in the SAME stored magnitude: a
-            # seconds-literal cutoff (or any unit confusion) would surface this
-            # row in one db and not the other — pinned HERE, locally.
+            # Beyond the 604800s activity window in the SAME stored magnitude:
+            # a seconds-literal cutoff (or any unit confusion) would surface
+            # this row in one db and not the other — pinned HERE, locally.
             {"id": "sess_07070707-0707-4070-8070-070707070707", "title": "mcwallt old",
-             "directory": "/mcwallt/old", "time_updated": t(200000), "time_created": t(200000)},
+             "directory": "/mcwallt/old", "time_updated": t(700000), "time_created": t(700000)},
         ]
         inputs = [mcwallt_tag_input(master_id, ["secfix-master"], t(100))]
         return sessions, inputs
@@ -361,7 +361,7 @@ def test_mcwallt_unmapped_rows_and_order(tmp_path):
                 "time_archived": archived}
 
     sessions = [
-        sess("old", 200000),                                # below the 86400s window
+        sess("old", 700000),                                # beyond the 604800s activity window
         sess("archived", 100, archived=ms_ago(50)),
         sess("subagent", 80),                               # child session: excluded
         sess("mapped", 70),
@@ -476,15 +476,15 @@ def test_mcwallt_db_parent_title_resolved_out_of_window(tmp_path):
     # ("i dont remember all the sessions"). The parent chat is usually OLDER
     # than the session window — work moved on — so its title must resolve from
     # the db by id, UNWINDOWED, exactly when client-side resolution fails.
-    # The parent itself stays excluded from unmapped (below the window); a
-    # deleted parent row keeps the null title (client shows the short id).
+    # The parent itself stays excluded from unmapped (idle beyond the window);
+    # a deleted parent row keeps the null title (client shows the short id).
     parent_id = "sess_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
     gone_id = "sess_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
     child1 = "sess_dwf-dwfrun-cccccccc-cccc-4ccc-8ccc-cccccccccccc-actor_1_1"
     child2 = "sess_dwf-dwfrun-cccccccc-cccc-4ccc-8ccc-cccccccccccc-actor_2_1"
     db = mcwallt_make_db(tmp_path, sessions=[
         {"id": parent_id, "title": "the old planning chat", "directory": "/mcwallt/p",
-         "time_updated": ms_ago(200000), "time_created": ms_ago(200000)},
+         "time_updated": ms_ago(700000), "time_created": ms_ago(700000)},
         {"id": child1, "title": "workflow subagent actor#1@1", "directory": "/mcwallt/c",
          "parent_id": parent_id, "time_updated": ms_ago(10), "time_created": ms_ago(10)},
         {"id": child2, "title": "Selection side chat", "directory": "/mcwallt/c",
