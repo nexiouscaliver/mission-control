@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 New changes accumulate here between releases, above the latest version entry (Keep a Changelog convention; the release gates skip this section when reading the head version).
 
+## [1.9.1] - 2026-10-05
+
+Long-lived sessions stay visible on the Wall while they are active: the unmapped-sessions window is now an activity window.
+
+### Fixed
+- **Unmapped-sessions window rides `time_updated`** (wall tower) — `unmapped_rows` and `scan_title_bindings` filtered on `time_created`, so a session created more than 24 h ago was invisible from `sessions_unmapped` forever, even while actively running (verified live: three sessions touched within the hour, created Sep 12–Oct 1, all invisible). Both queries now cut on `time_updated`, and the `session_window_s` default widens 86400 → 604800 (7 days): a session lingers visible for a week after its last touch, while the UI's idle>24 h collapse keeps old ones visually quiet.
+
+Gates: wall hermetic pytest 291 passed (`MC_WALL_DISCOVERY=0`); web selftest 104/104; `tests/run_smoke.sh` exit 0; `scripts/verify_packaging.sh` green at 1.9.1.
+
 ## [1.9.0] - 2026-09-24
 
 Wall autonomy: lanes bind to their sessions from the prompt's own tag line, and the verify cue is machine-clearable.

@@ -219,8 +219,10 @@ def scan_tag_bindings(cur, cutoff: int) -> dict[str, set[tuple[str, str]]]:
 
 def scan_title_bindings(cur, now_s: float, factor: int, session_window_s: int,
                         skip_ids: set[str]) -> dict[str, tuple[str, str]]:
-    """Title-fallback binding scan (SC-3): non-archived sessions created inside
-    session_window_s (the unmapped_rows stored-unit cutoff) -> session_id ->
+    """Title-fallback binding scan (SC-3): non-archived sessions last touched
+    (time_updated) inside session_window_s (the unmapped_rows stored-unit
+    cutoff — an activity window, so a long-lived session stays bindable while
+    active) -> session_id ->
     (program_tag, row_id) when the TITLE carries a titled bracket with >= 2
     tokens (the sendGoalCommand path: the goal block's title line never hits a
     sendText row). BOTH live title forms bind (live read-only probe 2026-09-24):
@@ -244,7 +246,7 @@ def scan_title_bindings(cur, now_s: float, factor: int, session_window_s: int,
     cutoff = cutoff_stored(now_s, session_window_s, factor)
     rows = cur.execute(
         "SELECT id, title FROM session"
-        " WHERE time_archived IS NULL AND time_created > ?", (cutoff,)).fetchall()
+        " WHERE time_archived IS NULL AND time_updated > ?", (cutoff,)).fetchall()
     out: dict[str, tuple[str, str]] = {}
     for sid, title in rows:
         if sid.startswith("sess_subagent_"):
@@ -343,16 +345,18 @@ def lane_join(cur, token: str) -> tuple[dict | None, bool]:
 def unmapped_rows(cur, now_s: float, factor: int, session_window_s: int,
                   joined_ids: set[str], tag_map: dict[str, set[str]],
                   configured_tags: dict[str, str]) -> list[dict]:
-    """§6.5 enumeration, straight from the session table: non-archived, above
-    the unit-aware session_window_s cutoff (stored units), minus sess_subagent_
-    ids, minus tag-mapped sessions (tag-set size exactly 1 with a configured
-    program/master tag), minus token-joined ids. Ambiguous (>=2 tags), size-0
-    and unmatched-tag sessions remain. Order: last_active desc (smallest ago
-    first), tie id asc."""
+    """§6.5 enumeration, straight from the session table: non-archived, last
+    touched (time_updated) within the unit-aware session_window_s cutoff
+    (stored units) — an ACTIVITY window: a session touched inside the window
+    enumerates however long ago it was created, and an idle one ages out —
+    minus sess_subagent_ ids, minus tag-mapped sessions (tag-set size exactly
+    1 with a configured program/master tag), minus token-joined ids. Ambiguous
+    (>=2 tags), size-0 and unmatched-tag sessions remain. Order: last_active
+    desc (smallest ago first), tie id asc."""
     cutoff = cutoff_stored(now_s, session_window_s, factor)
     rows = cur.execute(
         "SELECT id, title, directory, time_updated, " + _parent_expr(cur) +
-        " FROM session WHERE time_archived IS NULL AND time_created > ?", (cutoff,)).fetchall()
+        " FROM session WHERE time_archived IS NULL AND time_updated > ?", (cutoff,)).fetchall()
     out = []
     for sid, title, directory, time_updated, parent_id in rows:
         if sid.startswith("sess_subagent_"):

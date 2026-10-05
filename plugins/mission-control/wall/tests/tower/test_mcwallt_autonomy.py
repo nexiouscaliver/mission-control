@@ -220,7 +220,7 @@ def test_wa_1_bind_title_fallback(tmp_path, monkeypatch):
 def test_wa_1_bind_title_durable_past_tag_window(tmp_path, monkeypatch):
     # Matrix 14: the only tag paste is 100 h old (outside the 72 h tag scan
     # window) while the session itself is 10 h old — the paste is invisible to
-    # the scan, the title (24 h session window) still binds W1-L2: title
+    # the scan, the title (7-day activity window) still binds W1-L2: title
     # binding is DURABLE past the paste window.
     NOW = MCWALLT_WORLD_NOW
 
@@ -239,10 +239,10 @@ def test_wa_1_bind_title_durable_past_tag_window(tmp_path, monkeypatch):
 
 
 def test_wa_1_bind_title_window_expiry(tmp_path, monkeypatch):
-    # Matrix 15: a title bracket on a session created 30 h ago (outside the
-    # 24 h session window) never binds — W1-L3 stays null. The in-window
-    # control twin (1 h old, same-shaped title on W1-L2) DOES bind, so the
-    # null pins the window expiry, not a dead binding path.
+    # Matrix 15: a title bracket on a session last touched 8 days ago
+    # (outside the 7-day activity window) never binds — W1-L3 stays null. The
+    # in-window control twin (1 h old, same-shaped title on W1-L2) DOES bind,
+    # so the null pins the window expiry, not a dead binding path.
     NOW = MCWALLT_WORLD_NOW
 
     def ms(age):
@@ -254,7 +254,7 @@ def test_wa_1_bind_title_window_expiry(tmp_path, monkeypatch):
         tmp_path, monkeypatch,
         extra_sessions=[
             {"id": s15, "title": "[secfix W1-L3] expired",
-             "time_updated": ms(30 * 3600), "time_created": ms(30 * 3600)},
+             "time_updated": ms(8 * 86400), "time_created": ms(8 * 86400)},
             {"id": s15_ctl, "title": "[secfix W1-L2] in-window control",
              "time_updated": ms(3600), "time_created": ms(3600)}])
     state = collect_state(cfg)
