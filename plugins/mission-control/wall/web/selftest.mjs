@@ -2295,7 +2295,7 @@ test("AC-16: Col 3 — repo groups, master row, idle>24h collapse, unmapped stri
   const css = readWebFile("style.css");
   const rules = parseCssRules(css);
   const umScroll = rules.find((r) => r.selector === ".unmapped-rows" && r.media === "");
-  assert.ok(umScroll && umScroll.decls["max-height"] && umScroll.decls["overflow-y"] === "auto", "unmapped strip scrolls internally past 8 rows");
+  assert.ok(umScroll && umScroll.decls["max-height"] === "50vh" && umScroll.decls["overflow-y"] === "auto", "unmapped strip scrolls internally; collapsed cap is a half viewport (v1.9.2: 240px peephole buried live sessions)");
 
   // idle text NEVER bare: always composed (or signals unknown)
   const idleLines = byClass(col3, "session-idle");
