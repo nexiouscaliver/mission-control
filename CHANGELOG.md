@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 New changes accumulate here between releases, above the latest version entry (Keep a Changelog convention; the release gates skip this section when reading the head version).
 
+## [1.9.2] - 2026-10-05
+
+The Wall's busiest repos surface at the top of the unmapped strip instead of burying themselves down its scroll box.
+
+### Fixed
+- **WALL-view unmapped groups now order by latest session activity (was alphabetical)** (wall web app) — `renderUnmappedGroups` sorted dir groups A→Z, so with 423 sessions the machine's most-active repos rendered ~3000px down the strip's 240px scroll box (measured live 2026-10-05). Groups now sort by their newest row's `last_active_ago_s` (smallest first — the group holding the most-recently-active session leads), ties broken by dir name ascending for determinism. Within-group row order (already most-recent-first), group head text, the idle>24h collapse, the show-all toggle, and the PROJECTS view are unchanged; `web/app.js` and `web/assets/app.js` stay byte-identical.
+
+Gates: wall hermetic pytest 291 passed (`MC_WALL_DISCOVERY=0`); web selftest 106/106; `tests/run_smoke.sh` exit 0; `scripts/verify_packaging.sh` green at 1.9.2.
+
 ## [1.9.1] - 2026-10-05
 
 Long-lived sessions stay visible on the Wall while they are active: the unmapped-sessions window is now an activity window.
