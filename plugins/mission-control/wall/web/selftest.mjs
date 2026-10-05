@@ -2283,9 +2283,14 @@ test("AC-16: Col 3 — repo groups, master row, idle>24h collapse, unmapped stri
   assert.ok(collectText(byClass(strip, "unmapped-head")[0]).indexOf("unmapped (2)") !== -1, "strip header 'unmapped (N)'");
   const umRows = byClass(strip, "unmapped-row");
   assert.equal(umRows.length, 2);
-  assert.ok(collectText(umRows[0]).indexOf("scratch: rebase experiment") !== -1, "unmapped title");
-  assert.ok(collectText(umRows[0]).indexOf("2d") !== -1, "age humanized (172800s -> 2d)");
-  assert.ok(collectText(umRows[1]).indexOf("title pending") !== -1, "empty unmapped title -> title pending");
+  // v1.9.2: strip rows order by activity, so anchor by id, not position
+  const um1 = findByData(strip, "data-session-id", "s-unmapped-1");
+  assert.ok(collectText(um1).indexOf("scratch: rebase experiment") !== -1, "unmapped title");
+  assert.ok(collectText(um1).indexOf("2d") !== -1, "age humanized (172800s -> 2d)");
+  assert.ok(
+    collectText(findByData(strip, "data-session-id", "s-unmapped-2")).indexOf("title pending") !== -1,
+    "empty unmapped title -> title pending"
+  );
   assert.equal(byClass(col3, "session-row").length, 5, "5 mapped rows (incl. master) outside the strip");
   const css = readWebFile("style.css");
   const rules = parseCssRules(css);
@@ -2310,7 +2315,7 @@ test("AC-16: Col 3 — repo groups, master row, idle>24h collapse, unmapped stri
   // click copies the id via copyText(id, null) — session, master, unmapped
   s101.click();
   masterRow.click();
-  umRows[0].click();
+  um1.click();
   await flushMicrotasks();
   assert.deepEqual(copied, ["s-101", "s-master-1", "s-unmapped-1"], "row clicks copy the id");
   assert.ok(collectText(dom.body).indexOf("copied ✓") === -1, "no label swap on session-row copies");
@@ -3319,22 +3324,24 @@ test("T6-carry(c)+(d): unmapped rows carry a dim id span; session/unmapped rows 
   // (c) dim span with u.id on every unmapped row
   const umRows = byClass(byClass(col3, "unmapped-strip")[0], "unmapped-row");
   assert.equal(umRows.length, 2);
-  for (let i = 0; i < umRows.length; i += 1) {
-    const dimSpans = byClass(umRows[i], "dim").map((s) => collectText(s));
+  // v1.9.2: strip rows order by activity, so anchor by id, not position
+  const um1 = findByData(col3, "data-session-id", "s-unmapped-1");
+  for (const uid of ["s-unmapped-1", "s-unmapped-2"]) {
+    const dimSpans = byClass(findByData(col3, "data-session-id", uid), "dim").map((s) => collectText(s));
     assert.ok(
-      dimSpans.some((txt) => txt.indexOf("s-unmapped-" + (i + 1)) !== -1),
-      "unmapped row " + (i + 1) + " shows its dim id span: " + JSON.stringify(dimSpans)
+      dimSpans.some((txt) => txt.indexOf(uid) !== -1),
+      "unmapped row " + uid + " shows its dim id span: " + JSON.stringify(dimSpans)
     );
   }
   // (d) role=button + tabindex=0 + Enter/Space run the same copy action
   const sess = findByData(col3, "data-session-id", "s-101");
-  for (const row of [sess, umRows[0]]) {
+  for (const row of [sess, um1]) {
     assert.equal(row.attrs.role, "button", "clickable div carries role=button");
     assert.equal(row.attrs.tabindex, "0", "keyboard reachable");
   }
   const ev = sess.dispatch("keydown", { key: "Enter" });
   assert.strictEqual(ev.defaultPrevented, true, "Enter keydown prevented");
-  const ev2 = umRows[0].dispatch("keydown", { key: " " });
+  const ev2 = um1.dispatch("keydown", { key: " " });
   assert.strictEqual(ev2.defaultPrevented, true, "Space keydown prevented");
   await flushMicrotasks();
   assert.deepEqual(copied, ["s-101", "s-unmapped-1"], "Enter/Space copy the same id a click would");
@@ -3741,7 +3748,8 @@ test("unmapped-strip-state: copy note lands IN the clicked row; expansion surviv
   const t = makeQaApp("full", Object.assign({ clipboard: stubClipboard(copied) }, clockDeps(clock)));
   const col3 = t.dom.getElementById("col3-sessions");
   const rows = t.dom.getElementById("unmapped-rows");
-  const firstRow = byClass(rows, "unmapped-row")[0];
+  // v1.9.2: strip rows order by activity, so anchor by id, not position
+  const firstRow = findByData(rows, "data-session-id", "s-unmapped-1");
   // round 3 (screen 01): the copy confirmation renders INSIDE the clicked
   // row — the strip's rows container scrolls internally, so a note appended
   // after the last row sits out of sight below the fold and the copy reads
@@ -4043,14 +4051,17 @@ test("round 4: unmapped rows group by dir — heads show the project NAME, full 
   const strip = byClass(dom.getElementById("col3-sessions"), "unmapped-strip")[0];
   const groups = byClass(strip, "unmapped-group");
   assert.equal(groups.length, 2, "two distinct dirs -> two groups");
-  const head0 = byClass(groups[0], "unmapped-group-head")[0];
+  // v1.9.2: groups order by activity, so anchor by the group's hover path, not position
+  const g1 = groups.find((g) => byClass(g, "unmapped-group-head")[0].attrs["title"] === "~/.zcode/s-unmapped-1");
+  assert.ok(g1, "the s-unmapped-1 group renders");
+  const head0 = byClass(g1, "unmapped-group-head")[0];
   assert.ok(collectText(head0).indexOf("s-unmapped-1") !== -1, "head shows the project NAME");
   assert.equal(collectText(head0).indexOf("/.zcode"), -1, "full path is never printed");
   assert.equal(head0.attrs["title"], "~/.zcode/s-unmapped-1", "full path on hover");
-  const row0 = collectText(byClass(groups[0], "unmapped-row")[0]);
+  const row0 = collectText(byClass(g1, "unmapped-row")[0]);
   assert.ok(row0.indexOf("scratch: rebase experiment") !== -1, "row still carries the title");
   assert.equal(row0.indexOf("~/.zcode/s-unmapped-1"), -1, "the path renders once per group, not per row");
-  assert.ok(collectText(byClass(groups[0], "unmapped-row")[0]).indexOf("s-unmapped-1") !== -1, "short id tail present");
+  assert.ok(collectText(byClass(g1, "unmapped-row")[0]).indexOf("s-unmapped-1") !== -1, "short id tail present");
 });
 
 test("round 5: WALL/PROJECTS switcher — projects view groups every session by project, newest-first, sortable", () => {
