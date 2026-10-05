@@ -39,7 +39,7 @@ class TowerConfig:
     now_s: Callable[[], float] = time.time
     uptime_s_provider: Callable[[], int] = lambda: 0
     banner_provider: Callable[[], str | None] = lambda: None
-    session_window_s: int = 86400    # creation window for sessions_unmapped (§6.5: time_created cutoff)
+    session_window_s: int = 604800   # activity window for sessions_unmapped (§6.5: time_updated cutoff; a session lingers visible for a week after its last touch — the UI's idle>24h collapse keeps old ones visually quiet)
     tag_scan_window_s: int = 259200  # how far back session_input is scanned for tags
     verify_grace_s: int = 300        # min finished age before suggest_verify fires
     network: NetworkSettings = NetworkSettings()
