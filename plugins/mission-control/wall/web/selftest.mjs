@@ -4406,6 +4406,70 @@ test("round 9: projects view — same-run workflow actors collapse into ONE expa
   assert.equal(otherAfter.attrs["aria-expanded"], "false", "unexpanded run stays collapsed");
 });
 
+// v1.9.2 (measured live 2026-10-05): the WALL view's unmapped strip ordered its
+// dir groups ALPHABETICALLY, so with 423 sessions the machine's most-active
+// repos rendered ~3000px down the strip's 240px scroll box — invisible to the
+// operator. Groups must order by their NEWEST row's activity (smallest age ago
+// first); row order within a group is untouched (served order).
+function makeWallDocWithUnmapped(unmappedRows) {
+  const doc = JSON.parse(JSON.stringify(parseIndexMocks(readWebFile("index.html")).minimal));
+  doc.sessions_unmapped = unmappedRows;
+  return { doc: doc, dom: buildMockDom(parseIndexMocks(readWebFile("index.html"))) };
+}
+
+function mountWallApp(doc, dom) {
+  const MCW = loadApp();
+  const deps = MCW.createDeps({ document: dom, now: () => FIXED_NOW_MS, location: fakeLocation({}) });
+  const app = MCW.createApp(deps);
+  app.setDocument(doc);
+  app.render();
+  return dom;
+}
+
+test("v1.9.2: wall unmapped groups order by newest session activity, not alphabetically", () => {
+  const t = makeWallDocWithUnmapped([
+    // dirA: newest idle 2h — alphabetically FIRST, activity-wise second
+    { id: "s-a1", title: "dirA work", dir: "~/w/dirA", last_active_ago_s: 7200, parent_session_id: null, parent_title: null },
+    // dirB: newest idle 5m — the live machine; must render FIRST despite sorting after dirA
+    { id: "s-b1", title: "dirB work", dir: "~/w/dirB", last_active_ago_s: 300, parent_session_id: null, parent_title: null },
+    // dirC: two rows, newest idle 10h — a group's position keys on its NEWEST row only
+    { id: "s-c1", title: "dirC fresh", dir: "~/w/dirC", last_active_ago_s: 36000, parent_session_id: null, parent_title: null },
+    { id: "s-c2", title: "dirC stale", dir: "~/w/dirC", last_active_ago_s: 172800, parent_session_id: null, parent_title: null },
+  ]);
+  const dom = mountWallApp(t.doc, t.dom);
+  const heads = byClass(dom.getElementById("unmapped-rows"), "unmapped-group-head").map((h) => collectText(h));
+  assert.deepEqual(
+    heads,
+    ["dirB · 1", "dirA · 1", "dirC · 2"],
+    "groups render newest-activity-first: dirB (5m) before dirA (2h) before dirC (10h) — was alphabetical"
+  );
+  // within-group row order is untouched — served order (most-recent-first) survives
+  const dirC = byClass(dom.getElementById("unmapped-rows"), "unmapped-group").find((g) =>
+    collectText(byClass(g, "unmapped-group-head")[0]).indexOf("dirC") !== -1
+  );
+  assert.deepEqual(
+    byClass(dirC, "unmapped-row").map((r) => r.attrs["data-session-id"]),
+    ["s-c1", "s-c2"],
+    "within-group row order stays served order (s-c1 fresh before s-c2 stale)"
+  );
+});
+
+test("v1.9.2 tie-break: equal newest ages order unmapped groups by dir name ascending", () => {
+  const t = makeWallDocWithUnmapped([
+    { id: "s-z1", title: "zeta work", dir: "~/w/zeta", last_active_ago_s: 600, parent_session_id: null, parent_title: null },
+    { id: "s-a1", title: "alpha work", dir: "~/w/alpha", last_active_ago_s: 600, parent_session_id: null, parent_title: null },
+    // a third group, strictly newer — must lead both regardless of name
+    { id: "s-m1", title: "mid work", dir: "~/w/mid", last_active_ago_s: 120, parent_session_id: null, parent_title: null },
+  ]);
+  const dom = mountWallApp(t.doc, t.dom);
+  const heads = byClass(dom.getElementById("unmapped-rows"), "unmapped-group-head").map((h) => collectText(h));
+  assert.deepEqual(
+    heads,
+    ["mid · 1", "alpha · 1", "zeta · 1"],
+    "equal newest ages tie-break by dir ascending (alpha before zeta); a strictly newer group leads"
+  );
+});
+
 // ---------------- runner ----------------
 
 async function main() {
