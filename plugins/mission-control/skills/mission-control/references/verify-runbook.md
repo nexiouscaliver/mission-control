@@ -1,6 +1,6 @@
-# Verify runbook — the ordered commands of SKILL §4
+# Verify runbook — the ordered commands of SKILL §5
 
-Procedure is SKILL §4; these are its commands. 17 ordered commands after the three setup lines; `<fill-in>` items are per-lane values — `R` (the lane repo root) and `S` (the slug) are set per program, session id, forge row (`F` = `~/.mc-wall/forge/<program>/<row-id>`, the overlay-diff's artifact dir), and the disputed line per verify. Every static path below was verified live on 2026-09-17 against the regenloop 1.3.1 plugin and a real lane repo's `regenloop/local/` layout; the overlay-diff commands (1–2) against the session store's `session_input` table on 2026-09-19. Command 17 is deliberately last and conditional.
+Procedure is SKILL §5; these are its commands. 17 ordered commands after the three setup lines; `<fill-in>` items are per-lane values — `R` (the lane repo root) and `S` (the slug) are set per program, session id, forge row (`F` = `~/.mc-wall/forge/<program>/<row-id>`, the overlay-diff's artifact dir), and the disputed line per verify. Every static path below was verified live on 2026-09-17 against the regenloop 1.3.1 plugin and a real lane repo's `regenloop/local/` layout; the overlay-diff commands (1–2) against the session store's `session_input` table on 2026-09-19. Command 17 is deliberately last and conditional.
 
 ```bash
 R=<lane-repo-root>; ORCH=$R/regenloop/local/orchestrator; S=det-scan-linux-pins
