@@ -2283,14 +2283,19 @@ test("AC-16: Col 3 — repo groups, master row, idle>24h collapse, unmapped stri
   assert.ok(collectText(byClass(strip, "unmapped-head")[0]).indexOf("unmapped (2)") !== -1, "strip header 'unmapped (N)'");
   const umRows = byClass(strip, "unmapped-row");
   assert.equal(umRows.length, 2);
-  assert.ok(collectText(umRows[0]).indexOf("scratch: rebase experiment") !== -1, "unmapped title");
-  assert.ok(collectText(umRows[0]).indexOf("2d") !== -1, "age humanized (172800s -> 2d)");
-  assert.ok(collectText(umRows[1]).indexOf("title pending") !== -1, "empty unmapped title -> title pending");
+  // v1.9.2: strip rows order by activity, so anchor by id, not position
+  const um1 = findByData(strip, "data-session-id", "s-unmapped-1");
+  assert.ok(collectText(um1).indexOf("scratch: rebase experiment") !== -1, "unmapped title");
+  assert.ok(collectText(um1).indexOf("2d") !== -1, "age humanized (172800s -> 2d)");
+  assert.ok(
+    collectText(findByData(strip, "data-session-id", "s-unmapped-2")).indexOf("title pending") !== -1,
+    "empty unmapped title -> title pending"
+  );
   assert.equal(byClass(col3, "session-row").length, 5, "5 mapped rows (incl. master) outside the strip");
   const css = readWebFile("style.css");
   const rules = parseCssRules(css);
   const umScroll = rules.find((r) => r.selector === ".unmapped-rows" && r.media === "");
-  assert.ok(umScroll && umScroll.decls["max-height"] && umScroll.decls["overflow-y"] === "auto", "unmapped strip scrolls internally past 8 rows");
+  assert.ok(umScroll && umScroll.decls["max-height"] === "50vh" && umScroll.decls["overflow-y"] === "auto", "unmapped strip scrolls internally; collapsed cap is a half viewport (v1.9.2: 240px peephole buried live sessions)");
 
   // idle text NEVER bare: always composed (or signals unknown)
   const idleLines = byClass(col3, "session-idle");
@@ -2310,7 +2315,7 @@ test("AC-16: Col 3 — repo groups, master row, idle>24h collapse, unmapped stri
   // click copies the id via copyText(id, null) — session, master, unmapped
   s101.click();
   masterRow.click();
-  umRows[0].click();
+  um1.click();
   await flushMicrotasks();
   assert.deepEqual(copied, ["s-101", "s-master-1", "s-unmapped-1"], "row clicks copy the id");
   assert.ok(collectText(dom.body).indexOf("copied ✓") === -1, "no label swap on session-row copies");
@@ -3319,22 +3324,24 @@ test("T6-carry(c)+(d): unmapped rows carry a dim id span; session/unmapped rows 
   // (c) dim span with u.id on every unmapped row
   const umRows = byClass(byClass(col3, "unmapped-strip")[0], "unmapped-row");
   assert.equal(umRows.length, 2);
-  for (let i = 0; i < umRows.length; i += 1) {
-    const dimSpans = byClass(umRows[i], "dim").map((s) => collectText(s));
+  // v1.9.2: strip rows order by activity, so anchor by id, not position
+  const um1 = findByData(col3, "data-session-id", "s-unmapped-1");
+  for (const uid of ["s-unmapped-1", "s-unmapped-2"]) {
+    const dimSpans = byClass(findByData(col3, "data-session-id", uid), "dim").map((s) => collectText(s));
     assert.ok(
-      dimSpans.some((txt) => txt.indexOf("s-unmapped-" + (i + 1)) !== -1),
-      "unmapped row " + (i + 1) + " shows its dim id span: " + JSON.stringify(dimSpans)
+      dimSpans.some((txt) => txt.indexOf(uid) !== -1),
+      "unmapped row " + uid + " shows its dim id span: " + JSON.stringify(dimSpans)
     );
   }
   // (d) role=button + tabindex=0 + Enter/Space run the same copy action
   const sess = findByData(col3, "data-session-id", "s-101");
-  for (const row of [sess, umRows[0]]) {
+  for (const row of [sess, um1]) {
     assert.equal(row.attrs.role, "button", "clickable div carries role=button");
     assert.equal(row.attrs.tabindex, "0", "keyboard reachable");
   }
   const ev = sess.dispatch("keydown", { key: "Enter" });
   assert.strictEqual(ev.defaultPrevented, true, "Enter keydown prevented");
-  const ev2 = umRows[0].dispatch("keydown", { key: " " });
+  const ev2 = um1.dispatch("keydown", { key: " " });
   assert.strictEqual(ev2.defaultPrevented, true, "Space keydown prevented");
   await flushMicrotasks();
   assert.deepEqual(copied, ["s-101", "s-unmapped-1"], "Enter/Space copy the same id a click would");
@@ -3741,7 +3748,8 @@ test("unmapped-strip-state: copy note lands IN the clicked row; expansion surviv
   const t = makeQaApp("full", Object.assign({ clipboard: stubClipboard(copied) }, clockDeps(clock)));
   const col3 = t.dom.getElementById("col3-sessions");
   const rows = t.dom.getElementById("unmapped-rows");
-  const firstRow = byClass(rows, "unmapped-row")[0];
+  // v1.9.2: strip rows order by activity, so anchor by id, not position
+  const firstRow = findByData(rows, "data-session-id", "s-unmapped-1");
   // round 3 (screen 01): the copy confirmation renders INSIDE the clicked
   // row — the strip's rows container scrolls internally, so a note appended
   // after the last row sits out of sight below the fold and the copy reads
@@ -4043,14 +4051,17 @@ test("round 4: unmapped rows group by dir — heads show the project NAME, full 
   const strip = byClass(dom.getElementById("col3-sessions"), "unmapped-strip")[0];
   const groups = byClass(strip, "unmapped-group");
   assert.equal(groups.length, 2, "two distinct dirs -> two groups");
-  const head0 = byClass(groups[0], "unmapped-group-head")[0];
+  // v1.9.2: groups order by activity, so anchor by the group's hover path, not position
+  const g1 = groups.find((g) => byClass(g, "unmapped-group-head")[0].attrs["title"] === "~/.zcode/s-unmapped-1");
+  assert.ok(g1, "the s-unmapped-1 group renders");
+  const head0 = byClass(g1, "unmapped-group-head")[0];
   assert.ok(collectText(head0).indexOf("s-unmapped-1") !== -1, "head shows the project NAME");
   assert.equal(collectText(head0).indexOf("/.zcode"), -1, "full path is never printed");
   assert.equal(head0.attrs["title"], "~/.zcode/s-unmapped-1", "full path on hover");
-  const row0 = collectText(byClass(groups[0], "unmapped-row")[0]);
+  const row0 = collectText(byClass(g1, "unmapped-row")[0]);
   assert.ok(row0.indexOf("scratch: rebase experiment") !== -1, "row still carries the title");
   assert.equal(row0.indexOf("~/.zcode/s-unmapped-1"), -1, "the path renders once per group, not per row");
-  assert.ok(collectText(byClass(groups[0], "unmapped-row")[0]).indexOf("s-unmapped-1") !== -1, "short id tail present");
+  assert.ok(collectText(byClass(g1, "unmapped-row")[0]).indexOf("s-unmapped-1") !== -1, "short id tail present");
 });
 
 test("round 5: WALL/PROJECTS switcher — projects view groups every session by project, newest-first, sortable", () => {
@@ -4404,6 +4415,70 @@ test("round 9: projects view — same-run workflow actors collapse into ONE expa
   // collapsed sibling run stays collapsed
   const otherAfter = byClass(dom.getElementById("projects-view"), "project-run-head").find((h) => h !== headAfter);
   assert.equal(otherAfter.attrs["aria-expanded"], "false", "unexpanded run stays collapsed");
+});
+
+// v1.9.2 (measured live 2026-10-05): the WALL view's unmapped strip ordered its
+// dir groups ALPHABETICALLY, so with 423 sessions the machine's most-active
+// repos rendered ~3000px down the strip's 240px scroll box — invisible to the
+// operator. Groups must order by their NEWEST row's activity (smallest age ago
+// first); row order within a group is untouched (served order).
+function makeWallDocWithUnmapped(unmappedRows) {
+  const doc = JSON.parse(JSON.stringify(parseIndexMocks(readWebFile("index.html")).minimal));
+  doc.sessions_unmapped = unmappedRows;
+  return { doc: doc, dom: buildMockDom(parseIndexMocks(readWebFile("index.html"))) };
+}
+
+function mountWallApp(doc, dom) {
+  const MCW = loadApp();
+  const deps = MCW.createDeps({ document: dom, now: () => FIXED_NOW_MS, location: fakeLocation({}) });
+  const app = MCW.createApp(deps);
+  app.setDocument(doc);
+  app.render();
+  return dom;
+}
+
+test("v1.9.2: wall unmapped groups order by newest session activity, not alphabetically", () => {
+  const t = makeWallDocWithUnmapped([
+    // dirA: newest idle 2h — alphabetically FIRST, activity-wise second
+    { id: "s-a1", title: "dirA work", dir: "~/w/dirA", last_active_ago_s: 7200, parent_session_id: null, parent_title: null },
+    // dirB: newest idle 5m — the live machine; must render FIRST despite sorting after dirA
+    { id: "s-b1", title: "dirB work", dir: "~/w/dirB", last_active_ago_s: 300, parent_session_id: null, parent_title: null },
+    // dirC: two rows, newest idle 10h — a group's position keys on its NEWEST row only
+    { id: "s-c1", title: "dirC fresh", dir: "~/w/dirC", last_active_ago_s: 36000, parent_session_id: null, parent_title: null },
+    { id: "s-c2", title: "dirC stale", dir: "~/w/dirC", last_active_ago_s: 172800, parent_session_id: null, parent_title: null },
+  ]);
+  const dom = mountWallApp(t.doc, t.dom);
+  const heads = byClass(dom.getElementById("unmapped-rows"), "unmapped-group-head").map((h) => collectText(h));
+  assert.deepEqual(
+    heads,
+    ["dirB · 1", "dirA · 1", "dirC · 2"],
+    "groups render newest-activity-first: dirB (5m) before dirA (2h) before dirC (10h) — was alphabetical"
+  );
+  // within-group row order is untouched — served order (most-recent-first) survives
+  const dirC = byClass(dom.getElementById("unmapped-rows"), "unmapped-group").find((g) =>
+    collectText(byClass(g, "unmapped-group-head")[0]).indexOf("dirC") !== -1
+  );
+  assert.deepEqual(
+    byClass(dirC, "unmapped-row").map((r) => r.attrs["data-session-id"]),
+    ["s-c1", "s-c2"],
+    "within-group row order stays served order (s-c1 fresh before s-c2 stale)"
+  );
+});
+
+test("v1.9.2 tie-break: equal newest ages order unmapped groups by dir name ascending", () => {
+  const t = makeWallDocWithUnmapped([
+    { id: "s-z1", title: "zeta work", dir: "~/w/zeta", last_active_ago_s: 600, parent_session_id: null, parent_title: null },
+    { id: "s-a1", title: "alpha work", dir: "~/w/alpha", last_active_ago_s: 600, parent_session_id: null, parent_title: null },
+    // a third group, strictly newer — must lead both regardless of name
+    { id: "s-m1", title: "mid work", dir: "~/w/mid", last_active_ago_s: 120, parent_session_id: null, parent_title: null },
+  ]);
+  const dom = mountWallApp(t.doc, t.dom);
+  const heads = byClass(dom.getElementById("unmapped-rows"), "unmapped-group-head").map((h) => collectText(h));
+  assert.deepEqual(
+    heads,
+    ["mid · 1", "alpha · 1", "zeta · 1"],
+    "equal newest ages tie-break by dir ascending (alpha before zeta); a strictly newer group leads"
+  );
 });
 
 // ---------------- runner ----------------

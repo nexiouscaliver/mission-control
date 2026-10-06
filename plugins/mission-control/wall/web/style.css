@@ -1489,7 +1489,10 @@ body.frozen .sig {
 }
 
 .unmapped-rows {
-  max-height: 240px;
+  /* v1.9.2: a fixed 240px cap buried live sessions ~3000px deep in the
+   * scroll list once the activity window widened the working set — the
+   * collapsed cap now rides half the viewport; .open stays uncapped. */
+  max-height: 50vh;
   overflow-y: auto;
 }
 

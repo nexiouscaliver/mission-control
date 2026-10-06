@@ -2645,20 +2645,31 @@
     // Round 4: unmapped rows group by their dir (the path IS the repo for an
     // unmapped session) so a wall of 25 near-identical rows becomes a few
     // labeled repo groups; the path renders once per group instead of once
-    // per row. Groups sort alphabetically; rows within a group keep served
-    // order. Rows with no dir land in "(no path)".
+    // per row. Groups order by their newest row's activity (most recent
+    // first); rows within a group keep served order. Rows with no dir land
+    // in "(no path)".
     function renderUnmappedGroups(rowsEl, rows) {
       var groups = [];
       var index = {};
       for (var i = 0; i < rows.length; i += 1) {
         var dir = typeof rows[i].dir === "string" && rows[i].dir !== "" ? rows[i].dir : "(no path)";
         if (!index[dir]) {
-          index[dir] = { dir: dir, rows: [] };
+          index[dir] = { dir: dir, rows: [], newestAgoS: Infinity };
           groups.push(index[dir]);
         }
         index[dir].rows.push(rows[i]);
+        // The group's recency key: its NEWEST row's age. A wrong-typed age
+        // reads as 0 (just now) — the same fallback the row's age span applies.
+        var ago = isInt(rows[i].last_active_ago_s) ? rows[i].last_active_ago_s : 0;
+        if (ago < index[dir].newestAgoS) index[dir].newestAgoS = ago;
       }
+      // v1.9.2 (measured live 2026-10-05): alphabetical order buried the
+      // machine's most-active repos ~3000px down the strip's 240px scroll box.
+      // Groups now order by their newest row's activity — smallest age first —
+      // ties broken by dir ascending for determinism. Within-group row order
+      // is untouched (served order is already most-recent-first).
       groups.sort(function (a, b) {
+        if (a.newestAgoS !== b.newestAgoS) return a.newestAgoS - b.newestAgoS;
         return a.dir < b.dir ? -1 : a.dir > b.dir ? 1 : 0;
       });
       for (var g = 0; g < groups.length; g += 1) {
