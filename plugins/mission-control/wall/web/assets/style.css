@@ -1729,6 +1729,8 @@ body.frozen .sig {
 .tl-wave-head,
 .tl-step-head,
 .needs-head,
+.merges-head,
+.merges-group,
 .defect-head {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -1762,7 +1764,8 @@ body.frozen .sig {
  * the pinned DOM surface). Only :root tokens — no new colors. */
 
 #timeline-view,
-#needs-view {
+#needs-view,
+#merges-view {
   padding: var(--s4);
 }
 
@@ -1786,6 +1789,14 @@ body.frozen .sig {
   padding: var(--s3);
   margin-bottom: var(--s3);
   overflow-x: auto;
+}
+
+/* W4-L4: an OPEN node's detail is the small MR window — overflow-x:auto on
+ * the card turns it into a clip container and beheaded the window at the
+ * card edge. While any node is open the card lets it paint (the node is
+ * z-raised; closed details restore the scrolling behavior). */
+.tl-program--open {
+  overflow: visible;
 }
 
 .tl-program.collapsed {
@@ -2010,6 +2021,52 @@ body.frozen .sig {
   max-width: 100%;
 }
 
+/* W4-L4 (operator overlay): the OPEN node's detail is the small window —
+ * wider than the 172px node (z-raised with the node), room for the registry
+ * MR rows. Collapsed details keep the node's own width. */
+.tl-node--open .tl-detail {
+  width: 264px;
+}
+
+.tl-mr {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+  padding-top: 5px;
+  border-top: 1px solid var(--border);
+}
+
+.tl-mr .mr-badge {
+  margin-left: 0; /* first flex child — the standalone margin is for inline use */
+}
+
+.tl-mr-main {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--blue);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  /* two-line window: badge + chip + merged-age on line one, the linked
+   * title gets its own full-width line (order-only, markup unchanged) */
+  order: 3;
+  flex-basis: 100%;
+}
+
+a.tl-mr-main:hover {
+  text-decoration: underline;
+}
+
+.tl-mr-meta {
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
 .tl-edge {
   position: absolute;
   z-index: 0;
@@ -2105,6 +2162,129 @@ body.frozen .sig {
 
 .needs-link:hover {
   text-decoration: underline;
+}
+
+/* ---- MERGES tab (contract v3, W4-L4): the MR/PR registry. Rows share the
+ * needs-me anatomy (raise fill, left-edge hue); the state chip follows the
+ * mr-badge outline grammar — merged green, open amber, conflicts a red
+ * OUTLINE variant, closed dim, draft a dashed outline. Existing tokens only
+ * (AC-26's matrix already pins every hue >= 4.5:1 on raise/bg). ---- */
+
+.merges-empty {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 700;
+  padding: var(--s4) 0;
+}
+
+.merges-group {
+  display: block;
+  margin: var(--s3) 0 var(--s2) 0;
+}
+
+.merges-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  padding: 8px 10px;
+  background: var(--raise);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--r-s);
+  margin-bottom: var(--s2);
+}
+
+.merges-row--merged {
+  border-left-color: var(--green);
+}
+
+.merges-row--open {
+  border-left-color: var(--amber);
+}
+
+.merges-row--closed {
+  border-left-color: var(--border-2);
+}
+
+/* conflicts is the severe open variant: the left accent agrees with the chip */
+.merges-row--conflicts {
+  border-left-color: var(--red);
+}
+
+.merges-row .mr-badge {
+  margin-left: 0; /* first flex child — the standalone margin is for inline use */
+}
+
+.merges-main {
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 12px;
+  text-decoration: none;
+}
+
+a.merges-main {
+  color: var(--blue);
+}
+
+a.merges-main:hover {
+  text-decoration: underline;
+}
+
+.mr-state {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 1px 6px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-s);
+  background: transparent;
+  color: var(--dim);
+}
+
+.mr-state--merged {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 40%, transparent);
+}
+
+.mr-state--open {
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 40%, transparent);
+}
+
+.mr-state--conflicts {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 40%, transparent);
+}
+
+.mr-state--draft {
+  color: var(--dim);
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--dim) 40%, transparent);
+}
+
+.mr-lane {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.mr-lane.dim {
+  color: var(--dim);
+  font-weight: 600;
+}
+
+.mr-session,
+.mr-dates,
+.mr-author {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--dim);
 }
 
 /* degraded parse cards: fail-visible (SPEC 8 / SC-4) — red left edge naming
