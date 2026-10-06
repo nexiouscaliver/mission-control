@@ -4631,9 +4631,17 @@ test("W2-L2: timeline node dots exercise every hue; click opens the lane detail;
   node.click();
   assert.ok(!byClass(node, "tl-detail")[0].classList.contains("collapsed"), "click opens the detail");
   const detText = collectText(byClass(node, "tl-detail")[0]);
-  for (const bit of ["session s-101", "branch secfix/w2-l1", "mr !34 open", "active 15m ago", "status forged"]) {
+  // W4-L4 re-pin: mock-full's registry covers W2-L1, so the plain "mr" line is
+  // subsumed by the .tl-mr block (host badge + !34 link + chip) — the other
+  // detail lines stay
+  for (const bit of ["session s-101", "branch secfix/w2-l1", "active 15m ago", "status forged"]) {
     assert.ok(detText.indexOf(bit) !== -1, "detail names: " + bit);
   }
+  assert.equal(detText.indexOf("mr !34 open"), -1, "plain mr line subsumed by the registry block");
+  const mrRow = byClass(node, "tl-mr")[0];
+  assert.ok(mrRow, "the registry MR block renders in the detail");
+  assert.ok(collectText(mrRow).indexOf("cleo !34") !== -1, "block names repo + ref");
+  assert.ok(byClass(mrRow, "mr-state--open")[0], "block carries the state chip");
   app.render(); // a poll tick — ages change, the view rebuilds
   const nodeAfter = findByData(dom.getElementById("timeline-view"), "data-row-id", "W2-L1");
   assert.ok(!byClass(nodeAfter, "tl-detail")[0].classList.contains("collapsed"), "the expanded detail survives the poll rebuild");
@@ -4901,6 +4909,43 @@ test("W4-L4: mr-state chip rules exist on the token palette (contrast rides AC-2
   for (const tok of ["--green", "--amber", "--red", "--dim"]) {
     assert.match(tokens[tok], /^#[0-9a-f]{6}$/i, tok + " resolves to a hex token");
   }
+});
+
+test("W4-L4: timeline detail MR window — registry join by row_id, schema-2 fallback keeps the plain mr line", () => {
+  const { app, dom } = makeQaApp("full");
+  app.setView("timeline");
+  const tl = dom.getElementById("timeline-view");
+  // an uncovered lane keeps the honest fallback line (W2-L5 has no registry row)
+  const bare = findByData(tl, "data-row-id", "W2-L5");
+  bare.click();
+  const bareDet = byClass(bare, "tl-detail")[0];
+  const bareText = collectText(bareDet);
+  assert.ok(/mr (— none|!)/.test(bareText), "uncovered lane keeps the plain mr line");
+  assert.equal(byClass(bareDet, "tl-mr").length, 0, "no registry block without a registry row");
+  // the covered lane's block links out with the tab's same grammar
+  const node = findByData(tl, "data-row-id", "W2-L1");
+  node.click();
+  const mrRow = byClass(node, "tl-mr")[0];
+  const link = byClass(mrRow, "tl-mr-main")[0];
+  assert.equal(link.tag, "a", "the MR title links out");
+  assert.equal(link.attrs.target, "_blank", "new tab");
+  assert.equal(link.attrs.rel, "noopener noreferrer", "rel-hardened");
+  // the small window: the open detail is wider than the node (CSS rule of record)
+  const rules = parseCssRules(readWebFile("style.css"));
+  const openDetail = rules.find((r) => r.selector === ".tl-node--open .tl-detail");
+  assert.ok(openDetail && openDetail.decls["width"] === "264px", ".tl-node--open .tl-detail width: 264px");
+  // a schema-2 payload (merges key absent) degrades every lane to the plain line
+  const pre = makeQaApp("full");
+  const doc = JSON.parse(JSON.stringify(parseIndexMocks(readWebFile("index.html")).full));
+  delete doc.merges;
+  pre.app.setDocument(doc);
+  pre.app.render();
+  pre.app.setView("timeline");
+  const preNode = findByData(pre.dom.getElementById("timeline-view"), "data-row-id", "W2-L1");
+  preNode.click();
+  const preDet = byClass(preNode, "tl-detail")[0];
+  assert.ok(collectText(preDet).indexOf("mr !34 open") !== -1, "schema-2 payload: plain mr line returns");
+  assert.equal(byClass(preDet, "tl-mr").length, 0, "schema-2 payload: no registry block");
 });
 
 // ---------------- runner ----------------

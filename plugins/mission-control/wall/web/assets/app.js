@@ -3406,7 +3406,81 @@
     var TL_ROW_GAP = 12;
     var TL_COL_HEAD_H = 30; // the workflow-style header row height
 
-    function renderTimelineNode(parentEl, lane, x, y) {
+    // W4-L4 (operator overlay): row_id -> registry entries (served order =
+    // newest updated_at first). Empty map on a schema-2 payload (no key) —
+    // the plain "mr" text line stays the fallback there.
+    function mergesIndexByRowId() {
+      var idx = {};
+      if (stateDoc === null || !Array.isArray(stateDoc.merges)) return idx;
+      var res = MCW.state.items(stateDoc.merges, null);
+      for (var i = 0; i < res.valid.length; i += 1) {
+        var m = res.valid[i];
+        if (typeof m.row_id !== "string" || m.row_id === "") continue;
+        if (!Object.prototype.hasOwnProperty.call(idx, m.row_id)) idx[m.row_id] = [];
+        idx[m.row_id].push(m);
+      }
+      return idx;
+    }
+
+    // One compact MR row for the timeline detail window: host badge, !N/#N +
+    // title link, state chip (conflicts > draft > state), merged age. Same
+    // chip precedence and badge grammar as the MERGES tab.
+    function buildTlMrRow(entry) {
+      var host = typeof entry.host === "string" ? entry.host : "";
+      var row = el("div");
+      row.classList.add("tl-mr");
+      var badge = el("span");
+      badge.classList.add("mr-badge");
+      if (host === "gitlab" || host === "github") badge.classList.add("mr-badge--" + host);
+      badge.setText(host || "?");
+      row.appendChild(badge);
+      var url = typeof entry.url === "string" && entry.url !== "" ? entry.url : null;
+      var main;
+      if (url !== null) {
+        main = el("a");
+        main.setAttribute("href", url);
+        main.setAttribute("target", "_blank");
+        main.setAttribute("rel", "noopener noreferrer");
+      } else {
+        main = el("span");
+      }
+      main.classList.add("tl-mr-main");
+      var refSep = host === "github" ? "#" : "!";
+      var n = typeof entry.number === "number" && isFinite(entry.number) ? entry.number : 0;
+      var title = typeof entry.title === "string" ? entry.title : "";
+      var repo = typeof entry.repo === "string" ? entry.repo : "";
+      // same grammar as the MERGES tab rows: repo !N · title
+      main.setText(repo + " " + refSep + n + " · " + title);
+      main.setAttribute("title", title);
+      row.appendChild(main);
+      var chip = el("span");
+      chip.classList.add("mr-state");
+      var state = typeof entry.state === "string" ? entry.state : "";
+      if (entry.conflicts === true) {
+        chip.classList.add("mr-state--conflicts");
+        chip.setText("conflicts");
+      } else if (entry.draft === true) {
+        chip.classList.add("mr-state--draft");
+        chip.setText("draft");
+      } else {
+        chip.classList.add("mr-state--" + (state || "unknown"));
+        chip.setText(state || "unknown");
+      }
+      row.appendChild(chip);
+      if (typeof entry.merged_at === "number") {
+        var meta = el("span");
+        meta.classList.add("tl-mr-meta");
+        meta.classList.add("dim");
+        var gen = stateDoc && stateDoc.server && typeof stateDoc.server.generated_ts === "number"
+          ? stateDoc.server.generated_ts
+          : 0;
+        meta.setText("merged " + MCW.util.humanizeAge(gen - entry.merged_at));
+        row.appendChild(meta);
+      }
+      return row;
+    }
+
+    function renderTimelineNode(parentEl, lane, x, y, mergeIndex) {
       var node = el("div");
       node.classList.add("tl-node");
       node.setAttribute("data-row-id", lane.row_id);
@@ -3469,16 +3543,23 @@
       var ses = nullable(lane.session);
       var sig = nullable(lane.signals);
       var mr = sig !== null ? nullable(sig.mr) : null;
+      var regRows = mergeIndex && Object.prototype.hasOwnProperty.call(mergeIndex, lane.row_id)
+        ? mergeIndex[lane.row_id]
+        : [];
       var lines = [];
       lines.push("status " + status);
       lines.push("session " + (ses !== null && typeof ses.id === "string" && ses.id !== "" ? ses.id : "— none"));
       lines.push("branch " + (typeof lane.branch === "string" && lane.branch !== "" ? lane.branch : "— none"));
-      lines.push(
-        "mr " +
-          (mr !== null && typeof mr.ref === "string" && mr.ref !== ""
-            ? mr.ref + (typeof mr.state === "string" && mr.state !== "" ? " " + mr.state : "")
-            : "— none")
-      );
+      if (regRows.length === 0) {
+        // schema-2 tower (no registry) or an unjoinable lane: the plain
+        // signals-mr line stays the honest fallback
+        lines.push(
+          "mr " +
+            (mr !== null && typeof mr.ref === "string" && mr.ref !== ""
+              ? mr.ref + (typeof mr.state === "string" && mr.state !== "" ? " " + mr.state : "")
+              : "— none")
+        );
+      }
       lines.push(
         "active " +
           (ses !== null && isInt(ses.last_active_ago_s)
@@ -3496,6 +3577,9 @@
         line.classList.add("tl-detail-line");
         line.setText(lines[i]);
         det.appendChild(line);
+      }
+      for (var r = 0; r < regRows.length; r += 1) {
+        det.appendChild(buildTlMrRow(regRows[r]));
       }
       node.appendChild(det);
 
@@ -3535,10 +3619,18 @@
     }
 
     function renderTimelineProgram(rootEl, prog) {
+      var mergeIdx = mergesIndexByRowId();  // W4-L4: one index per program pass
       var lanes = MCW.state.items(prog.lanes, "row_id").valid;
       var finished = programFinished(prog);
       var wrap = el("div");
       wrap.classList.add("tl-program");
+      // the open detail is a popup window — the card must not clip it (W4-L4)
+      for (var wi = 0; wi < lanes.length; wi += 1) {
+        if (expandedTimelineNodes[lanes[wi].row_id] === true) {
+          wrap.classList.add("tl-program--open");
+          break;
+        }
+      }
       if (finished && !showFinishedPrograms) wrap.classList.add("collapsed"); // CSS-hidden, nodes stay in the DOM
       if (finished) wrap.classList.add("tl-program--done");
 
@@ -3610,7 +3702,7 @@
         }
         for (i = 0; i < lanes.length; i += 1) {
           var p = pos[lanes[i].row_id];
-          renderTimelineNode(canvas, lanes[i], p.x, p.y);
+          renderTimelineNode(canvas, lanes[i], p.x, p.y, mergeIdx);
         }
         canvas.style.width = (maxLevel + 1) * TL_COL_W - (TL_COL_W - TL_NODE_W) + "px";
         canvas.style.height = maxColHeight + "px";
@@ -3659,7 +3751,7 @@
           }
           canvas.appendChild(headEl);
           for (var n = 0; n < colLanes.length; n += 1) {
-            renderTimelineNode(canvas, colLanes[n], colX, TL_COL_HEAD_H + n * (TL_NODE_H + TL_ROW_GAP));
+            renderTimelineNode(canvas, colLanes[n], colX, TL_COL_HEAD_H + n * (TL_NODE_H + TL_ROW_GAP), mergeIdx);
           }
           if (colLanes.length > maxRows) maxRows = colLanes.length;
         }

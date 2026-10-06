@@ -1791,6 +1791,14 @@ body.frozen .sig {
   overflow-x: auto;
 }
 
+/* W4-L4: an OPEN node's detail is the small MR window — overflow-x:auto on
+ * the card turns it into a clip container and beheaded the window at the
+ * card edge. While any node is open the card lets it paint (the node is
+ * z-raised; closed details restore the scrolling behavior). */
+.tl-program--open {
+  overflow: visible;
+}
+
 .tl-program.collapsed {
   display: none;
 }
@@ -2011,6 +2019,52 @@ body.frozen .sig {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
+}
+
+/* W4-L4 (operator overlay): the OPEN node's detail is the small window —
+ * wider than the 172px node (z-raised with the node), room for the registry
+ * MR rows. Collapsed details keep the node's own width. */
+.tl-node--open .tl-detail {
+  width: 264px;
+}
+
+.tl-mr {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+  padding-top: 5px;
+  border-top: 1px solid var(--border);
+}
+
+.tl-mr .mr-badge {
+  margin-left: 0; /* first flex child — the standalone margin is for inline use */
+}
+
+.tl-mr-main {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--blue);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  /* two-line window: badge + chip + merged-age on line one, the linked
+   * title gets its own full-width line (order-only, markup unchanged) */
+  order: 3;
+  flex-basis: 100%;
+}
+
+a.tl-mr-main:hover {
+  text-decoration: underline;
+}
+
+.tl-mr-meta {
+  font-family: var(--font-mono);
+  font-size: 10px;
 }
 
 .tl-edge {
