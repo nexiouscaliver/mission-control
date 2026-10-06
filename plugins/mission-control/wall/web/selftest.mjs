@@ -4897,6 +4897,7 @@ test("W4-L4: mr-state chip rules exist on the token palette (contrast rides AC-2
   assert.equal(declHas(".mr-state--draft", "border-style"), "dashed");
   assert.equal(declHas(".merges-row--merged", "border-left-color"), "var(--green)");
   assert.equal(declHas(".merges-row--open", "border-left-color"), "var(--amber)");
+  assert.equal(declHas(".merges-row--conflicts", "border-left-color"), "var(--red)");
   for (const tok of ["--green", "--amber", "--red", "--dim"]) {
     assert.match(tokens[tok], /^#[0-9a-f]{6}$/i, tok + " resolves to a hex token");
   }

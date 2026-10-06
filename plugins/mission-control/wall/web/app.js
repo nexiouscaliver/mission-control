@@ -559,6 +559,15 @@
       var hero = byId("empty-hero");
       if (!hero) return;
       var mode = "hidden";
+      // W4-L4: the MERGES tab owns its empty state ("no lane MRs tracked
+      // yet") — the wall's all-clear hero would contradict registry rows
+      // rendered right under it on a merges-only document.
+      if (currentView === "merges") {
+        hero.setAttribute("hidden", "");
+        hero.classList.remove("hero--big");
+        hero.classList.remove("hero--slim");
+        return;
+      }
       if (valid) {
         var contentKinds = (counts.p > 0 ? 1 : 0) + (counts.o > 0 ? 1 : 0) + (counts.s > 0 ? 1 : 0);
         if (contentKinds === 0) mode = "big";
@@ -3919,6 +3928,7 @@
       if (state === "merged" || state === "open" || state === "closed") {
         rowEl.classList.add("merges-row--" + state);
       }
+      if (row.conflicts === true) rowEl.classList.add("merges-row--conflicts");
       var badge = el("span");
       badge.classList.add("mr-badge");
       if (host === "gitlab" || host === "github") badge.classList.add("mr-badge--" + host);

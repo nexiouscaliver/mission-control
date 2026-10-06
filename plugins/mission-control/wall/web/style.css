@@ -1764,7 +1764,8 @@ body.frozen .sig {
  * the pinned DOM surface). Only :root tokens — no new colors. */
 
 #timeline-view,
-#needs-view {
+#needs-view,
+#merges-view {
   padding: var(--s4);
 }
 
@@ -2152,6 +2153,11 @@ body.frozen .sig {
   border-left-color: var(--border-2);
 }
 
+/* conflicts is the severe open variant: the left accent agrees with the chip */
+.merges-row--conflicts {
+  border-left-color: var(--red);
+}
+
 .merges-row .mr-badge {
   margin-left: 0; /* first flex child — the standalone margin is for inline use */
 }
@@ -2212,6 +2218,11 @@ a.merges-main:hover {
   font-size: 11px;
   font-weight: 700;
   color: var(--ink);
+}
+
+.mr-lane.dim {
+  color: var(--dim);
+  font-weight: 600;
 }
 
 .mr-session,
