@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Case 06 — plan-mode Wall registration + program-note grammar (wall-signal-panel W1-L2;
-# re-pinned for contract v2 at 1.11.0: per-poll registration, 9-cell deps rows).
+# re-pinned for contract v2 at 1.11.0: per-poll registration, 9-cell deps rows;
+# extended for wall-honesty v1.11.1: the controller write-verification protocol —
+# lint-note + /state lane-count assert after every row edit, the blank-line ban,
+# and the verify-turn wall-reality check).
 # Pins SKILL §3 step 7 (idempotent ~/.mc-wall/wall.json registration at plan time, with the
 # per-poll no-restart visibility + state-probe verification and the skip-when-absent rule)
 # and the §1 note grammar the Wall's notes.py parser actually reads (9-cell deps rows,
@@ -17,9 +20,11 @@ fail() { echo "  06: $*" >&2; FAIL=1; }
 # §-section extractor: prints the body of the section whose header starts with "## <marker>",
 # up to the next "## " header. index()==1 keeps the anchor byte-safe (no regex unicode games).
 sec() { awk -v m="## $1" 'index($0, m) == 1 {f=1; next} /^## /{f=0} f' "$SKILL"; }
-S1=$(sec "§1"); S3=$(sec "§3")
+S1=$(sec "§1"); S3=$(sec "§3"); S4=$(sec "§4"); S5=$(sec "§5")
 [ -n "$S1" ] || { fail "no §1 section found in SKILL.md"; exit 1; }
 [ -n "$S3" ] || { fail "no §3 section found in SKILL.md"; exit 1; }
+[ -n "$S4" ] || { fail "no §4 section found in SKILL.md"; exit 1; }
+[ -n "$S5" ] || { fail "no §5 section found in SKILL.md"; exit 1; }
 
 # --- §3 step 7: plan-mode Wall registration -------------------------------------------
 # 1. The registration targets the wall's machine config.
@@ -96,5 +101,36 @@ printf '%s\n' "$S1" | grep -Fq -- 'evidence prose' \
   || fail "§1 lacks the fork-disclosure evidence-prose rule for wall-declared programs"
 printf '%s\n' "$S1" | grep -Fq -- 'renders as a lane' \
   || fail "§1 lacks the why of the display rule (an FX row renders as a lane)"
+
+# --- wall-honesty v1.11.1: the controller write-verification protocol -----------------
+# 14. §1 blank-line ban: the prompt-log table must be contiguous.
+printf '%s\n' "$S1" | grep -Fq -- 'CONTIGUOUS' \
+  || fail "§1 lacks the contiguous-table rule (no blank lines inside the prompt-log table)"
+printf '%s\n' "$S1" | grep -Fq -- 'no blank lines inside it' \
+  || fail "§1 lacks the blank-line ban's literal form"
+printf '%s\n' "$S1" | grep -Fq -- 'mc-wall lint-note' \
+  || fail "§1 lacks the lint-note pre-flight rule after any row edit"
+
+# 15. §3 (plan): after note write + registration — lint + /state lane-count assert.
+printf '%s\n' "$S3" | grep -Fq -- 'lint-note' \
+  || fail "§3 lacks the lint-note probe (step 8 write-verification)"
+printf '%s\n' "$S3" | grep -Fq -- 'EQUALS the rows written' \
+  || fail "§3 lacks the /state lane-count assert (parsed lanes == rows written)"
+printf '%s\n' "$S3" | grep -Fq -- 'STOP-and-diagnose' \
+  || fail "§3 lacks the mismatch-is-stop rule (a lane-count mismatch is never a footnote)"
+
+# 16. §4 (forge): every row edit re-verifies within one poll beat.
+printf '%s\n' "$S4" | grep -Fq -- 'lint-note' \
+  || fail "§4 lacks the lint-note probe after every prompt-log row edit"
+printf '%s\n' "$S4" | grep -Fq -- 'lane count equals the rows now written' \
+  || fail "§4 lacks the /state lane-count assert after row edits"
+
+# 17. §5 (verify): the turn closes with a wall-reality check; mismatch = FINDING.
+printf '%s\n' "$S5" | grep -Fq -- 'wall-reality check' \
+  || fail "§5 lacks the closing wall-reality check"
+printf '%s\n' "$S5" | grep -Fq -- 'FINDING' \
+  || fail "§5 lacks the wall-vs-vault mismatch-as-FINDING rule"
+printf '%s\n' "$S5" | grep -Fq -- 'verdict just written' \
+  || fail "§5 lacks the row status/session/branch match rule"
 
 exit $FAIL

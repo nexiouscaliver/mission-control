@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 New changes accumulate here between releases, above the latest version entry (Keep a Changelog convention; the release gates skip this section when reading the head version).
 
+## [1.11.1] - 2026-10-07
+
+The wall-honesty release, motivated by the 2026-10-07 lane-invisibility incident: a blank line inside the wall-overhaul program note's prompt-log table made the parser silently drop ALL five lane rows (rendered as a 0-lane card) while the four lane sessions were simultaneously excluded from the unmapped strip by their title tags — double invisibility, zero defects, four verdicts written on top. The operator's ruling: any single instance where the wall is incorrect with the real state is unacceptable. This release installs the invariant: the wall is NEVER silently wrong.
+
+### Added (wall — wall-honesty invariants, W5-L5)
+- **Stray-row defects**: a lane-shaped line outside any table (row-id-shaped first cell — distinguished from the notes' other markdown tables) records a `lane row outside prompt-log table` defect instead of vanishing.
+- **Blank-line tolerance + defect**: a blank line inside the table region (followed within 2 lines by another table line) no longer closes the table — rows beneath it parse — and each such blank records a visible defect. The incident's exact shape can never silently zero a program again.
+- **Row-width mismatch defects**: a row with MORE cells than its header parses its known-prefix cells AND defects per row (`N extra cells under variant-X header`) — extra cells are no longer silently truncated.
+- **Cell-parse defects**: a non-empty repo/branch cell that parses to None defects naming the cell and what failed — the lane's silently-lost git signals are now visible.
+- **Forge-manifest cross-check (the day-one alarm)**: per program, every write-once manifest row_id under `~/.mc-wall/forge/<program>/*/manifest.json` absent from the note parse records a TOP (`line 0`) defect — `forged row <id> absent from note parse (manifest exists)`. Survives table breaks of ANY cause; fires even on glob-miss notes.
+- **Session conservation + orphan surfacing**: every session in the activity window is accounted (lane-bound, unmapped, master, orphan-tagged, or background); tagged-for-a-known-program sessions that bind to no lane surface in the new `sessions_orphaned` state key (id/title/tag/last_active_ago_s); an unaccountable session emits a `conservation defect: N sessions unaccounted` degraded line. The incident's invisible class is now a first-class surface.
+- **`bin/mc-wall lint-note <note>` / `--all`**: the write-side hook controllers run after every row edit — the SAME parser the server collects with (one truth), defects printed with their lines, a per-note "N rows parsed" summary line, exit 1 on any defect; `--all` walks every declared + discovered program.
+- **Web**: the five new defect kinds render through the existing PARSE DEFECTS grammar (mock-full carries one row per class); orphaned sessions render as their own collapsed strip section with the same reveal pattern — including when the unmapped list is empty (the incident's exact shape); the defect strip now aggregates per-program defects when the root key is absent (pre-v3 server behind fresh assets).
+- `/state` `schema_version` 3 (additive root keys `sessions_orphaned` + root `parse_defects` aggregation; `merges[]` from W4-L4 rides the same version).
+
+### Changed (skill — controller protocol v1.11.1)
+- **§3 step 8 (plan)**: after the program note is written and registered, the controller MUST run `bin/mc-wall lint-note` and the `/state` probe asserting the parsed lane count equals the rows written; both probe lines recorded in the program note; a mismatch is a STOP-and-diagnose.
+- **§4 step 5 (forge)**: after EVERY prompt-log row edit, the same two-step verification within one poll beat, evidence appended with the row.
+- **§5 step 7 (verify)**: every verify turn closes with a wall-reality check — `/state` must show the row's status/session/branch matching the verdict just written; any wall-vs-vault mismatch is a FINDING in the verdict, never a footnote.
+- **§1 grammar**: the prompt-log table must be contiguous (no blank lines inside it); `mc-wall lint-note` is the pre-flight after any row edit; the fail-visible sentence now names the wall-honesty defect classes.
+- **Case 06 extended** with the protocol pins (lint-note + `/state` assert in §3/§4/§5, the blank-line ban).
+
+Gates: `tests/run_smoke.sh` exit 0 (7/7 cases, case 06 extended); `scripts/verify_packaging.sh` green at 1.11.1; wall suite — hermetic pytest 344 passed (MC_WALL_DISCOVERY=0; 317 baseline + 21 wh1 tower + 6 wh1 lint) + web selftest 115/115 (112 baseline + 3 wh1).
+
 ## [1.11.0] - 2026-10-06
 
 The skill now teaches the system that exists: the Wall's contract v2 — 9-cell deps rows, per-poll registration, fail-visible parsing — is what `/mission-control` forges and verifies against. Program-end release of the wall-overhaul program (with its sibling v1.10.1).

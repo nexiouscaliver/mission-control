@@ -12,12 +12,17 @@ Contract v2 (schema_version 2): lanes carry ``deps`` / ``verified`` /
 ``needs_me``; ``verify_queue_row.finished_ago_s`` is ``int|None`` (null =
 due-with-unknown-age: a done/partial lane with no joined session).
 
-Contract v3 (schema_version 3, W4-L4): the document carries the additive
-root key ``merges`` — the MR/PR registry (tower/merges.py). ``program`` /
-``row_id`` / ``session`` are nullable (an unjoinable lane MR lists with
-nulls, never guessed); ``conflicts`` is ``bool|None`` (null = mergeability
-unknown); ``merged_at`` is ``int|None`` (null = not merged). All v2
-consumers are untouched by the additive key.
+Contract v3 (schema_version 3) carries two additive root keys:
+- W4-L4: ``merges`` — the MR/PR registry (tower/merges.py). ``program`` /
+  ``row_id`` / ``session`` are nullable (an unjoinable lane MR lists with
+  nulls, never guessed); ``conflicts`` is ``bool|None`` (null = mergeability
+  unknown); ``merged_at`` is ``int|None`` (null = not merged).
+- W5-L5 (wall-honesty, v1.11.1): ``sessions_orphaned``
+  (tagged-for-a-known-program sessions bound to no lane; the 2026-10-07
+  incident's invisible class) and a ROOT ``parse_defects`` aggregation
+  (flattened per-program defects — the web's defect strip key the tower
+  never emitted before).
+All v2 consumers are untouched by the additive keys.
 """
 
 import json
@@ -41,6 +46,8 @@ CONTRACT_EXAMPLE = json.loads(r'''{"schema_version":3,"server":{"uptime_s":0,"ge
    "session":null,"state":"","conflicts":null,"draft":false,"created_at":0,"updated_at":0,
    "merged_at":null,"url":"","author":""}],
  "sessions_unmapped":[{"id":"","title":"","dir":"","last_active_ago_s":0,"parent_session_id":null,"parent_title":null}],
+ "sessions_orphaned":[{"id":"","title":"","tag":"","last_active_ago_s":0}],
+ "parse_defects":[{"note_path":"","line":0,"defect":"","row_id":null}],
  "launch_pending":null}''')
 
 # Declarative shape spec, checked recursively by assert_shape:
@@ -64,6 +71,9 @@ SHAPES = {
         "needs_me": ["needs_me_row"],
         "merges": ["merge_row"],
         "sessions_unmapped": ["unmapped_row"],
+        # contract v3 (wall-honesty): conservation + root defect aggregation
+        "sessions_orphaned": ["orphaned_row"],
+        "parse_defects": ["parse_defect"],
         "launch_pending": _ANY,
     },
     "server": {"uptime_s": INT, "generated_ts": INT, "degraded": [STR], "banner": NULSTR},
@@ -106,6 +116,9 @@ SHAPES = {
                   "merged_at": "int|None", "url": STR, "author": STR},
     "unmapped_row": {"id": STR, "title": STR, "dir": STR, "last_active_ago_s": INT,
                      "parent_session_id": NULSTR, "parent_title": NULSTR},
+    # contract v3 (wall-honesty A6): the orphaned-row family — same shape
+    # family as unmapped, with the program tag that names the claim.
+    "orphaned_row": {"id": STR, "title": STR, "tag": STR, "last_active_ago_s": INT},
 }
 
 _PRIMITIVES = {"str": str, "int": int, "float": float, "bool": bool, "None": type(None)}
@@ -210,5 +223,7 @@ def zero_document(program_names: list[str], uptime_s: int, generated_ts: int,
         "needs_me": [],
         "merges": [],
         "sessions_unmapped": [],
+        "sessions_orphaned": [],
+        "parse_defects": [],
         "launch_pending": None,
     }

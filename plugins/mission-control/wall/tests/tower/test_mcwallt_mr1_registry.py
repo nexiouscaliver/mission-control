@@ -108,9 +108,13 @@ def test_mr1_collect_emits_schema3_merges_key(tmp_path, monkeypatch):
     state = collect_state(cfg)
     assert state["schema_version"] == 3
     assert state["merges"] == []
+    # W5-L5 second-pass re-pin (2026-10-07): the wall-honesty root keys
+    # sessions_orphaned + parse_defects join the v3 key-set after the merge.
     assert list(state.keys()) == ["schema_version", "server", "programs",
                                   "verify_queue", "human_actions", "needs_me",
-                                  "merges", "sessions_unmapped", "launch_pending"]
+                                  "merges", "sessions_unmapped",
+                                  "sessions_orphaned", "parse_defects",
+                                  "launch_pending"]
     assert calls["n"] == 0, "an empty repo set must spawn nothing"
     contract.assert_shape(state)
 

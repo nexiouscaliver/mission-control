@@ -35,13 +35,14 @@ def test_mcwallt_api_signature_and_defaults(tmp_path):
                        now_s=lambda: 1234.5)
     state = collect_state(ccfg)
     assert isinstance(state, dict)
-    assert state["schema_version"] == 3  # contract v3 (W4-L4): additive merges
+    assert state["schema_version"] == 3  # contract v3 (W4-L4 +merges, W5-L5 wall-honesty)
     assert state["server"] == {"uptime_s": 0, "generated_ts": int(ccfg.now_s()),
                                "degraded": [], "banner": None}
     assert list(state["server"].keys()) == ["uptime_s", "generated_ts", "degraded", "banner"]
     assert list(state.keys()) == ["schema_version", "server", "programs", "verify_queue",
                                   "human_actions", "needs_me", "merges",
-                                  "sessions_unmapped", "launch_pending"]
+                                  "sessions_unmapped", "sessions_orphaned",
+                                  "parse_defects", "launch_pending"]
 
 
 def test_mcwallt_launch_passthrough(tmp_path):

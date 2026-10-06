@@ -342,6 +342,22 @@ def lane_join(cur, token: str) -> tuple[dict | None, bool]:
              "parent_session_id": _as_parent_id(parent_id)}, False)
 
 
+def window_sessions(cur, now_s: float, factor: int,
+                    session_window_s: int) -> dict[str, dict]:
+    """Wall-honesty A6 (v1.11.1): EVERY non-archived session last touched
+    within the unit-aware session_window_s cutoff — the conservation pass's
+    ground set (no subagent/tag filtering here: classification belongs to the
+    caller). Returns {session_id: {"id", "title", "time_updated" (raw)}} —
+    the same activity-window query unmapped_rows enumerates, WITHOUT its
+    exclusions, so the accounting can prove nothing was hidden by them."""
+    cutoff = cutoff_stored(now_s, session_window_s, factor)
+    rows = cur.execute(
+        "SELECT id, title, time_updated FROM session"
+        " WHERE time_archived IS NULL AND time_updated > ?", (cutoff,)).fetchall()
+    return {sid: {"id": sid, "title": title, "time_updated": time_updated}
+            for sid, title, time_updated in rows}
+
+
 def unmapped_rows(cur, now_s: float, factor: int, session_window_s: int,
                   joined_ids: set[str], tag_map: dict[str, set[str]],
                   configured_tags: dict[str, str]) -> list[dict]:

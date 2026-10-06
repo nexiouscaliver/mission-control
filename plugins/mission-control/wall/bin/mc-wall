@@ -45,6 +45,19 @@ def _templates():
     return templates
 
 
+def _lint_modules():
+    # Same lazy-import discipline as _templates: lint-note runs the SAME
+    # parser the server collects with (one truth — never a reimplementation).
+    root = repo_root()
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    from mc_wall.tower import lint as lint_module
+    from mc_wall.tower import notes as notes_module
+    from mc_wall.server import tower_boot
+
+    return lint_module, notes_module, tower_boot
+
+
 class SubprocessExecutor:
     def run(self, argv):
         proc = subprocess.run(list(argv), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -254,6 +267,89 @@ class Cli:
             rc, _ = self.executor.run(["open", url])
         return 0 if rc == 0 else 1
 
+    # -- lint-note (wall-honesty A7, v1.11.1) ------------------------------
+
+    def _read_wall_json_raw(self):
+        # The full document for --all program walks (the tolerant token view
+        # drops programs[]); ANY unusable file -> None.
+        path = self._wall_json_path()
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            return None
+        return data if isinstance(data, dict) and data.get("token") else None
+
+    def _lint_report(self, result):
+        # One per-note block: the "N rows parsed" summary line ALWAYS prints;
+        # each defect names its line (manifest defects: line 0) + row id.
+        if result["error"] is not None:
+            self._print("%s: UNREADABLE (%s)" % (result["note_path"], result["error"]))
+            return 1
+        self._print("%s: %d rows parsed, %d defect%s"
+                    % (result["note_path"], result["rows"], len(result["defects"]),
+                       "" if len(result["defects"]) == 1 else "s"))
+        for d in result["defects"]:
+            where = "manifest" if d["line"] == 0 else "line %d" % d["line"]
+            row = " [row %s]" % d["row_id"] if d["row_id"] else ""
+            self._print("  %s: %s%s" % (where, d["defect"], row))
+        return 0 if not result["defects"] else 1
+
+    def _resolve_program_for_note(self, path, lint_module, notes_module, tower_boot_mod):
+        # The declared+discovered program whose resolved note IS this path
+        # (so the manifest cross-check runs for direct-path lints too); None
+        # when the wall is not installed or no program owns the note.
+        data = self._read_wall_json_raw()
+        if data is None:
+            return None
+        try:
+            cfg = tower_boot_mod.tower_config_from_wall(data, self.wall_home)
+        except Exception:
+            return None
+        abs_path = os.path.abspath(path)
+        for p in cfg.programs:
+            try:
+                if notes_module.find_note(p.note_glob) == abs_path:
+                    return p.program
+            except Exception:
+                continue
+        return None
+
+    def lint_note(self, note_path):
+        lint_module, notes_module, tower_boot_mod = _lint_modules()
+        program = self._resolve_program_for_note(
+            note_path, lint_module, notes_module, tower_boot_mod)
+        result = lint_module.lint_note_file(
+            note_path, program=program, forge_root=lint_module.default_forge_root())
+        return self._lint_report(result)
+
+    def lint_all(self):
+        lint_module, notes_module, tower_boot_mod = _lint_modules()
+        data = self._read_wall_json_raw()
+        if data is None:
+            self._print(NO_WALL_JSON)
+            return 1
+        try:
+            cfg = tower_boot_mod.tower_config_from_wall(data, self.wall_home)
+        except ValueError as exc:
+            self._print(str(exc))
+            return 1
+        self._print("# mc-wall lint-note --all (%d program%s)"
+                    % (len(cfg.programs), "" if len(cfg.programs) == 1 else "s"))
+        rc = 0
+        for p in cfg.programs:
+            path = notes_module.find_note(p.note_glob)
+            if path is None:
+                self._print("%s: no note matches the glob (notes degraded: %s)"
+                            % (p.note_glob, p.program))
+                rc = 1
+                continue
+            result = lint_module.lint_note_file(
+                path, program=p.program,
+                forge_root=lint_module.default_forge_root())
+            rc = self._lint_report(result) or rc
+        return rc
+
 
 def main(argv=None, version_info=None, wall_home=None, home=None, executor=None):
     # wall_home/home/executor are the injection seam for tests; None ->
@@ -276,6 +372,12 @@ def main(argv=None, version_info=None, wall_home=None, home=None, executor=None)
     sub.add_parser("status", help="launchd + http health")
     p_log = sub.add_parser("log", help="tail the wall log")
     p_log.add_argument("-n", type=int, default=50)
+    p_lint = sub.add_parser(
+        "lint-note",
+        help="lint a program note with the production parser (exit 1 on defects)")
+    p_lint.add_argument("note", nargs="?", help="path to the program note")
+    p_lint.add_argument("--all", action="store_true",
+                        help="lint every declared + discovered program note")
     sub.add_parser("open", help="open the Wall in an app-mode Chrome")
     args = parser.parse_args(argv)
     cli = Cli(
@@ -297,6 +399,12 @@ def main(argv=None, version_info=None, wall_home=None, home=None, executor=None)
         return cli.status()
     if args.command == "log":
         return cli.log(n=args.n)
+    if args.command == "lint-note":
+        if args.all:
+            return cli.lint_all()
+        if not args.note:
+            parser.error("lint-note needs a note path (or --all)")
+        return cli.lint_note(args.note)
     return cli.open_wall()
 
 
