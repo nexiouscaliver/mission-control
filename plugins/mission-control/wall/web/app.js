@@ -3333,9 +3333,10 @@
     }
 
     // Node geometry: fixed-size cards on an absolute canvas; COL_W leaves a
-    // routing gutter for the edge lines between columns.
-    var TL_COL_W = 210;
-    var TL_NODE_W = 186;
+    // routing gutter for the edge lines between columns. Sized so a 7-column
+    // chain fits a 1440px viewport without horizontal scroll.
+    var TL_COL_W = 196;
+    var TL_NODE_W = 172;
     var TL_NODE_H = 58;
     var TL_ROW_GAP = 14;
     var TL_COL_HEAD_H = 26; // wave-fallback column headers only
@@ -4202,6 +4203,10 @@
     if (deps.location.protocol === "file:") {
       // QA mode (SPEC 4.1): mount the embedded mock case picked by ?case=
       app.mountQA(caseNameFromSearch(deps.location.search));
+      // W2-L2 QA affordance: ?view= picks the opening tab (timeline default);
+      // file:-only — LIVE always opens on the timeline.
+      var m = /(?:[?&])view=(timeline|needs|wall|projects)(?:&|$)/.exec(deps.location.search || "");
+      if (m) app.setView(m[1]);
     } else {
       // LIVE mode (SPEC 4.3): token + poll chain (missing token -> banner,
       // blank panels, zero fetch — startLive handles it).
