@@ -14,7 +14,7 @@ import json
 import pathlib
 
 from mc_wall.server.app import ServerConfig, resolve_wall_home, run_server
-from mc_wall.server.tower_boot import tower_config_from_wall
+from mc_wall.server.tower_boot import PerPollTowerConfig
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]  # same resolution as templates_dir()
 
@@ -38,7 +38,11 @@ def load_config(wall_home: pathlib.Path) -> ServerConfig:
         raise ValueError(
             "mc-wall: %s has an invalid port — run `mc-wall install`" % path
         )
-    tower = tower_config_from_wall(data, pathlib.Path(wall_home))
+    # Contract v2 item 8: the server holds the PER-POLL provider, not a frozen
+    # boot config — each collect cycle re-checks wall.json's mtime and re-runs
+    # program discovery. Construction still validates loudly at boot (bad
+    # wall.json content raises here; main() prints and exits 1).
+    tower = PerPollTowerConfig(pathlib.Path(wall_home), data)
     return ServerConfig(
         token=data["token"],
         port=port,

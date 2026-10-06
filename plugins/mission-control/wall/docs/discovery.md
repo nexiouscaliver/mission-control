@@ -1,12 +1,13 @@
 # Boot-time program-note discovery
 
-Reference for the discovery pass that runs once per boot
-(`mc_wall/tower/discovery.py`, wired in `mc_wall/server/tower_boot.py`):
-after the declared programs/repos are read from wall.json, undeclared vault
-notes named `mission-control-<slug>-program.md` are appended to the program
-list — plus repos derived from their lane rows. Declared wall.json config
-is always authority. Discovery is boot-only: the set is fixed until restart
-(below); note content and lane status refresh on the normal poll.
+Reference for the discovery pass (`mc_wall/tower/discovery.py`, wired in
+`mc_wall/server/tower_boot.py`): after the declared programs/repos are read
+from wall.json, undeclared vault notes named
+`mission-control-<slug>-program.md` are appended to the program list — plus
+repos derived from their lane rows. Declared wall.json config is always
+authority. Since wall-overhaul contract v2 registration is PER-POLL: the
+scan re-runs every collect cycle and wall.json's mtime is re-checked
+(below); note content and lane status refresh on the same poll.
 
 ## Candidate filenames
 
@@ -55,15 +56,18 @@ first in scan order (sorted dirs, then sorted filenames) wins; each later
 one is skipped with
 `discovery degraded: duplicate program <slug> at <path>`.
 
-## The set is fixed at boot
+## Registration is per-poll (wall-overhaul contract v2)
 
-Programs and repos resolve once, at boot. Restart the wall to pick up NEW
-program notes or note deletions:
-
-    launchctl kickstart -k gui/$(id -u)/ai.zcode.mc-wall
-
-Edits to an already-discovered note's content or lane statuses need no
-restart — they refresh on the normal ~5 s poll.
+`mc_wall/server/tower_boot.py` `PerPollTowerConfig` serves each collect
+cycle: the wall.json mtime is re-checked (the declared config is rebuilt on
+change; a transient unreadable/unparseable wall.json keeps the last good
+config — a poll never crashes on it) and the discovery scan re-runs per
+cycle, so NEW program notes and note deletions appear on the next poll with
+NO restart. The `git -C <path> remote -v` probes for derived repos cache by
+path on success, keeping the per-cycle re-scan cheap. Note content and lane
+statuses refresh on the same ~5 s poll as before. A restart
+(`launchctl kickstart -k gui/$(id -u)/ai.zcode.mc-wall`) is only needed to
+pick up code changes or env.
 
 ## Derived repos
 

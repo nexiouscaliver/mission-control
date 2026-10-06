@@ -105,8 +105,10 @@ Uninstall is manual (no subcommand):
 ## 5. How state flows
 
 Vault note lane rows + goal-dir artifacts + regenloop goal dirs + the zcode
-sqlite db → tower `collect_state` → one JSON document (`schema_version` 1,
-shape pinned by the frozen contract in `mc_wall/tower/contract.py`) → server
+sqlite db → tower `collect_state` → one JSON document (`schema_version` 2 —
+wall-overhaul contract v2: lane `deps`/`verified`/`verify_due`, program
+`parse_defects`, document `needs_me`, fail-visible note parsing; shape pinned
+by the frozen contract in `mc_wall/tower/contract.py`) → server
 `GET /<token>/state` (the collector runs on every request, no caching) → the
 page polls every 5 s and reloads itself when `schema_version` changes
 (flap-safe: checked against the last applied version only). The served
@@ -121,7 +123,10 @@ carries the bracket when the goal block rode `sendGoalCommand` past the
 `sendText` scan). Contention for one lane resolves newest-wins with one
 `tag bind degraded: …` line and the losers still visible in
 `sessions_unmapped`; a controller-written `verify:ok` in the artifacts cell
-clears the lane's `suggest_verify` cue while its `verify_queue` row stays.
+clears the lane's `suggest_verify`/`verify_due` cue AND removes its
+`verify_queue` row (contract v2, decision D15: cue and queue clear
+together). A done/partial lane with no joined session renders
+due-with-unknown-age (`finished_ago_s` null in the queue row).
 Full reference: `docs/autonomy.md`.
 
 Launch handshake:
@@ -154,9 +159,11 @@ programs/repos. A candidate needs a recognized prompt-log table and an
 objective line (exact grammar in the reference); rejected candidates and
 repo-probe failures emit `discovery degraded:` lines into the wall's
 degraded list. Declared wall.json config always wins (same-slug notes skip
-silently). The discovered set is fixed at boot: restart the wall to pick up
-new or deleted notes; note content and lane status still refresh on the
-~5 s poll. Opt out with `MC_WALL_DISCOVERY` set to `0`, `off`, `no`, or
+silently). Registration is per-poll (contract v2): each collect cycle
+re-checks `wall.json`'s mtime (config rebuilt on change) and re-runs the
+discovery scan — new or deleted program notes appear on the next poll with
+no restart, alongside note content and lane status. Opt out with
+`MC_WALL_DISCOVERY` set to `0`, `off`, `no`, or
 `false` (case-insensitive): declared-only boot, no discovery degraded
 lines, and one `MC_WALL_DISCOVERY set — boot-time discovery disabled`
 line in wall.log on the launchd boot path. Hermetic suite:
@@ -209,17 +216,12 @@ Output may contain session titles — treat it as operator-private.
   `open`/`status` print `no wall.json — run mc-wall install first`.
 - `/state` returns **503 degraded** (with the pending record and the exception
   type name) whenever the tower document cannot be built — never a guessed or
-  partial document. One KNOWN production gap is pending operator approval:
-
-```
-B3: state_contract.find_row reads a "rows" key no real tower doc produces ->
-every POST /launch 404s unknown-row in production today.
-```
-
-  Until it is fixed the page shows its degraded banner — that is the
-  honest current state, not a bug in this README. (B2, the boot-time
-  `_default_collect_state` TypeError, was fixed by F-1's built-once tower
-  config.)
+  partial document. (B2, the boot-time `_default_collect_state` TypeError,
+  was fixed by F-1's built-once tower config. B3 — find_row reading a
+  `"rows"` key no real tower doc produces, so every POST /launch 404ed —
+  was fixed by wall-overhaul contract v2: find_row reads
+  `programs[].lanes[]`, keeping the legacy `"rows"` bridge for stub/legacy
+  producers.)
 - Corrupt `pending.json` → quarantined, server boots normally.
 - Agent crash → launchd KeepAlive (Crashed-only) restarts it; armed state is
   rebuilt from disk (prompt-armed promoted on boot).

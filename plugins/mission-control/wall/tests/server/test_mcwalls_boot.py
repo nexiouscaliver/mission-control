@@ -170,13 +170,13 @@ def test_mcwallf_tower_config_built_once_across_requests(monkeypatch, tmp_path):
     # without that file the test would be a permanent RED)
     monkeypatch.setenv("MC_WALL_DB", str(tmp_path / "no-db.sqlite"))  # never the real db
     calls = {"n": 0}
-    real = tower_boot.build_tower_config
+    real = tower_boot._declared_config
 
-    def counting(wall_home):
+    def counting(data, wall_home):
         calls["n"] += 1
-        return real(wall_home)
+        return real(data, wall_home)
 
-    monkeypatch.setattr(tower_boot, "build_tower_config", counting)
+    monkeypatch.setattr(tower_boot, "_declared_config", counting)
     monkeypatch.setattr(app, "_default_tower_config_box", [])
     logs = tmp_path / "logs"
     from mc_wall.server.app import create_server
@@ -190,7 +190,12 @@ def test_mcwallf_tower_config_built_once_across_requests(monkeypatch, tmp_path):
             r.read()
             conn.close()
             assert r.status == 200
-        assert calls["n"] == 1, "tower config must be built at most once per process"
+        # Contract v2 item 8: the PER-POLL provider is constructed at most
+        # once per process (the F-1 seam); registration refresh happens inside
+        # current() (wall.json mtime check + discovery re-scan) WITHOUT
+        # rebuilding the declared config when wall.json is unchanged.
+        assert calls["n"] == 1, \
+            "per-poll provider (and its declared config) must be built at most once per process while wall.json is unchanged"
     finally:
         srv.shutdown()
         srv.server_close()

@@ -227,11 +227,13 @@ def test_td1_degraded_seeding(tmp_path, monkeypatch):
     # order; a clean world carries no discovery line; the field defaults to ().
     cfg, _ = mcwallt_world(tmp_path, monkeypatch, rows=["| W1-L1 | W1 |"],
                            discovery_degraded=("discovery degraded: unit probe",))
-    assert collect_state(cfg)["server"]["degraded"] == ["note rows skipped: 1",
-                                                        "discovery degraded: unit probe"]
+    assert collect_state(cfg)["server"]["degraded"] == [
+        f"note rows skipped: 1 ({cfg.programs[0].note_glob})",
+        "discovery degraded: unit probe"]
     cfg_clean, _ = mcwallt_world(tmp_path, monkeypatch, rows=["| W1-L1 | W1 |"],
                                  name="mcwallt_world_clean", discovery_degraded=())
-    assert collect_state(cfg_clean)["server"]["degraded"] == ["note rows skipped: 1"]
+    assert collect_state(cfg_clean)["server"]["degraded"] == [
+        f"note rows skipped: 1 ({cfg_clean.programs[0].note_glob})"]
     assert TowerConfig(db_path="x", programs=()).discovery_degraded == ()
 
 
@@ -445,6 +447,7 @@ def test_td1_degraded_multi_line_order(tmp_path, monkeypatch):
     cfg, _ = mcwallt_world(tmp_path, monkeypatch, rows=["| W1-L1 | W1 |"],
                            discovery_degraded=("discovery degraded: line-a",
                                                "discovery degraded: line-b"))
-    assert collect_state(cfg)["server"]["degraded"] == ["note rows skipped: 1",
-                                                        "discovery degraded: line-a",
-                                                        "discovery degraded: line-b"]
+    assert collect_state(cfg)["server"]["degraded"] == [
+        f"note rows skipped: 1 ({cfg.programs[0].note_glob})",
+        "discovery degraded: line-a",
+        "discovery degraded: line-b"]
