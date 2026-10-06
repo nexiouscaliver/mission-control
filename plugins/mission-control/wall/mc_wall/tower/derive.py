@@ -1,24 +1,28 @@
-"""Derived computations (spec §6): ``stalled``, ``suggest_verify``,
-``verify_queue`` rows, ``human_actions`` merge rows.
+"""Derived computations (spec §6 + wall-overhaul contract v2): ``stalled``,
+``suggest_verify``/``verify_due``, ``verify_queue`` rows, ``human_actions``
+merge rows, and the ``needs_me`` aggregation.
 
 Pure functions over lane views the caller (``collect``) assembles — derive
 never reads the filesystem, the db, or the network, and never emits degraded
 entries: the ``DegradedLog`` stays collect's, so entry 11
 (``precondition state unknown: {ref}``) is added by collect, which owns the
-log. ``sessions_unmapped`` (spec §6.5) lives in ``zcode_db.unmapped_rows`
+log. ``sessions_unmapped`` (spec §6.5) lives in ``zcode_db.unmapped_rows``
 (plan ambiguity resolution 1); this module does not duplicate it.
 
 View shapes (built by collect in program-config order then note order — the
-document order of verify_queue/human_actions rows):
+document order of verify_queue/human_actions/needs_me rows):
 
-- verify view: ``{"row_id", "program", "status_parsed", "finished_ago_s",
-  "master_hint", "verify_id"}`` — ``verify_id`` is the JOINED FULL db id on an
+- verify view: ``{"row_id", "program", "status_parsed", "finished_ago_s"
+  (int KNOWN age or None when the lane has no session), "master_hint",
+  "verify_id", "verified"}`` — ``verify_id`` is the JOINED FULL db id on an
   exactly-1 token join, else the raw ``sess_`` token, "" when no token parsed.
-- action view: ``{"repo_idx", "repo", "repo_host", "branch", "mr",
-  "mr_failed", "manifest", "precondition_results"}`` —
+- action view: the verify-view keys plus ``{"repo_idx", "repo", "repo_host",
+  "branch", "mr", "mr_failed", "manifest", "precondition_results"}`` —
   ``precondition_results`` maps ref -> the resolved MR's state ("merged" only
   when the by-ref lookup returned a merged MR) or None for a failed/unknown
   lookup; collect computes it via ``signals.lookup_mr_by_ref``.
+- stalled view: ``{"row_id", "program", "repo", "branch"}`` for each lane
+  whose ``stalled`` derivation fired (collect passes them in lane order).
 """
 
 # The §6.2/§6.3 "finished" statuses that own a verify_queue row / suggest hint.
@@ -62,33 +66,44 @@ def derive_stalled(manifest: dict | None, session_epoch_s: float | None,
             "last_event": last_event}
 
 
-def derive_suggest_verify(status_parsed: str, finished_ago_s: int, grace_s: int,
-                          verified: bool = False) -> dict | None:
-    """§6.2: {"because": ["status=<s>", "finished_ago_s=<n>"]} exactly, or None.
+def derive_suggest_verify(status_parsed: str, finished_ago_s: int | None,
+                          grace_s: int, verified: bool = False) -> dict | None:
+    """§6.2 + contract v2 items 1/5: ``{"because": ["status=<s>",
+    "finished_ago_s=<n>|unknown"]}`` exactly, or None — this one rule feeds
+    BOTH the lane-level ``suggest_verify``/``verify_due`` keys and the
+    verify_queue row (machine-due, decision D8/D15).
 
-    v1 has no verify-run record (spec assumption 10): status done/partial AND
-    finished_ago_s >= verify_grace_s is the only "not yet verified" proxy —
-    unless the row's artifacts cell carried the controller-written ``verify:ok``
-    token (a controller-only convention parsed by ``notes``; incidental
-    substring occurrences in free text are accepted by design), reported here
-    as ``verified``: it short-circuits the cue to None. The ``verify_queue``
-    row is unaffected by design — it is the operator's entry point and stays.
+    Fires when status is done/partial AND the lane is NOT verified AND the
+    finished age is known-and-past-grace OR UNKNOWN (``finished_ago_s is
+    None``: the lane has no joined session — its age can never be proven
+    inside the grace window, so it renders due-with-unknown-age). The
+    controller-written ``verify:ok`` token in the artifacts cell (parsed by
+    ``notes``) short-circuits to None — and by contract v2 (D15 reversal) it
+    now REMOVES the verify_queue row too.
     """
     if verified:
         return None
-    if status_parsed in FINISHED_STATUSES and finished_ago_s >= grace_s:
+    if status_parsed not in FINISHED_STATUSES:
+        return None
+    if finished_ago_s is None:
+        return {"because": [f"status={status_parsed}", "finished_ago_s=unknown"]}
+    if finished_ago_s >= grace_s:
         return {"because": [f"status={status_parsed}", f"finished_ago_s={finished_ago_s}"]}
     return None
 
 
-def verify_queue_rows(lane_views: list[dict]) -> list[dict]:
-    """§6.3: one row per done/partial lane, input order (the caller passes
-    program-order-then-note-order views). finished_ago_s and master_hint are
-    precomputed by the caller; verify_cmd carries the joined full db id on a
-    1-hit join, else the raw token, "" only when no token was parsed."""
+def verify_queue_rows(lane_views: list[dict], grace_s: int = 0) -> list[dict]:
+    """§6.3 + contract v2 item 5: one row per done/partial lane that is NOT
+    verified AND past verify_grace_s (a KNOWN finished age must be >= grace;
+    an UNKNOWN age — no joined session — renders due with
+    ``finished_ago_s: None``). Input order = the caller's
+    program-order-then-note-order views. verify_cmd carries the joined full
+    db id on a 1-hit join, else the raw token, "" only when no token parsed."""
     rows = []
     for view in lane_views:
-        if view["status_parsed"] not in FINISHED_STATUSES:
+        due = derive_suggest_verify(view["status_parsed"], view["finished_ago_s"],
+                                    grace_s, verified=view.get("verified", False))
+        if due is None:
             continue
         verify_id = view.get("verify_id") or ""
         rows.append({"row_id": view["row_id"],
@@ -127,3 +142,59 @@ def human_action_rows(lane_views: list[dict]) -> list[dict]:
                      "pipeline": mr["pipeline"],
                      "ready": ready})
     return rows
+
+
+def _merge_ready(view: dict) -> bool:
+    """The human_actions ready rule (pipeline green AND every precondition
+    merged; a null manifest has no preconditions) — shared by
+    ``human_action_rows`` and the merge-ready needs_me entries."""
+    mr = view.get("mr") or {}
+    ready = mr.get("pipeline") == "green"
+    manifest = view.get("manifest")
+    preconds = manifest["precondition_mrs"] if manifest is not None else []
+    if preconds:
+        results = view.get("precondition_results") or {}
+        ready = ready and all(results.get(ref) == "merged" for ref in preconds)
+    return ready
+
+
+def needs_me_rows(action_views: list[dict], verify_rows: list[dict],
+                  stalled_views: list[dict]) -> list[dict]:
+    """Contract v2 item 3: the needs-me aggregation — one surface enumerating
+    what needs the operator now, in the SC-3 order merge-ready, verify-due,
+    stalled (each kind in the caller's lane/document order).
+
+    - merge-ready: lanes whose resolved MR is open and ready (the
+      human_actions logic via ``_merge_ready``); action names the merge.
+      deep_link is None — the tower state carries no MR web URL today
+      (extending the frozen ``mr`` shape is a coordinated follow-up, not a
+      unilateral lane change).
+    - verify-due: one per verify_queue row; action is the verify command.
+    - stalled: one per stalled lane; action is repo/branch (row_id when
+      neither is known).
+    """
+    out: list[dict] = []
+    for view in action_views:
+        mr = view.get("mr")
+        if mr is None or view.get("mr_failed") or mr.get("state") != "open":
+            continue
+        if not _merge_ready(view):
+            continue
+        where = "/".join(x for x in (view.get("repo"), view.get("branch")) if x) \
+            or view["row_id"]
+        out.append({"kind": "merge-ready", "row_id": view["row_id"],
+                    "program": view["program"],
+                    "action": f"merge {mr['ref']} on {where} ({mr['repo_host']})",
+                    "deep_link": None})
+    for row in verify_rows:
+        out.append({"kind": "verify-due", "row_id": row["row_id"],
+                    "program": row["program"],
+                    "action": row["verify_cmd"] or "/mission-control-verify",
+                    "deep_link": None})
+    for view in stalled_views:
+        where = "/".join(x for x in (view.get("repo"), view.get("branch")) if x) \
+            or view["row_id"]
+        out.append({"kind": "stalled", "row_id": view["row_id"],
+                    "program": view["program"], "action": where,
+                    "deep_link": None})
+    return out

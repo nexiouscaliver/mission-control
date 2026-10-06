@@ -7,7 +7,9 @@ L1/T6/T8 consumers import these constants instead of spelling strings.
 from __future__ import annotations
 
 SCHEMA_VERSION_KEY = "schema_version"
-ROWS_KEY = "rows"
+ROWS_KEY = "rows"          # legacy flat view (StubTower / the documented B3 bridge)
+PROGRAMS_KEY = "programs"  # the tower document's real shape (contract v2 item 9)
+LANES_KEY = "lanes"
 ROW_ID_KEY = "row_id"
 LANE_TAG_KEY = "lane_tag"
 PROMPT_TEXT_KEY = "prompt_text"
@@ -32,10 +34,22 @@ class UnknownRowError(KeyError):
 
 
 def find_row(state: dict, row_id: str) -> dict:
-    rows = state.get(ROWS_KEY) or []
-    for row in rows:
+    """Resolve a row_id against the tower document (contract v2 item 9 — the
+    B3 fix): the REAL tower shape is programs[].lanes[], so a raw production
+    document resolves POST /launch / monitor lookups instead of 404ing. The
+    legacy flat ``rows`` view (StubTower docs / the documented B3 bridge that
+    carries prompt_text/goal_text/lane_tag) keeps PRIORITY when a producer
+    still serves it — same reconciliation rule as ``owed_actions``: legacy
+    verbatim first, tower adaptation second."""
+    for row in state.get(ROWS_KEY) or []:
         if row.get(ROW_ID_KEY) == row_id:
             return row
+    for program in state.get(PROGRAMS_KEY) or []:
+        if not isinstance(program, dict):
+            continue
+        for lane in program.get(LANES_KEY) or []:
+            if isinstance(lane, dict) and lane.get(ROW_ID_KEY) == row_id:
+                return lane
     raise UnknownRowError(row_id)
 
 

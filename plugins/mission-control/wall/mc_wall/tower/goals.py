@@ -83,12 +83,15 @@ def read_manifest(goal_dir: str | None) -> dict | None:
     §9 key order. ``prompt_md``/``goal_md`` are filesystem paths of the goal
     dir's files ("" when absent). manifest.json is read when present AND
     JSON-parseable as a dict; stall_t_hours keeps a numeric (int/float,
-    never bool) value else 0, precondition_mrs keeps a list-of-strings else
+    never bool) value else the wall-overhaul DEFAULT 6 (contract v2 item 6:
+    a forge manifest that carries no stall bound still gets stalled-lane
+    detection; an explicit numeric — including the 0 disable — is honored
+    verbatim), precondition_mrs keeps a list-of-strings else
     []; absent/unparseable/wrong-typed all fall back to those per-shape
     defaults with NO degraded entry (absence is not failure)."""
     if goal_dir is None:
         return None
-    stall_t_hours = 0
+    stall_t_hours = 6
     precondition_mrs: list[str] = []
     raw = _read_text(os.path.join(goal_dir, "manifest.json"))
     if raw is not None:

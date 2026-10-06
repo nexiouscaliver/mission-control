@@ -35,12 +35,13 @@ def test_mcwallt_api_signature_and_defaults(tmp_path):
                        now_s=lambda: 1234.5)
     state = collect_state(ccfg)
     assert isinstance(state, dict)
-    assert state["schema_version"] == 1
+    assert state["schema_version"] == 2
     assert state["server"] == {"uptime_s": 0, "generated_ts": int(ccfg.now_s()),
                                "degraded": [], "banner": None}
     assert list(state["server"].keys()) == ["uptime_s", "generated_ts", "degraded", "banner"]
     assert list(state.keys()) == ["schema_version", "server", "programs", "verify_queue",
-                                  "human_actions", "sessions_unmapped", "launch_pending"]
+                                  "human_actions", "needs_me", "sessions_unmapped",
+                                  "launch_pending"]
 
 
 def test_mcwallt_launch_passthrough(tmp_path):
@@ -108,7 +109,7 @@ def test_mcwallt_failopen_notes_missing(tmp_path, monkeypatch):
                                               note_glob=str(tmp_path / "mcwallt_none_*.md")),))
     state = collect_state(cfg)
     assert state["programs"][0] == {"program": "secfix", "note_path": "", "note_mtime": 0,
-                                    "objective": "",
+                                    "objective": "", "parse_defects": [],
                                     "master": {"session_id": None, "title": None,
                                                "last_active_ago_s": None},
                                     "lanes": []}
@@ -301,7 +302,7 @@ def test_mcwallt_failopen_all_sources_dead(tmp_path, monkeypatch):
     assert state["server"]["generated_ts"] == int(MCWALLT_WORLD_NOW)
     assert all("internal error" not in e for e in state["server"]["degraded"])
     assert state["programs"] == [{"program": "secfix", "note_path": "", "note_mtime": 0,
-                                  "objective": "",
+                                  "objective": "", "parse_defects": [],
                                   "master": {"session_id": None, "title": None,
                                              "last_active_ago_s": None},
                                   "lanes": []}]
@@ -405,7 +406,9 @@ def test_mcwallt_degraded_order_dedup(tmp_path, monkeypatch):
         now_s=mcwallt_settable_clock(NOW)[0])
     state = collect_state(cfg)
     assert state["server"]["degraded"] == [
-        "note rows skipped: 1",                                # 10: p0 (p1's equal text deduped)
+        f"note rows skipped: 1 ({p0_note})",                   # 10: p0 — contract v2
+        f"note rows skipped: 1 ({p1_note})",                   # 10: p1 (lines now differ
+                                                               #  by note path: no dedup)
         "notes degraded: mcwallt-p2",                          # 3: p2
         "goals degraded: mcwallt-rmiss",                       # 4: repo 0
         "network degraded: git mcwallt-r0",                    # 5: repo 1
@@ -475,7 +478,7 @@ def test_mcwallt_e2e_full_fixture_world(tmp_path, monkeypatch):
         {"row_id": "W1-L1", "program": "secfix", "finished_ago_s": 400,
          "master_hint": MCWALLT_WORLD_MASTER,
          "verify_cmd": f"/mission-control-verify {MCWALLT_WORLD_LANE}"},
-        {"row_id": "W1-L3", "program": "secfix", "finished_ago_s": 0,
+        {"row_id": "W1-L3", "program": "secfix", "finished_ago_s": None,
          "master_hint": MCWALLT_WORLD_MASTER, "verify_cmd": ""}]
     merge_row = {"kind": "merge", "ref": "!5", "repo": "mcwallt-repo",
                  "repo_host": "gitlab", "title": "mcwallt MR five", "pipeline": "green"}

@@ -63,7 +63,11 @@ def test_launch_handshake_to_goal_armed(tmp_path, monkeypatch):
         assert goal_copies, "the goal block was never copied to the runner"
 
 
-def test_launch_raw_tower_doc_unknown_row(tmp_path, monkeypatch):
+def test_launch_raw_tower_doc_resolves_lane(tmp_path, monkeypatch):
+    """Contract v2 item 9 (the B3 fix): find_row reads the tower document's
+    REAL shape (programs[].lanes[]) — a raw tower doc (no "rows" bridge)
+    resolves POST /launch instead of 404ing unknown-row. AC-4's gap pin is
+    retired with the bug it pinned."""
     from mc_wall.tower import collect_state
     from tests.integration.mcwalli_fixtures import mcwalli_world
     from tests.server.mcwalls_harness import FakeRunner, serve
@@ -81,6 +85,6 @@ def test_launch_raw_tower_doc_unknown_row(tmp_path, monkeypatch):
     ) as h:
         r = h.http("POST", f"/{h.token}/launch",
                    {"row_id": "W1-L1", "repo_root": world.repo})
-        assert r.status == 404
-        assert r.json()["error"] == "unknown-row"
-        assert not (h.state_dir / "pending.json").exists()
+        assert r.status == 200
+        assert r.json()["pending"]["status"] == "await-birth"
+        assert (h.state_dir / "pending.json").exists()

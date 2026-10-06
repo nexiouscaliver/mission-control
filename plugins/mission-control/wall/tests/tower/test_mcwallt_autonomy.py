@@ -638,9 +638,9 @@ def test_wa_1_verified_clears_suggest():
 def test_wa_1_verified_e2e_clears_cue(tmp_path, monkeypatch):
     # Matrix 25: the full pipeline — control (default world: W1-L1 done,
     # token-joined, aged 400 s > grace 300 s) fires suggest_verify; the same
-    # world with W1-L1's artifacts cell carrying verify:ok clears ONLY the lane
-    # cue — the verify_queue row stays with the joined full db id in verify_cmd
-    # (the operator's entry point, Q6 queue-unchanged pin).
+    # world with W1-L1's artifacts cell carrying verify:ok clears the lane cue
+    # AND (contract v2, decision D15 reversal) removes the verify_queue row —
+    # cue and queue clear together.
     ctl_cfg, _set = mcwallt_world(tmp_path, monkeypatch)
     ctl_state = collect_state(ctl_cfg)
     ctl_lanes = {l["row_id"]: l for l in ctl_state["programs"][0]["lanes"]}
@@ -657,9 +657,12 @@ def test_wa_1_verified_e2e_clears_cue(tmp_path, monkeypatch):
     state = collect_state(cfg)
     lanes = {l["row_id"]: l for l in state["programs"][0]["lanes"]}
     assert lanes["W1-L1"]["suggest_verify"] is None
+    # Contract v2 (D15 reversal): the verify:ok token now REMOVES the
+    # verify_queue row too — cue and queue row clear together.
+    assert lanes["W1-L1"]["verify_due"] is None
+    assert lanes["W1-L1"]["verified"] is True
     w1l1 = [r for r in state["verify_queue"] if r["row_id"] == "W1-L1"]
-    assert len(w1l1) == 1
-    assert w1l1[0]["verify_cmd"] == f"/mission-control-verify {MCWALLT_WORLD_LANE}"
+    assert w1l1 == []
 
 
 # --- MR-review pin: the newest-wins key is None-safe against SQL-NULL ts ------

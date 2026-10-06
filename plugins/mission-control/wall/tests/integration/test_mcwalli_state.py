@@ -26,7 +26,7 @@ def test_state_serves_frozen_contract(tmp_path, monkeypatch):
         # meaningful when nothing silently failed open.
         assert body["server"]["degraded"] == []
         contract.assert_shape(body)
-        assert body["schema_version"] == 1
+        assert body["schema_version"] == 2  # contract v2 (W2-L1)
         assert wall == {"pending": None}
         # Content pins (silent-degradation guards).
         assert body["programs"][0]["master"]["session_id"] == MASTER_ID

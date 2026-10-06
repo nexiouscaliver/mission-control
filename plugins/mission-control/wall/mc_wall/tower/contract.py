@@ -1,10 +1,16 @@
-"""Frozen-contract compliance (spec §9): the verbatim example, the declarative
-shape spec checked by ``assert_shape``, and the zero-value builders.
+"""Frozen-contract compliance (spec §9 + wall-overhaul contract v2): the
+verbatim example, the declarative shape spec checked by ``assert_shape``, and
+the zero-value builders.
 
 ``assert_shape`` accepts ``None`` for any nullable field (a nullable key must
 be PRESENT with a null value — an omitted key is a violation) and leaves
 ``launch_pending`` type-unchecked (any JSON value is contract-compliant).
 ``bool`` is NOT an ``int`` for these checks.
+
+Contract v2 (schema_version 2): lanes carry ``deps`` / ``verified`` /
+``verify_due``; programs carry ``parse_defects``; the document carries
+``needs_me``; ``verify_queue_row.finished_ago_s`` is ``int|None`` (null =
+due-with-unknown-age: a done/partial lane with no joined session).
 """
 
 import json
@@ -12,16 +18,18 @@ import json
 STR, INT, NULSTR = str, int, "str|None"
 
 # The §9 example, verbatim (json.loads preserves key insertion order).
-CONTRACT_EXAMPLE = json.loads(r'''{"schema_version":1,"server":{"uptime_s":0,"generated_ts":0,"degraded":[],"banner":null},
- "programs":[{"program":"secfix","note_path":"","note_mtime":0,"objective":"",
+CONTRACT_EXAMPLE = json.loads(r'''{"schema_version":2,"server":{"uptime_s":0,"generated_ts":0,"degraded":[],"banner":null},
+ "programs":[{"program":"secfix","note_path":"","note_mtime":0,"objective":"","parse_defects":[],
    "master":{"session_id":null,"title":null,"last_active_ago_s":null},
    "lanes":[{"row_id":"W2-L5","repo":"cleo","branch":null,"slug":null,
      "status_note":"launched","status_parsed":"launched",
+     "deps":["W2-L4"],"verified":false,"verify_due":null,
      "manifest":null,"session":null,"goal":null,
      "signals":{"pushed":null,"mr":null},
      "suggest_verify":null,"stalled":null}]}],
  "verify_queue":[{"row_id":"","program":"","finished_ago_s":0,"master_hint":"","verify_cmd":""}],
  "human_actions":[{"kind":"merge","ref":"","repo":"","repo_host":"","title":"","pipeline":"","ready":true}],
+ "needs_me":[{"kind":"merge-ready","row_id":"","program":"","action":"","deep_link":null}],
  "sessions_unmapped":[{"id":"","title":"","dir":"","last_active_ago_s":0,"parent_session_id":null,"parent_title":null}],
  "launch_pending":null}''')
 
@@ -43,6 +51,7 @@ SHAPES = {
         "programs": ["program"],
         "verify_queue": ["verify_queue_row"],
         "human_actions": ["human_action_row"],
+        "needs_me": ["needs_me_row"],
         "sessions_unmapped": ["unmapped_row"],
         "launch_pending": _ANY,
     },
@@ -56,19 +65,25 @@ SHAPES = {
                 "last_active_ago_s": INT, "parent_session_id": NULSTR},
     "goal": {"state": STR, "queue_tail": STR, "budget": dict},
     "suggest_verify": {"because": [STR]},
+    "verify_due": {"because": [STR]},
     "stalled": {"because": STR, "last_event": STR},
+    "parse_defect": {"note_path": STR, "line": INT, "defect": STR, "row_id": "str|None"},
     "program": {"program": STR, "note_path": STR, "note_mtime": INT, "objective": STR,
+                "parse_defects": ["parse_defect"],
                 "master": "master", "lanes": ["lane"]},
     "lane": {"row_id": STR, "repo": NULSTR, "branch": NULSTR, "slug": NULSTR,
              "status_note": STR, "status_parsed": STR,
+             "deps": [STR], "verified": bool, "verify_due": "verify_due|None",
              "manifest": "manifest|None", "session": "session|None", "goal": "goal|None",
              "signals": "signals",
              "suggest_verify": "suggest_verify|None", "stalled": "stalled|None"},
     "signals": {"pushed": "pushed|None", "mr": "mr|None"},
-    "verify_queue_row": {"row_id": STR, "program": STR, "finished_ago_s": INT,
+    "verify_queue_row": {"row_id": STR, "program": STR, "finished_ago_s": "int|None",
                          "master_hint": STR, "verify_cmd": STR},
     "human_action_row": {"kind": STR, "ref": STR, "repo": STR, "repo_host": STR,
                          "title": STR, "pipeline": STR, "ready": bool},
+    "needs_me_row": {"kind": STR, "row_id": STR, "program": STR, "action": STR,
+                     "deep_link": "str|None"},
     "unmapped_row": {"id": STR, "title": STR, "dir": STR, "last_active_ago_s": INT,
                      "parent_session_id": NULSTR, "parent_title": NULSTR},
 }
@@ -145,10 +160,14 @@ def null_master() -> dict:
 
 
 def lane_shell(row_id: str, repo: str | None, branch: str | None, slug: str | None,
-               status_note: str, status_parsed: str) -> dict:
-    """Lane dict in §9 key order: six parsed fields, then the nullable objects."""
+               status_note: str, status_parsed: str,
+               deps: "tuple[str, ...] | list[str]" = (),
+               verified: bool = False) -> dict:
+    """Lane dict in §9 key order: the parsed fields (six + contract-v2
+    deps/verified), then the nullable objects."""
     return {"row_id": row_id, "repo": repo, "branch": branch, "slug": slug,
             "status_note": status_note, "status_parsed": status_parsed,
+            "deps": list(deps), "verified": verified, "verify_due": None,
             "manifest": None, "session": None, "goal": None,
             "signals": {"pushed": None, "mr": None},
             "suggest_verify": None, "stalled": None}
@@ -156,17 +175,19 @@ def lane_shell(row_id: str, repo: str | None, branch: str | None, slug: str | No
 
 def zero_document(program_names: list[str], uptime_s: int, generated_ts: int,
                   banner: str | None) -> dict:
-    """All-keys-present zero document (§9); the caller supplies provider values
-    (keeps this module config-free)."""
+    """All-keys-present zero document (§9 + contract v2); the caller supplies
+    provider values (keeps this module config-free)."""
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "server": {"uptime_s": uptime_s, "generated_ts": generated_ts,
                    "degraded": [], "banner": banner},
         "programs": [{"program": name, "note_path": "", "note_mtime": 0,
-                      "objective": "", "master": null_master(), "lanes": []}
+                      "objective": "", "parse_defects": [],
+                      "master": null_master(), "lanes": []}
                      for name in program_names],
         "verify_queue": [],
         "human_actions": [],
+        "needs_me": [],
         "sessions_unmapped": [],
         "launch_pending": None,
     }
