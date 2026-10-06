@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 New changes accumulate here between releases, above the latest version entry (Keep a Changelog convention; the release gates skip this section when reading the head version).
 
+## [1.10.0] - 2026-10-06
+
+The intake phase before plan: `/mission-control-discuss` interrogates a raw idea against the operator and the codebase, then writes the vault idea note `plan` consumes verbatim as its objective.
+
+### Added
+- **`/mission-control-discuss <idea | idea-slug>`** — the intake phase before `plan`:
+  interrogates the raw idea (dimension ladder; ≥3 named challenges per round, strongest objection
+  first; contradiction hunt; batched forks with recommendations), runs a 2-5-scout read-only
+  codebase reality scan (no gates, no test runs), holds one post-reality-check round, and writes
+  the idea note to the vault (`shared/ideas/`, literal `Idea:` line, decisions, evidence-anchored
+  findings, handoff contract). `plan <idea-slug>` consumes the note as its objective verbatim and
+  supersedes it in the same turn. SKILL sections renumbered: discuss = §2, plan→§3 … Always→§9.
+
+Gates: `tests/run_smoke.sh` exit 0 (7/7 cases incl. the new case 07 discuss-intake pins); `scripts/verify_packaging.sh` green at 1.10.0. Wall pytest/selftest not run — this change touches nothing under `plugins/mission-control/wall/` (0-line diff).
+
 ## [1.9.1] - 2026-10-05
 
 Long-lived sessions stay visible on the Wall while they are active: the unmapped-sessions window is now an activity window.

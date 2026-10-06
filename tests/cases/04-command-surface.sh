@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$ROOT" || exit 1
 SKILL="plugins/mission-control/skills/mission-control/SKILL.md"
 FAIL=0
 fail() { echo "  04: $*" >&2; FAIL=1; }
-MODES="plan prompts verify next close"
+MODES="discuss plan prompts verify next close"
 
 for M in $MODES; do
   F="plugins/mission-control/commands/mission-control-${M}.md"
@@ -24,7 +24,7 @@ for M in $MODES; do
   grep -qE '§[0-9]' "$F" || fail "$F: no §-mode reference into SKILL.md"
 done
 
-# SKILL frontmatter argument-hint lists exactly the five modes (token-set compare).
+# SKILL frontmatter argument-hint lists exactly the six modes (token-set compare).
 FM_END=$(awk 'NR==1&&$0!="---"{exit} NR>1&&$0=="---"{print NR;exit}' "$SKILL")
 HINT=$(head -n "$FM_END" "$SKILL" | sed -n 's/^argument-hint: *//p' | grep -oE '<[^>]+>' | head -1 | tr -d '<>')
 GOT=$(printf '%s' "$HINT" | tr '|' ' ' | xargs -n1 | sort -u | xargs)

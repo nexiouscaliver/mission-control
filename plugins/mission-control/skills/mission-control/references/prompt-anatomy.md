@@ -44,7 +44,7 @@ Deleted outright by §0 (all were present in the program's real prompts): goal g
 
 ## The launch block
 
-The companion that lives OUTSIDE the pasted prompt, shown to the operator alongside it. This is the pressure valve that makes §0 lossless: everything §0 ejects that someone still needs lands here, operator-facing. The launch block is never pasted into the session; it is the operator's pre-flight and the controller's own record of the envelope decisions the prompt no longer carries. This is the ONE home for these fields — SKILL §3 points here and does not re-enumerate them.
+The companion that lives OUTSIDE the pasted prompt, shown to the operator alongside it. This is the pressure valve that makes §0 lossless: everything §0 ejects that someone still needs lands here, operator-facing. The launch block is never pasted into the session; it is the operator's pre-flight and the controller's own record of the envelope decisions the prompt no longer carries. This is the ONE home for these fields — SKILL §4 points here and does not re-enumerate them.
 
 **Session type + envelope pin** — regenloop / plain-deep / box-plain; regenloop `<ver>` (the version verified at plan, interface doc §10); the goal statement reminds the operator the session must be fresh, so its loaded plugin is the pinned one; any version mismatch surfaced at kickoff stops the lane.
 **Where to run** — repo path + "a fresh session" (the fenced prompt repeats the repo path and cwd itself; this field steers the operator, skeleton item 5 steers the session). Box-plain lanes add their ssh/key refs for the box.
@@ -81,7 +81,7 @@ omniforge bot will set them as needed.
 
 ## The red-team gate (before emitting any prompt)
 
-This gate is the single red-team checklist — SKILL §3 points here and does not restate it. The eleven checks, run before emitting any prompt:
+This gate is the single red-team checklist — SKILL §4 points here and does not restate it. The eleven checks, run before emitting any prompt:
 
 1. **Exists now** — every SHA / flag / path / knob name exists right now, verified this turn — and the launch block carries the operator recheck line: forge-time verification expires at launch.
 2. **Owned-file collision** — any collision with an in-flight session?

@@ -167,7 +167,7 @@ DO_NOT_MERGE` (→ back to Draft) [ship L1200, L1235, L1243-1244].
 - Query, never recall: `regenloop_guard.py plan --json` (§10). 2026-09-17 on this machine: cap 1
   (loaded) → parallel lanes serialize on heavy gates today.
 
-## 9. Verify-side knowledge — procedure is SKILL §4, commands are `references/verify-runbook.md` — [CONTROLLER; paths STABLE]
+## 9. Verify-side knowledge — procedure is SKILL §5, commands are `references/verify-runbook.md` — [CONTROLLER; paths STABLE]
 
 Machine-written records check the session's prose. Per slug, in this order, BEFORE any hand re-run:
 
