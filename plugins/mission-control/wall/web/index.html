@@ -9,7 +9,9 @@
     <span id="wordmark">MC WALL</span><span id="live-dot"></span><span id="mode-badge"></span>
   </div>
   <div class="tb-cluster tb-views">
-    <button id="view-wall" type="button" aria-pressed="true">WALL</button>
+    <button id="view-timeline" type="button" aria-pressed="true">TIMELINE</button>
+    <button id="view-needs" type="button" aria-pressed="false">NEEDS ME</button>
+    <button id="view-wall" type="button" aria-pressed="false">WALL</button>
     <button id="view-projects" type="button" aria-pressed="false">PROJECTS</button>
   </div>
   <div class="tb-cluster tb-owed">
@@ -32,12 +34,14 @@
   </section>
   <section id="col3-sessions" class="col"></section>
 </main>
+<section id="timeline-view" hidden></section>
+<section id="needs-view" hidden></section>
 <section id="projects-view" hidden></section>
 <div id="panel-backdrop" hidden></div>
 <div id="launch-panel" hidden></div>
-<footer id="kbd-hint"><span>● in-flight ◐ ready ✓ done ✕ failed ◌ parked ? unparsed ⚠ stalled · shortcuts: [</span><span class="kbd">n</span><span>] needs-me-now [</span><span class="kbd">r</span><span>] refresh [</span><span class="kbd">esc</span><span>] close panel</span></footer>
+<footer id="kbd-hint"><span>timeline dots: yellow working · green done (✓ verified) · red blocked · grey idle/forged · shortcuts: [</span><span class="kbd">n</span><span>] needs-me-now [</span><span class="kbd">r</span><span>] refresh [</span><span class="kbd">esc</span><span>] close panel</span></footer>
 <script type="application/json" id="mock-full">{
-  "schema_version": 1,
+  "schema_version": 2,
   "server": {
     "uptime_s": 43200,
     "generated_ts": 1789862400,
@@ -64,7 +68,10 @@
           "goal": {"state": "active", "queue_tail": "next: patch join tiebreak", "budget": {"slug": "secfix-w2-l1", "whole_run": 5, "gates": ["gate-1", "gate-2"]}},
           "signals": {"pushed": {"value": true, "age_s": 900}, "mr": {"ref": "!34", "repo_host": "gitlab", "state": "open", "title": "secfix: join hardening", "pipeline": "green", "age_s": 3600}},
           "suggest_verify": null,
-          "stalled": null
+          "stalled": null,
+          "deps": [],
+          "verified": false,
+          "verify_due": null
         },
         {
           "row_id": "W2-L2",
@@ -78,7 +85,10 @@
           "goal": {"state": "archived", "queue_tail": "", "budget": {}},
           "signals": {"pushed": {"value": false, "age_s": 7200}, "mr": null},
           "suggest_verify": null,
-          "stalled": null
+          "stalled": null,
+          "deps": ["W2-L1"],
+          "verified": false,
+          "verify_due": null
         },
         {
           "row_id": "W2-L3",
@@ -92,7 +102,10 @@
           "goal": {"state": "absent", "queue_tail": "", "budget": {}},
           "signals": {"pushed": null, "mr": null},
           "suggest_verify": null,
-          "stalled": null
+          "stalled": null,
+          "deps": ["W2-L1"],
+          "verified": true,
+          "verify_due": null
         },
         {
           "row_id": "W2-L4",
@@ -106,7 +119,10 @@
           "goal": null,
           "signals": {"pushed": {"value": true, "age_s": 120}, "mr": {"ref": "#56", "repo_host": "github", "state": "open", "title": "secfix: partial band fix", "pipeline": "", "age_s": 600}},
           "suggest_verify": {"because": ["status=partial", "finished_ago_s=2400"]},
-          "stalled": null
+          "stalled": null,
+          "deps": ["W2-L2", "W2-L3"],
+          "verified": false,
+          "verify_due": {"because": ["status=partial", "finished_ago_s=2400"]}
         },
         {
           "row_id": "W2-L5",
@@ -120,7 +136,10 @@
           "goal": null,
           "signals": {"pushed": null, "mr": null},
           "suggest_verify": null,
-          "stalled": null
+          "stalled": null,
+          "deps": ["W2-L4"],
+          "verified": false,
+          "verify_due": null
         },
         {
           "row_id": "W2-L6",
@@ -134,7 +153,10 @@
           "goal": null,
           "signals": {"pushed": null, "mr": null},
           "suggest_verify": null,
-          "stalled": null
+          "stalled": null,
+          "deps": [],
+          "verified": false,
+          "verify_due": null
         },
         {
           "row_id": "W2-L7",
@@ -148,7 +170,10 @@
           "goal": {"state": "active", "queue_tail": "next: arm launch gate", "budget": {"slug": "secfix-w2-l7", "whole_run": 3, "gates": ["gate-1"]}},
           "signals": {"pushed": {"value": false, "age_s": 30}, "mr": null},
           "suggest_verify": null,
-          "stalled": null
+          "stalled": null,
+          "deps": ["W2-L5"],
+          "verified": false,
+          "verify_due": null
         },
         {
           "row_id": "W2-L8",
@@ -162,7 +187,10 @@
           "goal": null,
           "signals": {"pushed": null, "mr": null},
           "suggest_verify": null,
-          "stalled": null
+          "stalled": null,
+          "deps": ["W2-L7"],
+          "verified": false,
+          "verify_due": null
         },
         {
           "row_id": "W2-L9",
@@ -176,7 +204,10 @@
           "goal": null,
           "signals": {"pushed": null, "mr": null},
           "suggest_verify": null,
-          "stalled": {"because": "inactive for 21600s > stall_t 6h", "last_event": "queue.md mtime at 21600s ago"}
+          "stalled": {"because": "inactive for 21600s > stall_t 6h", "last_event": "queue.md mtime at 21600s ago"},
+          "deps": ["W2-L8"],
+          "verified": false,
+          "verify_due": null
         },
         {
           "row_id": "W2-L10",
@@ -190,7 +221,10 @@
           "goal": null,
           "signals": {"pushed": null, "mr": null},
           "suggest_verify": null,
-          "stalled": null
+          "stalled": null,
+          "deps": [],
+          "verified": false,
+          "verify_due": null
         }
       ]
     },
@@ -213,13 +247,15 @@
           "goal": null,
           "signals": {"pushed": null, "mr": null},
           "suggest_verify": null,
-          "stalled": null
+          "stalled": null,
+          "deps": [],
+          "verified": false,
+          "verify_due": {"because": ["finished age unknown"]}
         }
       ]
     }
   ],
   "verify_queue": [
-    {"row_id": "W2-L3", "program": "secfix", "finished_ago_s": 250000, "master_hint": "s-master-1", "verify_cmd": "/mission-control-verify s-103"},
     {"row_id": "W2-L4", "program": "secfix", "finished_ago_s": 2400, "master_hint": "s-master-1", "verify_cmd": "/mission-control-verify sess_w2l4"},
     {"row_id": "W2-L99", "program": "secfix", "finished_ago_s": 600, "master_hint": "", "verify_cmd": "/mission-control-verify raw-token-xyz"},
     {"row_id": "W3-L1", "program": "omniforge", "finished_ago_s": 0, "master_hint": "", "verify_cmd": ""}
@@ -231,6 +267,14 @@
   "sessions_unmapped": [
     {"id": "s-unmapped-1", "title": "scratch: rebase experiment", "dir": "~/.zcode/s-unmapped-1", "last_active_ago_s": 172800, "parent_session_id": "s-101", "parent_title": "secfix: join hardening"},
     {"id": "s-unmapped-2", "title": "", "dir": "~/.zcode/s-unmapped-2", "last_active_ago_s": 300, "parent_session_id": "sess_5eed0000-0000-4000-8000-0000000000dd", "parent_title": "rebase planning chat"}
+  ],
+  "parse_defects": [
+    {"note_path": "vault/hsp/hsp-phase1.md", "line": 12, "defect": "prompt-log table missing", "row_id": null}
+  ],
+  "needs_me": [
+    {"kind": "merge-ready", "row_id": "W2-L1", "program": "secfix", "action": "merge !34 — pipeline green", "deep_link": "https://gitlab.example/cleo/cleo/-/merge_requests/34"},
+    {"kind": "verify-due", "row_id": "W2-L4", "program": "secfix", "action": "/mission-control-verify sess_w2l4", "deep_link": null},
+    {"kind": "stalled", "row_id": "W2-L9", "program": "secfix", "action": "inspect queue.md — stalled 6h", "deep_link": null}
   ],
   "launch_pending": null,
   "wall": {
@@ -254,17 +298,19 @@
   }
 }</script>
 <script type="application/json" id="mock-minimal">{
-  "schema_version": 1,
+  "schema_version": 2,
   "server": {"uptime_s": 0, "generated_ts": 0, "degraded": [], "banner": null},
   "programs": [],
   "verify_queue": [],
   "human_actions": [],
   "sessions_unmapped": [],
+  "parse_defects": [],
+  "needs_me": [],
   "launch_pending": null,
   "wall": {"pending": null}
 }</script>
 <script type="application/json" id="mock-null-program">{
-  "schema_version": 1,
+  "schema_version": 2,
   "server": {"uptime_s": 120, "generated_ts": 1789862400, "degraded": [], "banner": null},
   "programs": [
     null,
@@ -287,7 +333,10 @@
           "goal": null,
           "signals": {"pushed": null, "mr": null},
           "suggest_verify": null,
-          "stalled": null
+          "stalled": null,
+          "deps": [],
+          "verified": false,
+          "verify_due": null
         }
       ]
     }
@@ -295,11 +344,13 @@
   "verify_queue": [],
   "human_actions": [],
   "sessions_unmapped": [],
+  "parse_defects": [],
+  "needs_me": [],
   "launch_pending": null,
   "wall": {"pending": null}
 }</script>
 <script type="application/json" id="mock-unparsed">{
-  "schema_version": 1,
+  "schema_version": 2,
   "server": {"uptime_s": 60, "generated_ts": 1789862400, "degraded": [], "banner": null},
   "programs": [
     {
@@ -321,7 +372,10 @@
           "goal": null,
           "signals": {"pushed": null, "mr": null},
           "suggest_verify": null,
-          "stalled": null
+          "stalled": null,
+          "deps": [],
+          "verified": false,
+          "verify_due": null
         }
       ]
     }
@@ -329,6 +383,8 @@
   "verify_queue": [],
   "human_actions": [],
   "sessions_unmapped": [],
+  "parse_defects": [],
+  "needs_me": [],
   "launch_pending": null,
   "wall": {"pending": null}
 }</script>
@@ -354,7 +410,10 @@
           "goal": null,
           "signals": {"pushed": null, "mr": null},
           "suggest_verify": null,
-          "stalled": null
+          "stalled": null,
+          "deps": [],
+          "verified": false,
+          "verify_due": null
         }
       ]
     }
@@ -362,11 +421,13 @@
   "verify_queue": [],
   "human_actions": [],
   "sessions_unmapped": [],
+  "parse_defects": [],
+  "needs_me": [],
   "launch_pending": null,
   "wall": {"pending": null}
 }</script>
 <script type="application/json" id="mock-empty-lanes">{
-  "schema_version": 1,
+  "schema_version": 2,
   "server": {"uptime_s": 240, "generated_ts": 1789862400, "degraded": [], "banner": null},
   "programs": [
     {
@@ -381,21 +442,25 @@
   "verify_queue": [],
   "human_actions": [],
   "sessions_unmapped": [],
+  "parse_defects": [],
+  "needs_me": [],
   "launch_pending": null,
   "wall": {"pending": null}
 }</script>
 <script type="application/json" id="mock-freeze">{
-  "schema_version": 1,
+  "schema_version": 2,
   "server": {"uptime_s": 600, "generated_ts": 1789862400, "degraded": ["tracking degraded: session store unreadable"], "banner": null},
   "programs": [],
   "verify_queue": [],
   "human_actions": [],
   "sessions_unmapped": [],
+  "parse_defects": [],
+  "needs_me": [],
   "launch_pending": null,
   "wall": {"pending": null}
 }</script>
 <script type="application/json" id="mock-pending-null">{
-  "schema_version": 1,
+  "schema_version": 2,
   "server": {"uptime_s": 300, "generated_ts": 1789862400, "degraded": [], "banner": null},
   "programs": [
     {
@@ -417,7 +482,10 @@
           "goal": null,
           "signals": {"pushed": null, "mr": null},
           "suggest_verify": null,
-          "stalled": null
+          "stalled": null,
+          "deps": [],
+          "verified": false,
+          "verify_due": null
         }
       ]
     }
@@ -425,16 +493,20 @@
   "verify_queue": [],
   "human_actions": [],
   "sessions_unmapped": [],
+  "parse_defects": [],
+  "needs_me": [],
   "launch_pending": null,
   "wall": {"pending": null}
 }</script>
 <script type="application/json" id="mock-pending-flagged">{
-  "schema_version": 1,
+  "schema_version": 2,
   "server": {"uptime_s": 900, "generated_ts": 1789862400, "degraded": [], "banner": null},
   "programs": [],
   "verify_queue": [],
   "human_actions": [],
   "sessions_unmapped": [],
+  "parse_defects": [],
+  "needs_me": [],
   "launch_pending": null,
   "wall": {
     "pending": {

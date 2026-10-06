@@ -737,12 +737,14 @@ const NINE_CASES = [
 // The frozen key-set manifest of record (plan "Frozen key-set manifest", derived
 // verbatim from SPEC 3.2 tables + tower spec section 9). KEYSETS must equal this
 // exactly; the conformance mocks must equal KEYSETS at every level (AC-31).
+// Contract v2 (pinned 2026-10-06, shared with W2-L1): root gains
+// parse_defects + needs_me; lane gains deps/verified/verify_due.
 const FROZEN_MANIFEST = {
-  root: ["schema_version", "server", "programs", "verify_queue", "human_actions", "sessions_unmapped", "launch_pending", "wall"],
+  root: ["schema_version", "server", "programs", "verify_queue", "human_actions", "sessions_unmapped", "launch_pending", "wall", "parse_defects", "needs_me"],
   server: ["uptime_s", "generated_ts", "degraded", "banner"],
   program: ["program", "note_path", "note_mtime", "objective", "master", "lanes"],
   master: ["session_id", "title", "last_active_ago_s"],
-  lane: ["row_id", "repo", "branch", "slug", "status_note", "status_parsed", "manifest", "session", "goal", "signals", "suggest_verify", "stalled"],
+  lane: ["row_id", "repo", "branch", "slug", "status_note", "status_parsed", "manifest", "session", "goal", "signals", "suggest_verify", "stalled", "deps", "verified", "verify_due"],
   manifest: ["path", "prompt_md", "goal_md", "precondition_mrs", "stall_t_hours"],
   session: ["id", "title", "title_pending", "dir", "last_active_ago_s", "parent_session_id"],
   goal: ["state", "queue_tail", "budget"],
@@ -754,6 +756,8 @@ const FROZEN_MANIFEST = {
   verifyRow: ["row_id", "program", "finished_ago_s", "master_hint", "verify_cmd"],
   humanRow: ["kind", "ref", "repo", "repo_host", "title", "pipeline", "ready"],
   unmappedRow: ["id", "title", "dir", "last_active_ago_s", "parent_session_id", "parent_title"],
+  needsMeRow: ["kind", "row_id", "program", "action", "deep_link"],
+  parseDefect: ["note_path", "line", "defect", "row_id"],
   wall: ["pending"],
   wallPending: ["version", "status", "flag", "reason", "row_id", "lane_tag", "repo_root", "prompt_sha256", "launch_click_ms", "matched_session_id", "matched_at_ms", "last_eval_ms", "advisory_120s_fired", "canary_fired", "updated_at_ms"],
 };
@@ -794,6 +798,8 @@ function assertManifestWalk(doc, caseName) {
   for (const row of doc.verify_queue) assertKeySet(row, K.verifyRow, caseName + " verify " + row.row_id);
   for (const row of doc.human_actions) assertKeySet(row, K.humanRow, caseName + " human " + row.ref);
   for (const row of doc.sessions_unmapped) assertKeySet(row, K.unmappedRow, caseName + " unmapped " + row.id);
+  for (const row of doc.needs_me) assertKeySet(row, K.needsMeRow, caseName + " needs_me " + row.row_id);
+  for (const row of doc.parse_defects) assertKeySet(row, K.parseDefect, caseName + " parse_defects " + (row.note_path || "?"));
   assertKeySet(doc.wall, K.wall, caseName + " wall");
   if (doc.wall.pending !== null) assertKeySet(doc.wall.pending, K.wallPending, caseName + " wall.pending");
 }
@@ -812,14 +818,16 @@ function buildMockDom(mocks) {
   return dom;
 }
 
-test("T2-state: KEYSETS manifest frozen (18 manifests; master 3 keys; wallPending 15 keys)", () => {
+test("T2-state: KEYSETS manifest frozen (20 manifests; master 3 keys; wallPending 15 keys)", () => {
   const K = loadApp().state.KEYSETS;
   assert.ok(K, "MCW.state.KEYSETS must exist");
   assert.deepEqual(K, FROZEN_MANIFEST, "KEYSETS must equal the frozen manifest of record");
-  assert.equal(sortedKeys(K).length, 18, "exactly 18 manifest entries");
+  assert.equal(sortedKeys(K).length, 20, "exactly 20 manifest entries (v2: +needsMeRow, +parseDefect)");
   assert.equal(K.master.length, 3, "master is the tower-section-9 3-key shape");
   assert.equal(K.wallPending.length, 15, "wall.pending is the 15-key pending.json record");
-  assert.equal(K.lane.length, 12);
+  assert.equal(K.lane.length, 15, "v2 lane: the 12 v1 keys + deps/verified/verify_due");
+  assert.equal(K.needsMeRow.length, 5, "needs_me row is the 5-key actionable shape");
+  assert.equal(K.parseDefect.length, 4, "parse_defects entry is the 4-key fail-visible shape");
 });
 
 test("AC-3: index.html embeds exactly the nine mock cases, in the pinned order, all parsable", () => {
@@ -1182,86 +1190,76 @@ test("T3-step0: mountQA delegates to normalize — exactly one extract/select pi
   assert.deepEqual(named.sel, { appliedCase: "unparsed", unknownCase: false });
 });
 
-test("AC-9[S]: every lane in every fixture maps to its status dot+badge pair; the stamp lives ONCE on the card head", () => {
+test("AC-9[S]: every lane in every fixture maps to its timeline dot (yellow working / green done ✓verified / red blocked / grey idle-forged); the stamp lives ONCE on the card head", () => {
   const items = loadApp().state.items;
-  // the §3.3 render map, restated from the fixture data (the same rules app.js applies)
-  function hueOf(lane, mtime) {
+  // the W2-L2 timeline render map, restated from the fixture data (the same
+  // rules app.js applies) — machine-observed dots per shared contract v2
+  function hueOf(lane) {
     const status = lane.status_parsed === "" || lane.status_parsed === undefined ? "UNPARSED" : lane.status_parsed;
-    if (status === "failed") return "blocked";
-    if (status === "partial") return "watch";
-    if (lane.stalled !== null) return "watch";
-    // A6: UNPARSED renders quiet even unstamped (the AC-22 unparsed-case pin);
-    // unstamped stays watch for every other status.
-    if (status === "UNPARSED") return "quiet";
-    if (mtime === 0) return "watch";
-    if (status === "done" || status === "parked") return "quiet";
-    if (status === "launched" || status === "in-flight") return "live";
-    return "ok";
+    if (status === "failed" || status === "partial") return "red";
+    if (lane.stalled !== null) return "red";
+    if (status === "done") return "green";
+    if (status === "launched" || status === "in-flight") return "yellow";
+    const ses = lane.session;
+    if (ses !== null && Number.isInteger(ses.last_active_ago_s) && ses.last_active_ago_s <= 900) return "yellow";
+    return "grey";
   }
   for (const caseName of NINE_CASES) {
     const doc = parseIndexMocks(readWebFile("index.html"))[caseName];
     // T5: an L0-invalid doc (no-schema-version) renders BLANK panels (SPEC 3.3) — no status to assert
     if (!loadApp().state.validateDoc(doc).ok) continue;
     const { dom } = makeQaApp(caseName);
+    const tl = dom.getElementById("timeline-view");
+    assert.ok(tl, caseName + ": timeline-view root must exist (the opening tab renders on mount)");
     const col1 = dom.getElementById("col1-programs");
-    assert.ok(col1, caseName + ": col1 root must exist");
     for (const prog of items(doc.programs, null).valid) {
-      const mtime = Number.isInteger(prog.note_mtime) ? prog.note_mtime : 0;
       for (const lane of items(prog.lanes, "row_id").valid) {
-        const laneEl = findByData(col1, "data-row-id", lane.row_id);
-        assert.ok(laneEl, caseName + ": lane " + lane.row_id + " must render with data-row-id");
-        const statuses = byClass(laneEl, "status");
-        assert.equal(statuses.length, 1, caseName + " " + lane.row_id + ": exactly one .status");
-        const want = hueOf(lane, mtime);
-        const dots = byClass(statuses[0], "status-dot");
-        const badges = byClass(statuses[0], "status-badge");
-        assert.equal(dots.length, 1, caseName + " " + lane.row_id + ": exactly one status-dot");
-        assert.equal(badges.length, 1, caseName + " " + lane.row_id + ": exactly one status-badge");
+        const nodeEl = findByData(tl, "data-row-id", lane.row_id);
+        assert.ok(nodeEl, caseName + ": timeline node " + lane.row_id + " must render with data-row-id");
+        const want = hueOf(lane);
+        const dots = byClass(nodeEl, "tl-dot");
+        assert.equal(dots.length, 1, caseName + " " + lane.row_id + ": exactly one tl-dot");
         assert.ok(
-          dots[0].classList.contains("status-dot--" + want),
-          caseName + " " + lane.row_id + " (" + lane.status_parsed + ", mtime " + mtime + "): needs a status-dot--" + want
+          dots[0].classList.contains("tl-dot--" + want),
+          caseName + " " + lane.row_id + " (" + lane.status_parsed + ", stalled " + (lane.stalled !== null) +
+            ", session age " + (lane.session ? lane.session.last_active_ago_s : "none") + "): needs tl-dot--" + want
         );
-        assert.ok(
-          badges[0].classList.contains("status-badge--" + want),
-          caseName + " " + lane.row_id + " (" + lane.status_parsed + ", mtime " + mtime + "): needs a status-badge--" + want
-        );
-        if (lane.status_parsed === "UNPARSED") {
-          // SPEC 5: unknown vocab renders as a quiet '?', never an error.
-          assert.equal(collectText(badges[0]), "?", "UNPARSED badge text '?' on " + lane.row_id);
-          const notes = byClass(statuses[0], "status-note");
-          assert.equal(notes.length, 1, "UNPARSED note via .status-note on " + lane.row_id);
-          if (lane.status_note === "") {
-            assert.equal(collectText(notes[0]), "(empty status)", "empty status placeholder on " + lane.row_id);
-          } else {
-            assert.equal(
-              collectText(notes[0]),
-              lane.status_note,
-              "status_note verbatim on " + lane.row_id + ": " + lane.status_note
-            );
-          }
+        if (lane.verified === true) {
+          assert.equal(byClass(nodeEl, "tl-verified").length, 1, caseName + " " + lane.row_id + ": verified overlay present");
         } else {
-          assert.equal(collectText(badges[0]), lane.status_parsed, "status word badge on " + lane.row_id);
+          assert.equal(byClass(nodeEl, "tl-verified").length, 0, caseName + " " + lane.row_id + ": no verified overlay when unverified");
         }
-        // round 4 KEEP: the authority stamp is PROGRAM-level and renders ONCE on
-        // the card head — lane rows carry NO stamp text at all.
-        const text = collectText(laneEl);
+        // round 4 KEEP: the authority stamp is PROGRAM-level and renders ONCE
+        // on the card head — lane rows and timeline nodes carry NO stamp text.
+        const laneEl = findByData(col1, "data-row-id", lane.row_id);
+        if (laneEl) {
+          assert.equal(
+            collectText(laneEl).indexOf("stamped"),
+            -1,
+            caseName + " " + lane.row_id + ": no stamp text on card lane rows (stamp lives on the card head)"
+          );
+        }
         assert.equal(
-          text.indexOf("stamped"),
+          collectText(nodeEl).indexOf("stamped"),
           -1,
-          caseName + " " + lane.row_id + ": no stamp text on lane rows (stamp lives on the card head)"
+          caseName + " " + lane.row_id + ": no stamp text on timeline nodes"
         );
-        // derived bits humanized via the app's own humanizeAge (SPEC 5)
+        // derived bits humanized via the app's own humanizeAge (SPEC 5): the
+        // card-view sig chips keep their composition pins (sev-grammar owns
+        // the card dot/badge hue twin; this owns the sig TEXT).
         const h = loadApp().util.humanizeAge;
-        const sig = lane.signals;
-        if (sig && sig.pushed !== null && (sig.pushed.value === true || sig.pushed.value === false)) {
-          const want = sig.pushed.value === true ? "push " + h(sig.pushed.age_s) : "push —";
-          const chip = byClass(laneEl, "sig").find((c) => collectText(c).indexOf(want) !== -1);
-          assert.ok(chip, caseName + " " + lane.row_id + ": derived sig '" + want + "'");
-        }
-        if (sig && sig.mr !== null) {
-          const want = "mr " + sig.mr.ref + " " + sig.mr.state + " " + h(sig.mr.age_s);
-          const chip = byClass(laneEl, "sig").find((c) => collectText(c).indexOf(want) !== -1);
-          assert.ok(chip, caseName + " " + lane.row_id + ": derived sig '" + want + "'");
+        if (laneEl) {
+          const sig = lane.signals;
+          if (sig && sig.pushed !== null && (sig.pushed.value === true || sig.pushed.value === false)) {
+            const wantChip = sig.pushed.value === true ? "push " + h(sig.pushed.age_s) : "push —";
+            const chip = byClass(laneEl, "sig").find((c) => collectText(c).indexOf(wantChip) !== -1);
+            assert.ok(chip, caseName + " " + lane.row_id + ": derived sig '" + wantChip + "'");
+          }
+          if (sig && sig.mr !== null) {
+            const wantChip = "mr " + sig.mr.ref + " " + sig.mr.state + " " + h(sig.mr.age_s);
+            const chip = byClass(laneEl, "sig").find((c) => collectText(c).indexOf(wantChip) !== -1);
+            assert.ok(chip, caseName + " " + lane.row_id + ": derived sig '" + wantChip + "'");
+          }
         }
       }
     }
@@ -1714,13 +1712,14 @@ test("AC-14: verify rows — signals line forms, master forms, COPY VERIFY wired
   // signals lines: "signals: <status> · <humanized age>" via the app's own
   // humanizeAge; the miss case drops the status word, age 0 stays literal.
   const h = MCW.util.humanizeAge;
-  const l3 = findByData(pv, "data-row-id", "W2-L3");
-  assert.ok(l3, "verify row carries data-row-id");
-  assert.ok(collectText(l3).indexOf("W2-L3 · secfix") !== -1, "caption row_id · program");
-  assert.ok(collectText(l3).indexOf("signals: done · " + h(250000)) !== -1, "signals: <status> · <age> (banned-word-safe)");
-  assert.ok(collectText(l3).indexOf("master s-master-1") !== -1, "master <hint> when non-empty");
+  // contract v2 item 5: the queue EXCLUDES verified rows — W2-L3 is done AND
+  // verified, so it must not render here
+  assert.strictEqual(findByData(pv, "data-row-id", "W2-L3"), null, "a verified lane never sits in the verify queue");
   const l4 = findByData(pv, "data-row-id", "W2-L4");
-  assert.ok(collectText(l4).indexOf("signals: partial · " + h(2400)) !== -1, "status via row_id->lane lookup");
+  assert.ok(l4, "verify row carries data-row-id");
+  assert.ok(collectText(l4).indexOf("W2-L4 · secfix") !== -1, "caption row_id · program");
+  assert.ok(collectText(l4).indexOf("signals: partial · " + h(2400)) !== -1, "signals: <status> · <age> (banned-word-safe)");
+  assert.ok(collectText(l4).indexOf("master s-master-1") !== -1, "master <hint> when non-empty");
   const l99 = findByData(pv, "data-row-id", "W2-L99");
   assert.ok(collectText(l99).indexOf("signals: " + h(600)) !== -1, "lookup miss drops the status word");
   const mLine = byClass(l99, "verify-master")[0];
@@ -1740,13 +1739,13 @@ test("AC-14: verify rows — signals line forms, master forms, COPY VERIFY wired
   const clock = fakeClock(FIXED_NOW_MS);
   const wired = makeQaApp("full", Object.assign({ clipboard: stubClipboard(copied) }, clockDeps(clock)));
   const pv2 = wired.dom.getElementById("panel-verify");
-  const row = findByData(pv2, "data-row-id", "W2-L3");
+  const row = findByData(pv2, "data-row-id", "W2-L4");
   const btn = byClass(row, "copy-verify-btn")[0];
   assert.ok(!("disabled" in btn.attrs), "enabled for non-empty verify_cmd");
   assert.equal(collectText(btn), "COPY VERIFY");
   btn.click();
   await flushMicrotasks();
-  assert.deepEqual(copied, ["/mission-control-verify s-103"], "copies the exact verify_cmd");
+  assert.deepEqual(copied, ["/mission-control-verify sess_w2l4"], "copies the exact verify_cmd");
   assert.equal(collectText(btn), "copied ✓", "label swaps on success");
   clock.advance(1499);
   assert.equal(collectText(btn), "copied ✓", "swap holds ~1.5s");
@@ -1835,7 +1834,7 @@ test("AC-17: mix counter from fixture lengths (4 verify · 2 merge); 0-owed idle
   const counter = full.dom.getElementById("nmn-counter");
   assert.ok(counter, "counter span exists");
   const want = mocks.full.verify_queue.length + " verify · " + mocks.full.human_actions.length + " merge";
-  assert.equal(want, "4 verify · 2 merge", "full fixture lengths");
+  assert.equal(want, "3 verify · 2 merge", "full fixture lengths (v2: the verified W2-L3 left the queue)");
   assert.equal(collectText(counter), want, "counter text is '<v> verify · <m> merge' (U+00B7)");
   assert.ok(!("disabled" in full.dom.getElementById("needs-me-now").attrs), "enabled when owed");
   assert.ok(!full.dom.getElementById("needs-me-now").classList.contains("nmn-idle"), "owed CTA is not idle-styled");
@@ -1891,8 +1890,8 @@ test("AC-18 LIVE: needs-me-now POST shape; ok-jump / action-null / non-2xx / rej
   {
     const s = makeLiveApp([{ reject: "network" }]);
     const r = await s.app.needsMeNow();
-    assert.equal(r.jumped, "W2-L3", "fallback head = oldest verify (finished_ago_s DESC)");
-    assert.equal(r.copied, "/mission-control-verify s-103", "page-side copy via the adapter");
+    assert.equal(r.jumped, "W2-L4", "fallback head = oldest verify (finished_ago_s DESC)");
+    assert.equal(r.copied, "/mission-control-verify sess_w2l4", "page-side copy via the adapter");
     assert.equal(r.note, "needs-me-now unreachable — page-side fallback");
     assert.ok(
       collectText(s.dom.getElementById("topbar")).indexOf("page-side fallback") !== -1,
@@ -1903,16 +1902,16 @@ test("AC-18 LIVE: needs-me-now POST shape; ok-jump / action-null / non-2xx / rej
   {
     const s = makeLiveApp([{ status: 403, json: { ok: false } }]);
     const r = await s.app.needsMeNow();
-    assert.equal(r.jumped, "W2-L3");
-    assert.equal(r.copied, "/mission-control-verify s-103");
+    assert.equal(r.jumped, "W2-L4");
+    assert.equal(r.copied, "/mission-control-verify sess_w2l4");
     assert.equal(r.note, "needs-me-now refused — page-side fallback");
   }
   // target-miss (row_id absent from the DOM) -> fallback + note
   {
     const s = makeLiveApp([{ status: 200, json: { ok: true, action: { row_id: "ghost" } } }]);
     const r = await s.app.needsMeNow();
-    assert.equal(r.jumped, "W2-L3");
-    assert.equal(r.copied, "/mission-control-verify s-103");
+    assert.equal(r.jumped, "W2-L4");
+    assert.equal(r.copied, "/mission-control-verify sess_w2l4");
     assert.equal(r.note, "returned row not on page — page-side fallback");
   }
 });
@@ -1924,11 +1923,11 @@ test("AC-18 QA/fallback: pinned ordering, verify-head copy, merge-head jump-only
   const fetchQa = fakeFetchScript([]);
   const qa = makeQaApp("full", Object.assign({ fetch: fetchQa, clipboard: stubClipboard(copied) }, clockDeps(clock)));
   const r = await qa.app.needsMeNow();
-  assert.equal(r.jumped, "W2-L3", "finished_ago_s DESC head");
-  assert.equal(r.copied, "/mission-control-verify s-103");
+  assert.equal(r.jumped, "W2-L4", "finished_ago_s DESC head");
+  assert.equal(r.copied, "/mission-control-verify sess_w2l4");
   assert.strictEqual(r.note, null, "pure QA fallback needs no note");
   assert.equal(fetchQa.calls.length, 0, "QA never fetches");
-  const target = findByData(qa.dom.getElementById("panel-verify"), "data-row-id", "W2-L3");
+  const target = findByData(qa.dom.getElementById("panel-verify"), "data-row-id", "W2-L4");
   assert.deepEqual(target.scrollCalls, [{ block: "center" }]);
   assert.ok(target.classList.contains("flash"));
 
@@ -1963,7 +1962,18 @@ test("AC-18 QA/fallback: pinned ordering, verify-head copy, merge-head jump-only
   const r3 = await mg.app.needsMeNow();
   assert.equal(r3.jumped, "!10", "merges appended in served order, head wins");
   assert.strictEqual(r3.copied, null, "merge action never copies");
-  assert.ok(!/https?:|www\./.test(collectText(mg.dom.body)), "no fabricated URL anywhere");
+  // no fabricated URL anywhere — mock JSON blocks are exempt (the deep_link
+  // is DATA; the fallback itself must never fabricate one). Same script-skipping
+  // scan T7-A uses.
+  function renderedBodyText(node) {
+    let text = node.text || "";
+    for (const child of node.children) {
+      if (child.tag === "script") continue;
+      text += renderedBodyText(child);
+    }
+    return text;
+  }
+  assert.ok(!/https?:|www\./.test(renderedBodyText(mg.dom.body)), "no fabricated URL anywhere");
   const mtarget = findByData(mg.dom.getElementById("panel-human"), "data-row-id", "!10");
   assert.ok(mtarget.classList.contains("flash"), "merge jump flashes the card");
   assert.deepEqual(mtarget.scrollCalls, [{ block: "center" }]);
@@ -1985,7 +1995,7 @@ test("AC-18 degrade: clipboard absent in fake DOM — copy degrades with a note,
   // no clipboard override: the lazy default cannot reach navigator.clipboard under node
   const { app, dom } = makeQaApp("full", clockDeps(clock));
   const r = await app.needsMeNow();
-  assert.equal(r.jumped, "W2-L3", "jump still happens");
+  assert.equal(r.jumped, "W2-L4", "jump still happens");
   assert.strictEqual(r.copied, null, "copy fails");
   assert.equal(r.note, "copy failed", "copy failure note");
   assert.ok(byClass(dom.getElementById("topbar"), "inline-note--error").length >= 1, "inline error note");
@@ -2025,13 +2035,13 @@ test("AC-19: keyboard map pure + dispatch (n/Esc/r; modifiers ignored; r QA re-r
   assert.ok(!dom.getElementById("launch-panel").classList.contains("open"), "Esc closes the panel");
 
   const r = await app.dispatchKey({ key: "n" });
-  assert.equal(r.jumped, "W2-L3", "n = NEEDS ME NOW (same code path)");
-  assert.deepEqual(copied, ["/mission-control-verify s-103"]);
+  assert.equal(r.jumped, "W2-L4", "n = NEEDS ME NOW (same code path)");
+  assert.deepEqual(copied, ["/mission-control-verify sess_w2l4"]);
   assert.equal(fetchQa.calls.length, 0);
 
-  const oldRow = findByData(dom.getElementById("panel-verify"), "data-row-id", "W2-L3");
+  const oldRow = findByData(dom.getElementById("panel-verify"), "data-row-id", "W2-L4");
   assert.equal(app.dispatchKey({ key: "r" }), "refresh");
-  const newRow = findByData(dom.getElementById("panel-verify"), "data-row-id", "W2-L3");
+  const newRow = findByData(dom.getElementById("panel-verify"), "data-row-id", "W2-L4");
   assert.notEqual(oldRow, newRow, "r rebuilt the panels (QA re-render)");
   assert.strictEqual(oldRow.parentNode, null, "old row detached by the re-render");
   assert.equal(fetchQa.calls.length, 0, "QA r re-renders in place, never fetches");
@@ -2047,7 +2057,7 @@ test("AC-8: rejected POSTs (activate-app, needs-me-now) → inline note only, ba
   const before = strip.children.length;
   const textBefore = collectText(strip);
   // activate-app: click Bring ZCode forward on a verify row
-  const row = findByData(s.dom.getElementById("panel-verify"), "data-row-id", "W2-L3");
+  const row = findByData(s.dom.getElementById("panel-verify"), "data-row-id", "W2-L4");
   const az = byClass(row, "activate-btn")[0];
   assert.ok(az, "Bring ZCode forward button renders");
   az.click();
@@ -2069,7 +2079,7 @@ test("AC-8: rejected POSTs (activate-app, needs-me-now) → inline note only, ba
   // QA: the button is a visible no-op, zero fetch
   const fetchQa = fakeFetchScript([]);
   const qa = makeQaApp("full", Object.assign({ fetch: fetchQa }, clockDeps(fakeClock(FIXED_NOW_MS))));
-  const rowQ = findByData(qa.dom.getElementById("panel-verify"), "data-row-id", "W2-L3");
+  const rowQ = findByData(qa.dom.getElementById("panel-verify"), "data-row-id", "W2-L4");
   byClass(rowQ, "activate-btn")[0].click();
   await flushMicrotasks();
   assert.ok(
@@ -2093,7 +2103,7 @@ test("F-3 mcwallf: all three POST sites send Content-Type application/json", asy
   // activate-app (LIVE): click Bring ZCode forward on a verify row
   {
     const s = makeLiveApp([{ reject: "network" }]);
-    const row = findByData(s.dom.getElementById("panel-verify"), "data-row-id", "W2-L3");
+    const row = findByData(s.dom.getElementById("panel-verify"), "data-row-id", "W2-L4");
     byClass(row, "activate-btn")[0].click();
     await flushMicrotasks();
     assert.equal(s.fetchFn.calls[0].url, "/tok1/activate-app");
@@ -2277,20 +2287,24 @@ test("AC-16: Col 3 — repo groups, master row, idle>24h collapse, unmapped stri
   subHead.click();
   assert.equal(subHead.attrs["aria-expanded"], "false", "click collapses again");
 
-  // bottom strip: unmapped rows live ONLY there
+  // bottom strip: unmapped rows live ONLY there. W2-L2: the haystack bound —
+  // the default view is the last hour only; the older tail hides behind
+  // show-all (the reveal re-renders: older rows are not in the DOM until shown).
   const strip = byClass(col3, "unmapped-strip")[0];
   assert.ok(strip, "unmapped strip present, visually separated");
-  assert.ok(collectText(byClass(strip, "unmapped-head")[0]).indexOf("unmapped (2)") !== -1, "strip header 'unmapped (N)'");
+  assert.ok(collectText(byClass(strip, "unmapped-head")[0]).indexOf("unmapped (1 · 1 older)") !== -1, "strip head counts visible + older");
   const umRows = byClass(strip, "unmapped-row");
-  assert.equal(umRows.length, 2);
-  // v1.9.2: strip rows order by activity, so anchor by id, not position
-  const um1 = findByData(strip, "data-session-id", "s-unmapped-1");
-  assert.ok(collectText(um1).indexOf("scratch: rebase experiment") !== -1, "unmapped title");
-  assert.ok(collectText(um1).indexOf("2d") !== -1, "age humanized (172800s -> 2d)");
+  assert.equal(umRows.length, 1, "default view: only the last-hour row renders");
   assert.ok(
     collectText(findByData(strip, "data-session-id", "s-unmapped-2")).indexOf("title pending") !== -1,
     "empty unmapped title -> title pending"
   );
+  byClass(strip, "unmapped-toggle")[0].click();
+  const stripOpen = byClass(col3, "unmapped-strip")[0];
+  assert.ok(collectText(byClass(stripOpen, "unmapped-head")[0]).indexOf("unmapped (2)") !== -1, "show-all reveals the older tail");
+  const um1 = findByData(stripOpen, "data-session-id", "s-unmapped-1");
+  assert.ok(collectText(um1).indexOf("scratch: rebase experiment") !== -1, "unmapped title");
+  assert.ok(collectText(um1).indexOf("2d") !== -1, "age humanized (172800s -> 2d)");
   assert.equal(byClass(col3, "session-row").length, 5, "5 mapped rows (incl. master) outside the strip");
   const css = readWebFile("style.css");
   const rules = parseCssRules(css);
@@ -2413,7 +2427,7 @@ test("AC-1[S]: full QA render populates four panel roots + the whole top bar", (
   }
   assert.equal(collectText(dom.getElementById("wordmark")), "MC WALL");
   assert.ok(collectText(dom.getElementById("mode-badge")).indexOf("QA · case: full") !== -1, "mode badge names the QA case");
-  assert.equal(collectText(dom.getElementById("nmn-counter")), "4 verify · 2 merge");
+  assert.equal(collectText(dom.getElementById("nmn-counter")), "3 verify · 2 merge");
   assert.equal(collectText(dom.getElementById("state-age-caption")), "state 5m", "state age from generated_ts via the injected clock");
   // T7 (C) overturned the old pin: a QA mount runs no poll cycle, so the dot
   // renders neutral — never the LIVE green.
@@ -2827,15 +2841,19 @@ test("AC-10: banned word — no /\\bfinished\\b/i in any case's rendered text", 
     let text = "";
     // SPEC v2.1 A1 moved the armed bar out of the topbar into #armed-strip —
     // the sweep FOLLOWS it, so coverage is strictly extended, never narrowed.
-    for (const id of ["topbar", "armed-strip", "banner-strip", "grid", "launch-panel"]) {
+    // W2-L2: the sweep follows the new views too (coverage extended, never
+    // narrowed — the A1 precedent); timeline renders because it is the
+    // opening tab.
+    for (const id of ["topbar", "armed-strip", "banner-strip", "grid", "launch-panel", "timeline-view", "needs-view", "projects-view"]) {
       const n = dom.getElementById(id);
       if (n) text += collectText(n);
     }
     assert.ok(!/\bfinished\b/i.test(text), name + " rendered text contains the banned word");
     if (name === "full") {
       // coverage guard: the scan must SEE col3 + the armed bar (where a leak would hide)
-      assert.ok(text.indexOf("unmapped (2)") !== -1, "scan covers col3 text");
+      assert.ok(text.indexOf("unmapped (1 · 1 older)") !== -1, "scan covers col3 text (filtered head)");
       assert.ok(text.indexOf("prompt armed") !== -1, "scan covers the armed bar text");
+      assert.ok(text.indexOf("PARSE DEFECTS") !== -1, "scan covers the timeline tab");
     }
   }
 });
@@ -3321,9 +3339,10 @@ test("T6-carry(c)+(d): unmapped rows carry a dim id span; session/unmapped rows 
   const copied = [];
   const t = makeQaApp("full", { clipboard: stubClipboard(copied) });
   const col3 = t.dom.getElementById("col3-sessions");
-  // (c) dim span with u.id on every unmapped row
-  const umRows = byClass(byClass(col3, "unmapped-strip")[0], "unmapped-row");
-  assert.equal(umRows.length, 2);
+  // (c) dim span with u.id on every unmapped row. W2-L2: reveal first — the
+  // default filter carries the last-hour row only.
+  byClass(byClass(col3, "unmapped-strip")[0], "unmapped-toggle")[0].click();
+  assert.equal(byClass(byClass(col3, "unmapped-strip")[0], "unmapped-row").length, 2, "show-all reveals both rows");
   // v1.9.2: strip rows order by activity, so anchor by id, not position
   const um1 = findByData(col3, "data-session-id", "s-unmapped-1");
   for (const uid of ["s-unmapped-1", "s-unmapped-2"]) {
@@ -3489,17 +3508,17 @@ test("T7-F: a poll with unchanged data keeps the live DOM; changed data still up
   const w = makeLiveWall([okState(mocks.full), okState(mocks.full), okState(changed)]);
   await flushMicrotasks();
   const pv = w.dom.getElementById("panel-verify");
-  const row = findByData(pv, "data-row-id", "W2-L3");
+  const row = findByData(pv, "data-row-id", "W2-L4");
   assert.ok(row, "verify row rendered from the boot poll");
   row.focus(); // focus marker: the node identity below is what must survive
   w.clock.advance(5000); // poll 2 serves the SAME doc
   await flushMicrotasks();
-  const rowAfter = findByData(pv, "data-row-id", "W2-L3");
+  const rowAfter = findByData(pv, "data-row-id", "W2-L4");
   assert.strictEqual(rowAfter, row, "unchanged poll: the same node stays in the DOM (no churn, focus survives)");
   assert.strictEqual(row.parentNode, pv, "the focused row is still attached to its panel");
   w.clock.advance(5000); // poll 3 serves the CHANGED doc
   await flushMicrotasks();
-  assert.ok(!findByData(pv, "data-row-id", "W2-L3"), "changed data applied: the stale row is replaced");
+  assert.ok(!findByData(pv, "data-row-id", "W2-L4"), "changed data applied: the stale row is replaced");
   assert.ok(collectText(pv).indexOf("nothing to verify") !== -1, "the fresh empty-state renders");
 });
 
@@ -3643,9 +3662,11 @@ test("sev-grammar: every lane's dot+badge carry the severity hue; sigs carry non
   // ORDER keeps UNPARSED lanes in the watch tier while they RENDER quiet.
   const col1 = full.dom.getElementById("col1-programs");
   const laneIds = byClass(byClass(col1, "program-card")[0], "lane").map((l) => l.attrs["data-row-id"]);
+  // W2-L2: the done/parked tail (L3, L6) collapses under its own head AFTER
+  // the active lanes — triage order runs on the active set, the tail follows.
   assert.deepEqual(
     laneIds,
-    ["W2-L5", "W2-L4", "W2-L8", "W2-L9", "W2-L10", "W2-L1", "W2-L2", "W2-L3", "W2-L6", "W2-L7"],
+    ["W2-L5", "W2-L4", "W2-L8", "W2-L9", "W2-L10", "W2-L1", "W2-L2", "W2-L7", "W2-L3", "W2-L6"],
     "triage order pin (duplicating round 4 intentionally)"
   );
   for (const rid of ["W2-L8", "W2-L10"]) {
@@ -3716,24 +3737,27 @@ test("nmn-idle: the idle CTA stays focusable; its click surfaces 'nothing owed' 
   assert.ok("hidden" in full.dom.getElementById("nmn-hint").attrs, "owed hides the companion hint");
 });
 
-test("unmapped-toggle: show-all flips aria-expanded + .open; rows stay in the DOM; scroll rules hold", () => {
+test("unmapped-toggle: show-all reveals the older tail + flips aria-expanded/.open; scroll rules hold", () => {
   const { dom } = makeQaApp("full");
-  const strip = byClass(dom.getElementById("col3-sessions"), "unmapped-strip")[0];
-  const toggle = byClass(strip, "unmapped-toggle")[0];
+  const stripEl = () => byClass(dom.getElementById("col3-sessions"), "unmapped-strip")[0];
+  const toggle = byClass(stripEl(), "unmapped-toggle")[0];
   assert.ok(toggle, "the strip head carries a show-all toggle");
   assert.equal(toggle.attrs["aria-expanded"], "false", "collapsed by default");
   assert.equal(toggle.attrs["aria-controls"], "unmapped-rows", "aria-controls names the rows container");
   const rows = dom.getElementById("unmapped-rows");
   assert.ok(rows, "the rows container carries the aria-controls id");
-  const rowCount = byClass(rows, "unmapped-row").length;
-  assert.equal(rowCount, 2, "full carries two unmapped rows");
-  toggle.click();
-  assert.equal(toggle.attrs["aria-expanded"], "true", "click expands");
-  assert.ok(rows.classList.contains("open"), "rows container opens");
-  assert.equal(byClass(rows, "unmapped-row").length, rowCount, "rows stay in the DOM when open");
-  toggle.click();
-  assert.equal(toggle.attrs["aria-expanded"], "false", "click collapses again");
-  assert.ok(!rows.classList.contains("open"), "rows container closes");
+  // W2-L2: the default filter carries the last hour only — 1 of 2 rows
+  assert.equal(byClass(rows, "unmapped-row").length, 1, "default view: the last-hour row only");
+  toggle.click(); // the reveal re-renders (older rows are not in the DOM until shown)
+  assert.equal(byClass(stripEl(), "unmapped-toggle")[0].attrs["aria-expanded"], "true", "click expands");
+  const rowsOpen = dom.getElementById("unmapped-rows");
+  assert.ok(rowsOpen.classList.contains("open"), "rows container opens");
+  assert.equal(byClass(rowsOpen, "unmapped-row").length, 2, "show-all reveals both rows");
+  byClass(stripEl(), "unmapped-toggle")[0].click();
+  assert.equal(byClass(stripEl(), "unmapped-toggle")[0].attrs["aria-expanded"], "false", "click collapses again");
+  const rowsClosed = dom.getElementById("unmapped-rows");
+  assert.ok(!rowsClosed.classList.contains("open"), "rows container closes");
+  assert.equal(byClass(rowsClosed, "unmapped-row").length, 1, "collapsing re-filters to the last hour");
   // the pinned base scroll rule + the additive open override both parse
   const rules = parseCssRules(readWebFile("style.css"));
   const base = rules.find((r) => r.selector === ".unmapped-rows" && r.media === "");
@@ -3747,9 +3771,12 @@ test("unmapped-strip-state: copy note lands IN the clicked row; expansion surviv
   const clock = fakeClock(FIXED_NOW_MS);
   const t = makeQaApp("full", Object.assign({ clipboard: stubClipboard(copied) }, clockDeps(clock)));
   const col3 = t.dom.getElementById("col3-sessions");
-  const rows = t.dom.getElementById("unmapped-rows");
-  // v1.9.2: strip rows order by activity, so anchor by id, not position
-  const firstRow = findByData(rows, "data-session-id", "s-unmapped-1");
+  const stripEl = () => byClass(col3, "unmapped-strip")[0];
+  // W2-L2: reveal the older tail first — the copy-note pin runs on the older
+  // row (s-unmapped-1, 2d idle).
+  byClass(stripEl(), "unmapped-toggle")[0].click();
+  let rows = t.dom.getElementById("unmapped-rows");
+  let firstRow = findByData(rows, "data-session-id", "s-unmapped-1");
   // round 3 (screen 01): the copy confirmation renders INSIDE the clicked
   // row — the strip's rows container scrolls internally, so a note appended
   // after the last row sits out of sight below the fold and the copy reads
@@ -3762,32 +3789,31 @@ test("unmapped-strip-state: copy note lands IN the clicked row; expansion surviv
   assert.deepEqual(copied, ["s-unmapped-1"], "the id was still copied");
   clock.advance(2000);
   assert.equal(byClass(firstRow, "inline-note").length, 0, "the note clears after ~2s");
-  // round 3 (screen 02): live ages tick on every poll, so the churn guard
-  // rebuilds the strip — the expanded state must survive that rebuild.
-  const strip = byClass(col3, "unmapped-strip")[0];
-  const toggle = byClass(strip, "unmapped-toggle")[0];
-  toggle.click();
-  assert.ok(rows.classList.contains("open"), "expanded");
+  // collapse back to the default filter, then drive the state-survival pins
+  byClass(stripEl(), "unmapped-toggle")[0].click();
+  rows = t.dom.getElementById("unmapped-rows");
+  assert.ok(!rows.classList.contains("open"), "collapsed again");
   const mocks = parseIndexMocks(readWebFile("index.html"));
   const d2 = JSON.parse(JSON.stringify(mocks.full));
   d2.sessions_unmapped[0].last_active_ago_s += 5; // exactly what a live poll changes
   t.app.setDocument(d2);
   t.app.render(); // manual render = unconditional swap — stricter than a poll
-  const rows2 = t.dom.getElementById("unmapped-rows");
-  assert.ok(rows2 && rows2.classList.contains("open"), "the rebuilt strip stays open");
-  const toggle2 = byClass(byClass(col3, "unmapped-strip")[0], "unmapped-toggle")[0];
-  assert.equal(toggle2.attrs["aria-expanded"], "true", "the rebuilt toggle re-asserts its state");
+  rows = t.dom.getElementById("unmapped-rows");
+  assert.ok(rows && !rows.classList.contains("open"), "the rebuilt strip stays collapsed");
+  assert.equal(byClass(rows, "unmapped-row").length, 1, "the rebuilt strip keeps the last-hour filter");
+  const toggle2 = byClass(stripEl(), "unmapped-toggle")[0];
+  assert.equal(toggle2.attrs["aria-expanded"], "false", "the rebuilt toggle re-asserts its state");
   toggle2.click();
-  assert.ok(!rows2.classList.contains("open"), "collapsing still works");
+  rows = t.dom.getElementById("unmapped-rows");
+  assert.ok(rows.classList.contains("open"), "expanding still works");
+  assert.equal(byClass(rows, "unmapped-row").length, 2, "show-all reveals both rows");
   t.app.render();
-  const rows3 = t.dom.getElementById("unmapped-rows");
-  assert.ok(rows3 && !rows3.classList.contains("open"), "the collapsed state survives the rebuild too");
-  const toggle3 = byClass(byClass(col3, "unmapped-strip")[0], "unmapped-toggle")[0];
-  assert.equal(toggle3.attrs["aria-expanded"], "false");
+  rows = t.dom.getElementById("unmapped-rows");
+  assert.ok(rows && rows.classList.contains("open"), "the open state survives the rebuild too");
   // a fresh mount resets the strip state (a view preference, not data)
   t.app.mountQA("full");
-  const rows4 = t.dom.getElementById("unmapped-rows");
-  assert.ok(rows4 && !rows4.classList.contains("open"), "mountQA resets the strip state");
+  rows = t.dom.getElementById("unmapped-rows");
+  assert.ok(rows && !rows.classList.contains("open"), "mountQA resets the strip state");
 });
 
 test("empty-hints: valid-doc empty panels carry their companion lines; L0 keeps one child + a sibling hint", () => {
@@ -3832,15 +3858,12 @@ test("kbd-hint: footer legend line + three shortcut keys; topbar chrome pinned",
   const { dom } = makeQaApp("full");
   const footer = dom.getElementById("kbd-hint");
   assert.ok(footer, "ensureShell builds the footer");
-  // the legend line of record (signal-panel spec section 4/S8)
+  // the legend line of record (W2-L2 timeline dot semantics, contract v2)
   const LEGEND = [
-    "● in-flight",
-    "◐ ready",
-    "✓ done",
-    "✕ failed",
-    "◌ parked",
-    "? unparsed",
-    "⚠ stalled",
+    "timeline dots: yellow working",
+    "green done (✓ verified)",
+    "red blocked",
+    "grey idle/forged",
     "shortcuts: [n] needs-me-now [r] refresh [esc] close panel",
   ];
   const text = collectText(footer);
@@ -3924,13 +3947,14 @@ test("round 4: severity triage order — blocked first, watch second, healthy la
   const col1 = dom.getElementById("col1-programs");
   const secfixCard = byClass(col1, "program-card")[0];
   const laneIds = byClass(secfixCard, "lane").map((l) => l.attrs["data-row-id"]);
-  // served order was L1..L10; triage order is:
-  //   blocked:  L5 (failed)
-  //   watch:    L4 (partial), L8 (UNPARSED), L9 (stalled), L10 (UNPARSED)
-  //   healthy:  L1, L2, L3, L6, L7 (served order kept inside the tier)
+  // served order was L1..L10; W2-L2 triage order is:
+  //   active blocked: L5 (failed)
+  //   active watch:   L4 (partial), L8 (UNPARSED), L9 (stalled), L10 (UNPARSED)
+  //   active healthy: L1, L2, L7 (served order kept inside the tier)
+  //   settled tail:   L3 (done), L6 (parked) — the collapsed done/parked sub
   assert.deepEqual(
     laneIds,
-    ["W2-L5", "W2-L4", "W2-L8", "W2-L9", "W2-L10", "W2-L1", "W2-L2", "W2-L3", "W2-L6", "W2-L7"],
+    ["W2-L5", "W2-L4", "W2-L8", "W2-L9", "W2-L10", "W2-L1", "W2-L2", "W2-L7", "W2-L3", "W2-L6"],
     "a parked/healthy lane may never render above a failed one"
   );
 });
@@ -3940,8 +3964,8 @@ test("round 4: verify queue renders oldest-first (same order the needs-me-now ju
   const verifyIds = byClass(dom.getElementById("panel-verify"), "verify-row").map((r) => r.attrs["data-row-id"]);
   assert.deepEqual(
     verifyIds,
-    ["W2-L3", "W2-L4", "W2-L99", "W3-L1"],
-    "finished_ago_s DESC — panel head == jump head (AC-18 fallback walks the same order)"
+    ["W2-L4", "W2-L99", "W3-L1"],
+    "finished_ago_s DESC — panel head == jump head (contract v2: verified W2-L3 left the queue)"
   );
 });
 
@@ -4048,6 +4072,8 @@ test("round 4b: adaptive grid — sole content goes full width; empty columns le
 
 test("round 4: unmapped rows group by dir — heads show the project NAME, full path hover-only; id demoted to a copy handle", () => {
   const { dom } = makeQaApp("full");
+  // W2-L2: the 2d-old row hides behind the default filter — reveal, then pin
+  byClass(byClass(dom.getElementById("col3-sessions"), "unmapped-strip")[0], "unmapped-toggle")[0].click();
   const strip = byClass(dom.getElementById("col3-sessions"), "unmapped-strip")[0];
   const groups = byClass(strip, "unmapped-group");
   assert.equal(groups.length, 2, "two distinct dirs -> two groups");
@@ -4064,13 +4090,26 @@ test("round 4: unmapped rows group by dir — heads show the project NAME, full 
   assert.ok(collectText(byClass(g1, "unmapped-row")[0]).indexOf("s-unmapped-1") !== -1, "short id tail present");
 });
 
-test("round 5: WALL/PROJECTS switcher — projects view groups every session by project, newest-first, sortable", () => {
+test("round 5: view switcher — TIMELINE is the opening tab (W2-L2); projects view groups every session by project, newest-first, sortable", () => {
   const full = makeQaApp("full");
   const grid = full.dom.getElementById("grid");
   const projEl = full.dom.getElementById("projects-view");
-  assert.ok(!("hidden" in grid.attrs), "wall is the default view");
+  const tlEl = full.dom.getElementById("timeline-view");
+  const needsEl = full.dom.getElementById("needs-view");
+  // W2-L2: four tabs — TIMELINE (opening), NEEDS ME, WALL (cards), PROJECTS.
+  // The card wall ships hidden but warm (it keeps rendering every pass).
+  assert.ok(tlEl && !("hidden" in tlEl.attrs), "timeline is the default view");
+  assert.ok(tlEl.children.length >= 1, "the timeline populates on boot");
+  assert.ok("hidden" in grid.attrs, "the card wall ships hidden");
   assert.ok("hidden" in projEl.attrs, "projects view ships hidden");
-  assert.equal(full.dom.getElementById("view-wall").attrs["aria-pressed"], "true");
+  assert.ok("hidden" in needsEl.attrs, "needs view ships hidden");
+  assert.equal(full.dom.getElementById("view-timeline").attrs["aria-pressed"], "true");
+  assert.equal(full.dom.getElementById("view-wall").attrs["aria-pressed"], "false");
+
+  full.app.setView("needs");
+  assert.ok(!("hidden" in needsEl.attrs), "the needs view opens");
+  assert.ok(collectText(needsEl).indexOf("nothing needs you") !== -1 || byClass(needsEl, "needs-row").length > 0, "the needs view carries state");
+  assert.ok("hidden" in tlEl.attrs, "the timeline hides while needs is open");
 
   full.app.setView("projects");
   assert.ok("hidden" in grid.attrs, "grid hides on the projects view");
@@ -4100,6 +4139,9 @@ test("round 5: WALL/PROJECTS switcher — projects view groups every session by 
 
   full.app.setView("wall");
   assert.ok(!("hidden" in grid.attrs), "switching back restores the wall");
+  assert.equal(full.dom.getElementById("view-wall").attrs["aria-pressed"], "true");
+  full.app.setView("timeline");
+  assert.ok(!("hidden" in full.dom.getElementById("timeline-view").attrs), "back to the opening tab");
 });
 
 test("round 5: reading state survives poll rebuilds — expanded idle>24h groups stay expanded", () => {
@@ -4448,6 +4490,13 @@ test("v1.9.2: wall unmapped groups order by newest session activity, not alphabe
     { id: "s-c2", title: "dirC stale", dir: "~/w/dirC", last_active_ago_s: 172800, parent_session_id: null, parent_title: null },
   ]);
   const dom = mountWallApp(t.doc, t.dom);
+  // W2-L2: the default filter hides the >1h rows — the head counts them; the
+  // ordering pins run after show-all reveals the whole haystack.
+  assert.ok(
+    collectText(byClass(byClass(dom.getElementById("col3-sessions"), "unmapped-strip")[0], "unmapped-head")[0]).indexOf("unmapped (1 · 3 older)") !== -1,
+    "default filter: the newest row renders, the older tail counts"
+  );
+  byClass(byClass(dom.getElementById("col3-sessions"), "unmapped-strip")[0], "unmapped-toggle")[0].click();
   const heads = byClass(dom.getElementById("unmapped-rows"), "unmapped-group-head").map((h) => collectText(h));
   assert.deepEqual(
     heads,
@@ -4479,6 +4528,203 @@ test("v1.9.2 tie-break: equal newest ages order unmapped groups by dir name asce
     ["mid · 1", "alpha · 1", "zeta · 1"],
     "equal newest ages tie-break by dir ascending (alpha before zeta); a strictly newer group leads"
   );
+});
+
+// =====================================================================
+// W2-L2 (contract v2): timeline DAG, needs-me inbox, degraded parse
+// cards, card-view collapse, and the unmapped haystack bound.
+// =====================================================================
+
+test("W2-L2: timeline DAG — deps edges, level layout, diamond, finished hidden behind the toggle", () => {
+  const { dom } = makeQaApp("full");
+  const tl = dom.getElementById("timeline-view");
+  const programs = byClass(tl, "tl-program");
+  assert.equal(programs.length, 2, "both program blocks render (the finished one CSS-hidden)");
+  assert.ok(!programs[0].classList.contains("collapsed"), "secfix (active) visible");
+  assert.ok(programs[1].classList.contains("tl-program--done") && programs[1].classList.contains("collapsed"), "omniforge (finished) collapsed by default");
+  assert.ok(collectText(programs[1]).indexOf("all lanes done/parked") !== -1, "finished flag on the head");
+  assert.equal(byClass(tl, "tl-node").length, 11, "one node per lane (hidden finished included)");
+  // edges: L1->L2, L1->L3, L2->L4, L3->L4, L4->L5, L5->L7, L7->L8, L8->L9
+  const edges = byClass(tl, "tl-edge").map((e) => e.attrs["data-edge"]).sort();
+  assert.deepEqual(
+    edges,
+    ["W2-L1->W2-L2", "W2-L1->W2-L3", "W2-L2->W2-L4", "W2-L3->W2-L4", "W2-L4->W2-L5", "W2-L5->W2-L7", "W2-L7->W2-L8", "W2-L8->W2-L9"],
+    "deps edges render 1:1 from the 9-cell mock data"
+  );
+  // longest-path layout: the diamond siblings share a column; the chain ascends
+  const left = (rid) => parseFloat(findByData(tl, "data-row-id", rid).style.left);
+  assert.equal(left("W2-L1"), 0, "the source lane sits at column 0");
+  assert.ok(left("W2-L2") > left("W2-L1"), "L2 right of L1");
+  assert.equal(left("W2-L2"), left("W2-L3"), "diamond siblings share a column");
+  assert.ok(left("W2-L4") > left("W2-L2"), "the diamond join sits right of both parents");
+  assert.ok(left("W2-L7") > left("W2-L5"), "L7 right of L5");
+  assert.ok(left("W2-L9") > left("W2-L8"), "the chain ascends to the right");
+  assert.equal(left("W2-L6"), 0, "a dep-less lane sits at column 0");
+  // the completed toggle reveals the finished program
+  const fin = byClass(tl, "tl-finished-toggle")[0];
+  assert.ok(fin, "the completed toggle renders when a finished program exists");
+  assert.ok(collectText(fin).indexOf("completed: hidden (1)") !== -1, "toggle names the hidden count");
+  fin.click();
+  const tl2 = dom.getElementById("timeline-view");
+  const programs2 = byClass(tl2, "tl-program");
+  assert.ok(!programs2[1].classList.contains("collapsed"), "toggle reveals the finished program");
+  assert.ok(collectText(byClass(tl2, "tl-finished-toggle")[0]).indexOf("completed: shown") !== -1, "toggle label flips");
+});
+
+test("W2-L2: timeline node dots exercise every hue; click opens the lane detail; state survives polls", () => {
+  const { app, dom } = makeQaApp("full");
+  const tl = dom.getElementById("timeline-view");
+  const dotOf = (rid) => byClass(findByData(tl, "data-row-id", rid), "tl-dot")[0];
+  assert.ok(dotOf("W2-L1").classList.contains("tl-dot--yellow"), "forged + session active 900s -> yellow (machine-observed working)");
+  assert.ok(dotOf("W2-L7").classList.contains("tl-dot--yellow"), "in-flight -> yellow");
+  assert.ok(dotOf("W2-L3").classList.contains("tl-dot--green"), "done -> green");
+  assert.equal(byClass(findByData(tl, "data-row-id", "W2-L3"), "tl-verified").length, 1, "verified overlay on the done lane");
+  assert.equal(byClass(findByData(tl, "data-row-id", "W2-L5"), "tl-verified").length, 0, "no overlay when unverified");
+  assert.ok(dotOf("W2-L5").classList.contains("tl-dot--red"), "failed -> red");
+  assert.ok(dotOf("W2-L4").classList.contains("tl-dot--red"), "partial -> red");
+  assert.ok(dotOf("W2-L9").classList.contains("tl-dot--red"), "stalled in-flight -> red (the stall beats working)");
+  assert.ok(dotOf("W2-L2").classList.contains("tl-dot--yellow"), "launched + no session -> yellow (the status is machine-honest)");
+  assert.ok(dotOf("W2-L6").classList.contains("tl-dot--grey"), "parked -> grey");
+  assert.ok(dotOf("W2-L8").classList.contains("tl-dot--grey"), "UNPARSED -> grey");
+  assert.equal(byClass(findByData(tl, "data-row-id", "W2-L4"), "tl-verifydue").length, 1, "verify_due cue renders");
+  assert.equal(byClass(findByData(tl, "data-row-id", "W2-L3"), "tl-verifydue").length, 0, "no cue when verify_due null");
+  // click opens the detail (session id, branch, MR ref, last activity, status)
+  const node = findByData(tl, "data-row-id", "W2-L1");
+  assert.ok(byClass(node, "tl-detail")[0].classList.contains("collapsed"), "detail ships collapsed");
+  node.click();
+  assert.ok(!byClass(node, "tl-detail")[0].classList.contains("collapsed"), "click opens the detail");
+  const detText = collectText(byClass(node, "tl-detail")[0]);
+  for (const bit of ["session s-101", "branch secfix/w2-l1", "mr !34 open", "active 15m ago", "status forged"]) {
+    assert.ok(detText.indexOf(bit) !== -1, "detail names: " + bit);
+  }
+  app.render(); // a poll tick — ages change, the view rebuilds
+  const nodeAfter = findByData(dom.getElementById("timeline-view"), "data-row-id", "W2-L1");
+  assert.ok(!byClass(nodeAfter, "tl-detail")[0].classList.contains("collapsed"), "the expanded detail survives the poll rebuild");
+  nodeAfter.click();
+  assert.ok(
+    byClass(findByData(dom.getElementById("timeline-view"), "data-row-id", "W2-L1"), "tl-detail")[0].classList.contains("collapsed"),
+    "click closes the detail"
+  );
+});
+
+test("W2-L2: wave-column fallback — lanes without a deps key render waves as columns, edges implied", () => {
+  const doc = JSON.parse(JSON.stringify(parseIndexMocks(readWebFile("index.html")).minimal));
+  doc.programs = [
+    {
+      program: "legacy",
+      note_path: "",
+      note_mtime: 1789861800,
+      objective: "",
+      master: { session_id: null, title: null, last_active_ago_s: null },
+      lanes: [
+        { row_id: "W2-L1", repo: "r", branch: null, slug: null, status_note: "in-flight", status_parsed: "in-flight", manifest: null, session: null, goal: null, signals: { pushed: null, mr: null }, suggest_verify: null, stalled: null },
+        { row_id: "W2-L2", repo: "r", branch: null, slug: null, status_note: "done", status_parsed: "done", manifest: null, session: null, goal: null, signals: { pushed: null, mr: null }, suggest_verify: null, stalled: null },
+        { row_id: "W3-L1", repo: "r", branch: null, slug: null, status_note: "forged", status_parsed: "forged", manifest: null, session: null, goal: null, signals: { pushed: null, mr: null }, suggest_verify: null, stalled: null },
+        { row_id: "X-9", repo: "r", branch: null, slug: null, status_note: "", status_parsed: "UNPARSED", manifest: null, session: null, goal: null, signals: { pushed: null, mr: null }, suggest_verify: null, stalled: null },
+      ],
+    },
+  ];
+  const dom = buildMockDom(parseIndexMocks(readWebFile("index.html")));
+  const MCW = loadApp();
+  const deps = MCW.createDeps({ document: dom, now: () => FIXED_NOW_MS, location: fakeLocation({}) });
+  const app = MCW.createApp(deps);
+  app.setDocument(doc);
+  app.render();
+  const tl = dom.getElementById("timeline-view");
+  assert.equal(byClass(tl, "tl-edge").length, 0, "no edge lines in the fallback — edges are implied left-to-right");
+  const heads = byClass(tl, "tl-wave-head").map((h) => collectText(h).replace("→", "").trim());
+  assert.deepEqual(heads, ["wave 2", "wave 3", "(unsorted)"], "wave columns ascend; unparseable ids land last");
+  assert.equal(byClass(tl, "tl-node").length, 4, "every lane renders as a node");
+  assert.equal(byClass(tl, "tl-wave-arrow").length, 2, "the implied-direction arrow follows every column but the last");
+  // the served pre-L1 shape (no deps anywhere) never throws and never blocks
+  assert.doesNotThrow(() => app.render(), "the fallback re-renders clean");
+});
+
+test("W2-L2: needs-me tab — rows, kind classes, deep link, empty states, cue clearing", () => {
+  const { app, dom } = makeQaApp("full");
+  app.setView("needs");
+  const needs = dom.getElementById("needs-view");
+  const rows = byClass(needs, "needs-row");
+  assert.equal(rows.length, 3, "all three needs_me items render");
+  assert.deepEqual(rows.map((r) => r.attrs["data-row-id"]), ["W2-L1", "W2-L4", "W2-L9"], "served order");
+  assert.ok(rows[0].classList.contains("needs-row--merge-ready"), "merge-ready class");
+  assert.ok(rows[1].classList.contains("needs-row--verify-due"), "verify-due class");
+  assert.ok(rows[2].classList.contains("needs-row--stalled"), "stalled class");
+  assert.ok(collectText(rows[0]).indexOf("merge !34 — pipeline green") !== -1, "action text verbatim");
+  const link = byClass(rows[0], "needs-link")[0];
+  assert.ok(link, "a deep_link renders as an anchor");
+  assert.equal(link.attrs.href, "https://gitlab.example/cleo/cleo/-/merge_requests/34", "href verbatim from the data");
+  assert.equal(link.attrs.target, "_blank", "the deep link opens a new tab");
+  assert.equal(link.attrs.rel, "noopener noreferrer", "the anchor is rel-hardened");
+  assert.equal(byClass(rows[1], "needs-link").length, 0, "null deep_link renders no anchor");
+  // cue clearing: re-render from state WITHOUT the stalled row -> the cue is gone
+  const mocks = parseIndexMocks(readWebFile("index.html"));
+  const d2 = JSON.parse(JSON.stringify(mocks.full));
+  d2.needs_me = d2.needs_me.filter((r) => r.kind !== "stalled");
+  app.setDocument(d2);
+  app.render();
+  const needs2 = dom.getElementById("needs-view");
+  assert.equal(byClass(needs2, "needs-row").length, 2, "the cleared item is gone");
+  assert.strictEqual(findByData(needs2, "data-row-id", "W2-L9"), null, "no local sticky state");
+  // empty needs_me -> the pinned empty state
+  const mini = makeQaApp("minimal");
+  mini.app.setView("needs");
+  assert.ok(collectText(mini.dom.getElementById("needs-view")).indexOf("nothing needs you right now") !== -1, "pinned empty-state wording");
+  // pre-contract doc (needs_me key absent) -> same words + the honest pointer
+  const pre = makeQaApp("minimal");
+  const preDoc = JSON.parse(JSON.stringify(parseIndexMocks(readWebFile("index.html")).minimal));
+  delete preDoc.needs_me;
+  pre.app.setDocument(preDoc);
+  pre.app.render();
+  pre.app.setView("needs");
+  const preNeeds = pre.dom.getElementById("needs-view");
+  assert.ok(collectText(preNeeds).indexOf("nothing needs you right now") !== -1, "pre-contract empty state");
+  assert.ok(collectText(preNeeds).indexOf("contract v2") !== -1, "the pre-contract pointer is honest about the feed");
+});
+
+test("W2-L2: degraded parse cards — note_path + defect verbatim; absent key renders nothing", () => {
+  const { dom } = makeQaApp("full");
+  const tl = dom.getElementById("timeline-view");
+  const cards = byClass(tl, "defect-card");
+  assert.equal(cards.length, 1, "one card per defect entry");
+  const text = collectText(cards[0]);
+  assert.ok(text.indexOf("vault/hsp/hsp-phase1.md") !== -1, "note_path verbatim");
+  assert.ok(text.indexOf("line 12: prompt-log table missing") !== -1, "line + defect verbatim");
+  const pre = makeQaApp("minimal");
+  const preDoc = JSON.parse(JSON.stringify(parseIndexMocks(readWebFile("index.html")).minimal));
+  delete preDoc.parse_defects;
+  pre.app.setDocument(preDoc);
+  pre.app.render();
+  assert.equal(byClass(pre.dom.getElementById("timeline-view"), "defect-card").length, 0, "parse_defects absent -> no degraded cards");
+});
+
+test("W2-L2: card view — done/parked lanes collapse under their own head; finished card demotes", () => {
+  const { app, dom } = makeQaApp("full");
+  const col1 = dom.getElementById("col1-programs");
+  const secfix = byClass(col1, "program-card")[0];
+  assert.ok(!secfix.classList.contains("program-card--done"), "an active program keeps the full card");
+  const sub = byClass(secfix, "done-sub")[0];
+  assert.ok(sub, "done/parked lanes get their own sub");
+  assert.ok(sub.classList.contains("collapsed"), "collapsed by default");
+  const subHead = byClass(sub, "done-sub-head")[0];
+  assert.equal(collectText(subHead), "done/parked (2)", "head counts the settled lanes (L3 done + L6 parked)");
+  assert.equal(subHead.attrs["aria-expanded"], "false", "ships collapsed");
+  assert.ok(findByData(sub, "data-row-id", "W2-L3"), "the done lane stays in the DOM (CSS-hidden)");
+  assert.ok(findByData(sub, "data-row-id", "W2-L6"), "the parked lane stays in the DOM");
+  subHead.click();
+  assert.equal(subHead.attrs["aria-expanded"], "true", "click expands");
+  app.render();
+  const subAfter = byClass(dom.getElementById("col1-programs"), "done-sub")[0];
+  assert.equal(byClass(subAfter, "done-sub-head")[0].attrs["aria-expanded"], "true", "expansion survives the poll rebuild");
+  // omniforge (single done lane) demotes to a collapsed row
+  const omni = byClass(col1, "program-card")[1];
+  assert.ok(omni.classList.contains("program-card--done"), "the finished card carries the demotion class");
+  assert.ok(collectText(omni).indexOf("all lanes done/parked — collapsed") !== -1, "the demotion caption reads");
+  const omniList = byClass(omni, "lane-list")[0];
+  assert.ok(omniList.classList.contains("collapsed"), "the lane list ships collapsed");
+  byClass(omni, "card-head")[0].click();
+  const omni2 = byClass(dom.getElementById("col1-programs"), "program-card")[1];
+  assert.ok(!byClass(omni2, "lane-list")[0].classList.contains("collapsed"), "head click expands the finished card");
 });
 
 // ---------------- runner ----------------
