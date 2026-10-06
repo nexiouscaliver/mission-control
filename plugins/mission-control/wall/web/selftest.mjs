@@ -739,8 +739,10 @@ const NINE_CASES = [
 // exactly; the conformance mocks must equal KEYSETS at every level (AC-31).
 // Contract v2 (pinned 2026-10-06, shared with W2-L1): root gains
 // parse_defects + needs_me; lane gains deps/verified/verify_due.
+// Contract v3 (pinned 2026-10-07, wall-honesty W5-L5): root gains
+// sessions_orphaned + the orphanedRow shape (conservation surfacing).
 const FROZEN_MANIFEST = {
-  root: ["schema_version", "server", "programs", "verify_queue", "human_actions", "sessions_unmapped", "launch_pending", "wall", "parse_defects", "needs_me"],
+  root: ["schema_version", "server", "programs", "verify_queue", "human_actions", "sessions_unmapped", "sessions_orphaned", "launch_pending", "wall", "parse_defects", "needs_me"],
   server: ["uptime_s", "generated_ts", "degraded", "banner"],
   program: ["program", "note_path", "note_mtime", "objective", "master", "lanes"],
   master: ["session_id", "title", "last_active_ago_s"],
@@ -756,6 +758,7 @@ const FROZEN_MANIFEST = {
   verifyRow: ["row_id", "program", "finished_ago_s", "master_hint", "verify_cmd"],
   humanRow: ["kind", "ref", "repo", "repo_host", "title", "pipeline", "ready"],
   unmappedRow: ["id", "title", "dir", "last_active_ago_s", "parent_session_id", "parent_title"],
+  orphanedRow: ["id", "title", "tag", "last_active_ago_s"],
   needsMeRow: ["kind", "row_id", "program", "action", "deep_link"],
   parseDefect: ["note_path", "line", "defect", "row_id"],
   wall: ["pending"],
@@ -798,6 +801,7 @@ function assertManifestWalk(doc, caseName) {
   for (const row of doc.verify_queue) assertKeySet(row, K.verifyRow, caseName + " verify " + row.row_id);
   for (const row of doc.human_actions) assertKeySet(row, K.humanRow, caseName + " human " + row.ref);
   for (const row of doc.sessions_unmapped) assertKeySet(row, K.unmappedRow, caseName + " unmapped " + row.id);
+  for (const row of doc.sessions_orphaned) assertKeySet(row, K.orphanedRow, caseName + " orphaned " + row.id);
   for (const row of doc.needs_me) assertKeySet(row, K.needsMeRow, caseName + " needs_me " + row.row_id);
   for (const row of doc.parse_defects) assertKeySet(row, K.parseDefect, caseName + " parse_defects " + (row.note_path || "?"));
   assertKeySet(doc.wall, K.wall, caseName + " wall");
@@ -818,11 +822,11 @@ function buildMockDom(mocks) {
   return dom;
 }
 
-test("T2-state: KEYSETS manifest frozen (20 manifests; master 3 keys; wallPending 15 keys)", () => {
+test("T2-state: KEYSETS manifest frozen (21 manifests; master 3 keys; wallPending 15 keys)", () => {
   const K = loadApp().state.KEYSETS;
   assert.ok(K, "MCW.state.KEYSETS must exist");
   assert.deepEqual(K, FROZEN_MANIFEST, "KEYSETS must equal the frozen manifest of record");
-  assert.equal(sortedKeys(K).length, 20, "exactly 20 manifest entries (v2: +needsMeRow, +parseDefect)");
+  assert.equal(sortedKeys(K).length, 21, "exactly 21 manifest entries (v2: +needsMeRow, +parseDefect; v3: +orphanedRow)");
   assert.equal(K.master.length, 3, "master is the tower-section-9 3-key shape");
   assert.equal(K.wallPending.length, 15, "wall.pending is the 15-key pending.json record");
   assert.equal(K.lane.length, 15, "v2 lane: the 12 v1 keys + deps/verified/verify_due");
@@ -2292,7 +2296,7 @@ test("AC-16: Col 3 — repo groups, master row, idle>24h collapse, unmapped stri
   // show-all (the reveal re-renders: older rows are not in the DOM until shown).
   const strip = byClass(col3, "unmapped-strip")[0];
   assert.ok(strip, "unmapped strip present, visually separated");
-  assert.ok(collectText(byClass(strip, "unmapped-head")[0]).indexOf("unmapped (1 · 1 older)") !== -1, "strip head counts visible + older");
+  assert.ok(collectText(byClass(strip, "unmapped-head")[0]).indexOf("unmapped (1 · 1 older · 1 orphaned)") !== -1, "strip head counts visible + older + orphaned (v3)");
   const umRows = byClass(strip, "unmapped-row");
   assert.equal(umRows.length, 1, "default view: only the last-hour row renders");
   assert.ok(
@@ -2301,7 +2305,7 @@ test("AC-16: Col 3 — repo groups, master row, idle>24h collapse, unmapped stri
   );
   byClass(strip, "unmapped-toggle")[0].click();
   const stripOpen = byClass(col3, "unmapped-strip")[0];
-  assert.ok(collectText(byClass(stripOpen, "unmapped-head")[0]).indexOf("unmapped (2)") !== -1, "show-all reveals the older tail");
+  assert.ok(collectText(byClass(stripOpen, "unmapped-head")[0]).indexOf("unmapped (2 · 1 orphaned)") !== -1, "show-all reveals the older tail (orphaned still named)");
   const um1 = findByData(stripOpen, "data-session-id", "s-unmapped-1");
   assert.ok(collectText(um1).indexOf("scratch: rebase experiment") !== -1, "unmapped title");
   assert.ok(collectText(um1).indexOf("2d") !== -1, "age humanized (172800s -> 2d)");
@@ -2851,7 +2855,7 @@ test("AC-10: banned word — no /\\bfinished\\b/i in any case's rendered text", 
     assert.ok(!/\bfinished\b/i.test(text), name + " rendered text contains the banned word");
     if (name === "full") {
       // coverage guard: the scan must SEE col3 + the armed bar (where a leak would hide)
-      assert.ok(text.indexOf("unmapped (1 · 1 older)") !== -1, "scan covers col3 text (filtered head)");
+      assert.ok(text.indexOf("unmapped (1 · 1 older · 1 orphaned)") !== -1, "scan covers col3 text (filtered head)");
       assert.ok(text.indexOf("prompt armed") !== -1, "scan covers the armed bar text");
       assert.ok(text.indexOf("PARSE DEFECTS") !== -1, "scan covers the timeline tab");
     }
@@ -4718,8 +4722,10 @@ test("W2-L2: degraded parse cards — note_path + defect verbatim; absent key re
   const { dom } = makeQaApp("full");
   const tl = dom.getElementById("timeline-view");
   const cards = byClass(tl, "defect-card");
-  assert.equal(cards.length, 1, "one card per defect entry");
-  const text = collectText(cards[0]);
+  // v3 re-pin (wall-honesty W5-L5): mock-full now carries the five wh1 defect
+  // classes alongside the v2 fixture defect — one card per entry holds.
+  assert.equal(cards.length, 6, "one card per defect entry (1 v2 + 5 wh1 kinds)");
+  const text = collectText(tl);
   assert.ok(text.indexOf("vault/hsp/hsp-phase1.md") !== -1, "note_path verbatim");
   assert.ok(text.indexOf("line 12: prompt-log table missing") !== -1, "line + defect verbatim");
   const pre = makeQaApp("minimal");
@@ -4728,6 +4734,77 @@ test("W2-L2: degraded parse cards — note_path + defect verbatim; absent key re
   pre.app.setDocument(preDoc);
   pre.app.render();
   assert.equal(byClass(pre.dom.getElementById("timeline-view"), "defect-card").length, 0, "parse_defects absent -> no degraded cards");
+});
+
+// =====================================================================
+// W5-L5 wall-honesty (v1.11.1 — the 2026-10-07 lane-invisibility incident):
+// the six incident classes render. A1-A5 parse-defect kinds flow through the
+// existing defect-card grammar (one mock row per kind); A6 conservation
+// surfaces in the wall strip, including the incident's exact 0-unmapped
+// shape and the pre-v3 absent-key fallback.
+// =====================================================================
+
+test("wh1 A1-A5: the five new parse-defect kinds render verbatim in the defect strip", () => {
+  const { dom } = makeQaApp("full");
+  const tl = dom.getElementById("timeline-view");
+  const cards = byClass(tl, "defect-card");
+  assert.equal(cards.length, 6, "one card per defect entry (1 v2 + 5 wh1 kinds)");
+  const text = collectText(tl);
+  assert.ok(text.indexOf("blank line inside prompt-log table") !== -1, "A2 blank-line defect verbatim");
+  assert.ok(text.indexOf("lane row outside prompt-log table") !== -1, "A1 stray-row defect verbatim");
+  assert.ok(text.indexOf("1 extra cells under variant-A header") !== -1, "A3 width defect verbatim");
+  assert.ok(text.indexOf("has no repo path token") !== -1, "A4 cell-parse defect verbatim");
+  assert.ok(text.indexOf("forged row W2-L5 absent from note parse (manifest exists)") !== -1, "A5 manifest-absent defect verbatim");
+  assert.ok(text.indexOf("line 0:") !== -1, "the manifest defect renders its line-0 address");
+});
+
+test("wh1 A6: orphaned sessions surface in the wall strip — reveal pattern + incident shape", () => {
+  // Populated mock: the head carries the orphan count and the collapsed
+  // orphan section renders with the same reveal pattern as background rows.
+  const qa = makeQaApp("full");
+  qa.app.setView("wall");
+  const col3 = qa.dom.getElementById("col3-sessions");
+  const stripText = collectText(col3);
+  assert.ok(stripText.indexOf("1 orphaned") !== -1, "head carries the orphan count");
+  assert.ok(stripText.indexOf("orphaned (1)") !== -1, "collapsed orphan toggle present");
+  assert.ok(stripText.indexOf("[secfix W9-L9] orphan lane session") !== -1, "orphan title rendered");
+  assert.ok(stripText.indexOf("secfix") !== -1, "the claimed program tag renders");
+  // The incident's exact shape: ZERO unmapped, orphans only — the strip still
+  // renders its orphans (yesterday the strip early-returned on empty unmapped).
+  const inc = makeQaApp("full");
+  const incDoc = JSON.parse(JSON.stringify(parseIndexMocks(readWebFile("index.html")).full));
+  incDoc.sessions_unmapped = [];
+  inc.app.setDocument(incDoc);
+  inc.app.render();
+  inc.app.setView("wall");
+  const incText = collectText(inc.dom.getElementById("col3-sessions"));
+  assert.ok(incText.indexOf("orphaned (1)") !== -1, "orphans render with an empty unmapped list");
+  assert.ok(incText.indexOf("[secfix W9-L9] orphan lane session") !== -1, "orphan row rendered at 0 unmapped");
+  // v3 root key absent (a pre-v3 server behind fresh assets): no orphan
+  // section, no throw — contract item 10.
+  const pre = makeQaApp("full");
+  const preDoc = JSON.parse(JSON.stringify(parseIndexMocks(readWebFile("index.html")).full));
+  delete preDoc.sessions_orphaned;
+  pre.app.setDocument(preDoc);
+  pre.app.render();
+  pre.app.setView("wall");
+  const preText = collectText(pre.dom.getElementById("col3-sessions"));
+  assert.ok(preText.indexOf("orphaned") === -1, "absent key -> no orphan section");
+});
+
+test("wh1 A6: per-program defect fallback — a pre-v3 doc (no root parse_defects) still renders its program defects", () => {
+  const qa = makeQaApp("full");
+  const doc = JSON.parse(JSON.stringify(parseIndexMocks(readWebFile("index.html")).full));
+  delete doc.parse_defects;
+  // give one program a defect the root aggregation would have carried
+  doc.programs[0].parse_defects = [
+    { note_path: "vault/wh1/fallback.md", line: 4, defect: "blank line inside prompt-log table", row_id: null },
+  ];
+  qa.app.setDocument(doc);
+  qa.app.render();
+  const cards = byClass(qa.dom.getElementById("timeline-view"), "defect-card");
+  assert.equal(cards.length, 1, "program-level defects aggregate when the root key is absent");
+  assert.ok(collectText(cards[0]).indexOf("fallback.md") !== -1, "the program defect names its note");
 });
 
 test("W2-L2: card view — done/parked lanes collapse under their own head; finished card demotes", () => {

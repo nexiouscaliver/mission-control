@@ -1553,7 +1553,10 @@ body.frozen .sig {
   content: "▸ ";
 }
 
-.unmapped-row {
+.unmapped-row,
+/* v3 wall-honesty: orphan rows mirror the unmapped-row grammar with their
+ * own class (they are a conservation surface, not unmapped sessions) */
+.orphan-row {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -1566,14 +1569,16 @@ body.frozen .sig {
   cursor: pointer;
 }
 
-.unmapped-row:hover {
+.unmapped-row:hover,
+.orphan-row:hover {
   background: var(--hover);
 }
 
 /* round 4b: title / age / id are separate segments — the row reads like a
  * table line at full width (title carries, age and id hang right) */
 
-.unmapped-row .unmapped-title {
+.unmapped-row .unmapped-title,
+.orphan-row .unmapped-title {
   flex: 1 1 240px;
   min-width: 0;
   overflow: hidden;
@@ -1582,12 +1587,14 @@ body.frozen .sig {
   font-weight: 600;
 }
 
-.unmapped-row .unmapped-age {
+.unmapped-row .unmapped-age,
+.orphan-row .unmapped-age {
   color: var(--dim);
   white-space: nowrap;
 }
 
-.unmapped-row:hover .unmapped-age {
+.unmapped-row:hover .unmapped-age,
+.orphan-row:hover .unmapped-age {
   color: var(--ink);
 }
 

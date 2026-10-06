@@ -186,7 +186,8 @@ def mcwallt_world(tmp_path, monkeypatch, *, include=("db", "notes", "goals", "ne
                   lane1_age_s=400.0, queue_age_s=3600.0, manifest=None,
                   master_tag="secfix-master", rows=None, extra_sessions=(),
                   second_program_done_lane=False, handler=None, name="mcwallt_world",
-                  discovery_degraded=(), discovery_disabled=False, extra_inputs=()):
+                  discovery_degraded=(), discovery_disabled=False, extra_inputs=(),
+                  forge_root=None):
     """Full §10 AC-E2E-1 fixture world: 1 program (tag secfix, master_tag
     secfix-master), 1 repo (gitlab, name mcwallt-repo), a variant-A note with
     lanes W1-L1 (done, configured repo+branch, !5 artifacts ref, sess_9a690ab2
@@ -204,8 +205,10 @@ def mcwallt_world(tmp_path, monkeypatch, *, include=("db", "notes", "goals", "ne
     §6.1 non-session activity epoch); ``manifest`` overrides manifest.json;
     ``master_tag``/``rows``/``extra_sessions``/``second_program_done_lane``/
     ``handler`` reshape the join/derivation surface; ``extra_inputs`` appends
-    session_input rows to the db build (tag pastes on extra sessions).
-    Re-calling with the same
+    session_input rows to the db build (tag pastes on extra sessions);
+    ``forge_root`` points the A5 manifest cross-check at a fixture dir (an
+    EMPTY tmp dir by default — hermeticity: the world never reads the real
+    ~/.mc-wall/forge). Re-calling with the same
     ``name`` in one test is safe (files are overwritten, the db re-created).
     """
     NOW = MCWALLT_WORLD_NOW
@@ -278,6 +281,8 @@ def mcwallt_world(tmp_path, monkeypatch, *, include=("db", "notes", "goals", "ne
         monkeypatch.setattr(netcache_module, "_run_cmd", fake)
 
     now_s, set_now = mcwallt_settable_clock(NOW)
+    if forge_root is None:
+        forge_root = str(tmp_path / (name + "_forge_empty"))  # hermetic: no manifests
     cfg = TowerConfig(
         db_path=db_path,
         programs=tuple(programs),
@@ -286,5 +291,6 @@ def mcwallt_world(tmp_path, monkeypatch, *, include=("db", "notes", "goals", "ne
         now_s=now_s,
         network_cache=NetCache(),
         discovery_degraded=discovery_degraded,
-        discovery_disabled=discovery_disabled)
+        discovery_disabled=discovery_disabled,
+        forge_root=forge_root)
     return cfg, set_now

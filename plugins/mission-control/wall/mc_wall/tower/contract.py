@@ -1,4 +1,4 @@
-"""Frozen-contract compliance (spec §9 + wall-overhaul contract v2): the
+"""Frozen-contract compliance (spec §9 + wall-overhaul contract v2/v3): the
 verbatim example, the declarative shape spec checked by ``assert_shape``, and
 the zero-value builders.
 
@@ -11,6 +11,13 @@ Contract v2 (schema_version 2): lanes carry ``deps`` / ``verified`` /
 ``verify_due``; programs carry ``parse_defects``; the document carries
 ``needs_me``; ``verify_queue_row.finished_ago_s`` is ``int|None`` (null =
 due-with-unknown-age: a done/partial lane with no joined session).
+
+Contract v3 (wall-honesty, v1.11.1 — W5-L5): the document carries
+``sessions_orphaned`` (tagged-for-a-known-program sessions bound to no lane;
+the 2026-10-07 incident's invisible class) and a ROOT ``parse_defects``
+aggregation (flattened per-program defects — the web's defect strip key the
+tower never emitted before). Both additive; W4-L4's ``merges[]`` rides the
+same version when absorbed.
 """
 
 import json
@@ -18,7 +25,7 @@ import json
 STR, INT, NULSTR = str, int, "str|None"
 
 # The §9 example, verbatim (json.loads preserves key insertion order).
-CONTRACT_EXAMPLE = json.loads(r'''{"schema_version":2,"server":{"uptime_s":0,"generated_ts":0,"degraded":[],"banner":null},
+CONTRACT_EXAMPLE = json.loads(r'''{"schema_version":3,"server":{"uptime_s":0,"generated_ts":0,"degraded":[],"banner":null},
  "programs":[{"program":"secfix","note_path":"","note_mtime":0,"objective":"","parse_defects":[],
    "master":{"session_id":null,"title":null,"last_active_ago_s":null},
    "lanes":[{"row_id":"W2-L5","repo":"cleo","branch":null,"slug":null,
@@ -31,6 +38,8 @@ CONTRACT_EXAMPLE = json.loads(r'''{"schema_version":2,"server":{"uptime_s":0,"ge
  "human_actions":[{"kind":"merge","ref":"","repo":"","repo_host":"","title":"","pipeline":"","ready":true}],
  "needs_me":[{"kind":"merge-ready","row_id":"","program":"","action":"","deep_link":null}],
  "sessions_unmapped":[{"id":"","title":"","dir":"","last_active_ago_s":0,"parent_session_id":null,"parent_title":null}],
+ "sessions_orphaned":[{"id":"","title":"","tag":"","last_active_ago_s":0}],
+ "parse_defects":[{"note_path":"","line":0,"defect":"","row_id":null}],
  "launch_pending":null}''')
 
 # Declarative shape spec, checked recursively by assert_shape:
@@ -53,6 +62,9 @@ SHAPES = {
         "human_actions": ["human_action_row"],
         "needs_me": ["needs_me_row"],
         "sessions_unmapped": ["unmapped_row"],
+        # contract v3 (wall-honesty): conservation + root defect aggregation
+        "sessions_orphaned": ["orphaned_row"],
+        "parse_defects": ["parse_defect"],
         "launch_pending": _ANY,
     },
     "server": {"uptime_s": INT, "generated_ts": INT, "degraded": [STR], "banner": NULSTR},
@@ -86,6 +98,9 @@ SHAPES = {
                      "deep_link": "str|None"},
     "unmapped_row": {"id": STR, "title": STR, "dir": STR, "last_active_ago_s": INT,
                      "parent_session_id": NULSTR, "parent_title": NULSTR},
+    # contract v3 (wall-honesty A6): the orphaned-row family — same shape
+    # family as unmapped, with the program tag that names the claim.
+    "orphaned_row": {"id": STR, "title": STR, "tag": STR, "last_active_ago_s": INT},
 }
 
 _PRIMITIVES = {"str": str, "int": int, "float": float, "bool": bool, "None": type(None)}
@@ -175,10 +190,10 @@ def lane_shell(row_id: str, repo: str | None, branch: str | None, slug: str | No
 
 def zero_document(program_names: list[str], uptime_s: int, generated_ts: int,
                   banner: str | None) -> dict:
-    """All-keys-present zero document (§9 + contract v2); the caller supplies
+    """All-keys-present zero document (§9 + contract v2/v3); the caller supplies
     provider values (keeps this module config-free)."""
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "server": {"uptime_s": uptime_s, "generated_ts": generated_ts,
                    "degraded": [], "banner": banner},
         "programs": [{"program": name, "note_path": "", "note_mtime": 0,
@@ -189,5 +204,7 @@ def zero_document(program_names: list[str], uptime_s: int, generated_ts: int,
         "human_actions": [],
         "needs_me": [],
         "sessions_unmapped": [],
+        "sessions_orphaned": [],
+        "parse_defects": [],
         "launch_pending": None,
     }

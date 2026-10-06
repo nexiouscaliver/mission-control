@@ -16,7 +16,7 @@ import json
 import logging
 import os
 
-from . import contract, derive, goals, notes, session_store, signals
+from . import contract, derive, forge, goals, notes, session_store, signals
 from .config import TowerConfig
 
 _DISCOVERY_DISABLED_LOGGED = False  # decision 3b: the wall.log disabled-line lands once per process
@@ -57,14 +57,20 @@ def _collect(config: TowerConfig) -> dict:
                        #  mr_failed) per record for T-6's human_actions.
     for i, p in enumerate(config.programs):
         programs.append(_read_program_notes(config, p, i, log, lane_records))
-    sessions_unmapped, session_epochs = _read_sessions(config, now, log, programs,
-                                                       lane_records)
+    sessions_unmapped, sessions_orphaned, session_epochs = _read_sessions(
+        config, now, log, programs, lane_records)
     _read_goals(config, log, lane_records)
     _read_signals(config, log, lane_records, now)
     verify_queue, human_actions, needs_me = _derive(config, programs, log,
                                                     lane_records, session_epochs,
                                                     now)
-    return {"schema_version": 2,
+    # Wall-honesty root aggregation (v1.11.1): parse_defects at the STATE root
+    # = the flattened per-program defects (doc order), so the web's existing
+    # defect strip renders tower defects without a second parser. The tower
+    # previously carried defects ONLY per program while the web contract had
+    # pinned a root key it never emitted — closed here.
+    root_defects = [d for prog in programs for d in prog["parse_defects"]]
+    return {"schema_version": 3,
             "server": {"uptime_s": int(config.uptime_s_provider()),
                        "generated_ts": int(now),
                        "degraded": log.emit(),
@@ -74,6 +80,8 @@ def _collect(config: TowerConfig) -> dict:
             "human_actions": human_actions,
             "needs_me": needs_me,
             "sessions_unmapped": sessions_unmapped,
+            "sessions_orphaned": sessions_orphaned,
+            "parse_defects": root_defects,
             "launch_pending": launch}
 
 
@@ -87,13 +95,21 @@ def _read_program_notes(config: TowerConfig, program, idx: int,
     item 2) — the lanes that CAN parse still render. Entry 10 is ADDED once
     per program when any row was skipped, carrying the count AND (contract v2)
     the note path — so two programs skipping the same number of rows no longer
-    dedup into one ambiguous line."""
+    dedup into one ambiguous line.
+
+    Wall-honesty A5 (v1.11.1): the forge-manifest cross-check runs for EVERY
+    program — every write-once manifest row_id absent from the parse alarms as
+    a line-0 (TOP) defect. This survives table breaks of ANY cause and fires
+    even on the glob-miss/undecodable zero paths (every forged row is then
+    absent by definition)."""
     zero = {"program": program.program, "note_path": "", "note_mtime": 0,
             "objective": "", "parse_defects": [],
             "master": contract.null_master(), "lanes": []}
     path = notes.find_note(program.note_glob)
     if path is None:
         log.add((1, idx, 0, ""), f"notes degraded: {program.program}")
+        zero["parse_defects"] = forge.missing_row_defects(
+            config.forge_root, program.program, set(), "")
         return zero
     try:
         with open(path, "rb") as fh:          # bytes + decode: an undecodable
@@ -101,6 +117,8 @@ def _read_program_notes(config: TowerConfig, program, idx: int,
         mtime = int(os.stat(path).st_mtime)
     except (OSError, UnicodeDecodeError):
         log.add((1, idx, 0, ""), f"notes degraded: {program.program}")
+        zero["parse_defects"] = forge.missing_row_defects(
+            config.forge_root, program.program, set(), "")
         return zero
     abs_path = os.path.abspath(path)
     parsed = notes.parse_note(text, note_path=abs_path)
@@ -118,9 +136,14 @@ def _read_program_notes(config: TowerConfig, program, idx: int,
                              row.mr_hash, row.verified))
     if parsed.skipped >= 1:
         log.add((1, idx, 1, ""), f"note rows skipped: {parsed.skipped} ({abs_path})")
+    # A5: manifest row_ids the parse did NOT produce alarm at line 0 (TOP).
+    defects = parsed.defects + forge.missing_row_defects(
+        config.forge_root, program.program, {r.row_id for r in parsed.rows},
+        abs_path)
+    defects.sort(key=lambda d: d["line"])  # stable: line 0 (manifest) first
     return {"program": program.program, "note_path": abs_path,
             "note_mtime": mtime, "objective": parsed.objective,
-            "parse_defects": parsed.defects,
+            "parse_defects": defects,
             "master": contract.null_master(), "lanes": lanes}
 
 
@@ -139,16 +162,18 @@ def _map_repo(repos, repo_token: str | None) -> tuple[str | None, int | None]:
 
 
 def _read_sessions(config: TowerConfig, now: float, log: "DegradedLog",
-                   programs: list, lane_records: list) -> tuple[list[dict], dict]:
+                   programs: list, lane_records: list) -> tuple[list[dict], list[dict], dict]:
     """§4.1 session-store read: ro-open + schema check + ONE unit probe; ANY
     failure -> entry 1 (unreadable/operational) or entry 2 (schema drift), with
-    ALL session data left nulled (lane.session everywhere, masters, and no
-    unmapped rows — strict fail-open, never partial data). Healthy: windowed
-    tag scan, per-program masters, per-lane token joins, unmapped enumeration.
-    Returns (sessions_unmapped rows, {id(lane): session time_updated epoch in
-    SECONDS} for T-6's stalled derivation — keyed by the lane dict's identity;
-    a NULL timestamp never enters the map, and every failure path returns an
-    empty map so a degraded db contributes no activity epochs)."""
+    ALL session data left nulled (lane.session everywhere, masters, no
+    unmapped rows, no orphan rows — strict fail-open, never partial data).
+    Healthy: windowed tag scan, per-program masters, per-lane token joins,
+    unmapped enumeration, and the wall-honesty conservation pass (A6).
+    Returns (sessions_unmapped rows, sessions_orphaned rows, {id(lane):
+    session time_updated epoch in SECONDS} for T-6's stalled derivation —
+    keyed by the lane dict's identity; a NULL timestamp never enters the map,
+    and every failure path returns empty maps so a degraded db contributes no
+    activity epochs)."""
     try:
         store = session_store.resolve(config.store)
         con = store.open_db_ro(config.db_path)
@@ -156,12 +181,12 @@ def _read_sessions(config: TowerConfig, now: float, log: "DegradedLog",
         raise  # unknown store name: a config error, never degraded-away
     except Exception:
         log.add((0, 0, 0, ""), store.DEGRADED_UNREADABLE)
-        return [], {}
+        return [], [], {}
     try:
         cur = con.cursor()
         if store.check_schema(cur):
             log.add((0, 0, 0, ""), store.DEGRADED_SCHEMA_DRIFT)
-            return [], {}
+            return [], [], {}
         # Exactly ONE unit probe per collect; all cutoffs derive from it.
         factor = store.probe_factor(cur)
         return _join_sessions(config, store, cur, now, factor, log, programs, lane_records)
@@ -175,19 +200,19 @@ def _read_sessions(config: TowerConfig, now: float, log: "DegradedLog",
         for record in lane_records:
             record[1]["session"] = None
         log.add((0, 0, 0, ""), store.DEGRADED_UNREADABLE)
-        return [], {}
+        return [], [], {}
     finally:
         con.close()
 
 
 def _join_sessions(config: TowerConfig, store, cur, now: float, factor: int,
-                   log: "DegradedLog", programs: list, lane_records: list) -> tuple[list[dict], dict]:
+                   log: "DegradedLog", programs: list, lane_records: list) -> tuple[list[dict], list[dict], dict]:
     """Healthy-path §5 joins: windowed tag scan (entry 7 per ambiguous session,
     ordered by sid via the log key), newest-wins masters, token-prefix lane
     joins (entry 9 on ambiguity), tag-driven binding of token-less lanes
     (SC-3: paste-primary with title fallback, newest-wins on contention), then
-    the §6.5 unmapped enumeration. Returns (unmapped rows, lane ->
-    joined-session time_updated epoch in seconds)."""
+    the §6.5 unmapped enumeration. Returns (unmapped rows, orphaned rows,
+    lane -> joined-session time_updated epoch in seconds)."""
     prods = store.scan_tag_products(
         cur, store.cutoff_stored(now, config.tag_scan_window_s, factor))
     tag_map = {sid: store.products_to_tags(p) for sid, p in prods.items()}
@@ -296,9 +321,63 @@ def _join_sessions(config: TowerConfig, store, cur, now: float, factor: int,
         if epoch is not None:
             session_epochs[id(lane)] = epoch
     tag_map_view = {sid: tags for sid, tags in tag_map.items() if sid not in invisible_drop}
-    return (store.unmapped_rows(cur, now, factor, config.session_window_s,
-                                joined_ids, tag_map_view, configured_tags),
-            session_epochs)
+    unmapped = store.unmapped_rows(cur, now, factor, config.session_window_s,
+                                   joined_ids, tag_map_view, configured_tags)
+    orphaned, unaccounted = _conservation_pass(
+        store, cur, now, factor, config, programs, joined_ids, tag_map,
+        title_pairs, configured_tags, unmapped, log)
+    return (unmapped, orphaned, session_epochs)
+
+
+def _conservation_pass(store, cur, now: float, factor: int,
+                       config: TowerConfig, programs: list, joined_ids: set,
+                       tag_map: dict, title_pairs: dict,
+                       configured_tags: dict, unmapped: list,
+                       log: "DegradedLog") -> tuple[list[dict], set]:
+    """Wall-honesty A6 (v1.11.1 — the incident's Layer-2, dead): every session
+    in the activity window is accounted — lane-bound (joined), unmapped,
+    master-bound, orphan-tagged (its scanned tag/title names a KNOWN program
+    but it binds to no lane — the incident's invisible class, now surfaced in
+    ``sessions_orphaned``), or background-excluded (sess_subagent_*). A window
+    session that fits NO class emits ONE conservation defect into degraded —
+    the tripwire that makes any future exclusion change fail loud instead of
+    quietly hiding sessions again."""
+    try:
+        window = store.window_sessions(cur, now, factor, config.session_window_s)
+    except Exception:
+        # The conservation pass must never break the collect: an adapter
+        # without window support degrades to no orphans + one defect line.
+        log.add((0, 0, 1, ""), "conservation defect: window scan failed")
+        return [], set()
+    window_ids = set(window)
+    background = {sid for sid in window_ids if sid.startswith("sess_subagent_")}
+    master_ids = {p["master"]["session_id"] for p in programs
+                  if p["master"]["session_id"] is not None}
+    unmapped_ids = {r["id"] for r in unmapped}
+    orphan_rows: list[dict] = []
+    orphan_ids: set = set()
+    for sid in sorted(window_ids - background - joined_ids - unmapped_ids
+                      - master_ids):
+        known = sorted(t for t in tag_map.get(sid, set()) if t in configured_tags)
+        pair = title_pairs.get(sid)
+        if pair is not None and pair[0] in configured_tags:
+            known.append(pair[0])
+        if not known:
+            continue  # not program-tagged: falls through to the tripwire
+        row = window[sid]
+        ts = store.to_seconds(row["time_updated"])
+        orphan_rows.append({"id": sid,
+                            "title": row["title"] if row["title"] is not None else "",
+                            "tag": known[0],
+                            "last_active_ago_s": max(0, int(now - ts)) if ts is not None else 0})
+        orphan_ids.add(sid)
+    orphan_rows.sort(key=lambda r: (r["last_active_ago_s"], r["id"]))
+    unaccounted = (window_ids - background - joined_ids - unmapped_ids
+                   - master_ids - orphan_ids)
+    if unaccounted:
+        log.add((0, 0, 1, ""),
+                f"conservation defect: {len(unaccounted)} sessions unaccounted")
+    return orphan_rows, unaccounted
 
 
 def _read_goals(config: TowerConfig, log: "DegradedLog", lane_records: list) -> None:

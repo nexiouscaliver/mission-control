@@ -159,7 +159,10 @@ def test_tl1_collect_defects_and_degraded_line_gain_path(tmp_path):
 # --- items 1/10: lane/program/state contract keys, schema 2 (EXPECT-4) --------
 
 def test_tl1_contract_example_is_schema_2_and_passes_shape():
-    assert contract.CONTRACT_EXAMPLE["schema_version"] == 2
+    # v3 re-pin (wall-honesty W5-L5, 2026-10-07): schema 2 -> 3 with the
+    # additive root keys sessions_orphaned + parse_defects; every v2 key and
+    # shape below is unchanged.
+    assert contract.CONTRACT_EXAMPLE["schema_version"] == 3
     contract.assert_shape(contract.CONTRACT_EXAMPLE)
     lane = contract.CONTRACT_EXAMPLE["programs"][0]["lanes"][0]
     assert lane["deps"] == ["W2-L4"] and lane["verified"] is False \
@@ -184,7 +187,7 @@ def test_tl1_lane_shell_carries_v2_keys():
 def test_tl1_state_schema2_and_needs_me_top_level(tmp_path, monkeypatch):
     cfg, _set = mcwallt_world(tmp_path, monkeypatch)
     state = collect_state(cfg)
-    assert state["schema_version"] == 2
+    assert state["schema_version"] == 3  # v3 re-pin (wall-honesty W5-L5)
     assert isinstance(state["needs_me"], list)
     contract.assert_shape(state)
 

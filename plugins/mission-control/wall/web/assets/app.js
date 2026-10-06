@@ -1289,6 +1289,10 @@
     // Round 6: background sessions are hidden until asked for.
     var backgroundOpen = false; // wall strip: reveal workflow/side-chat rows
     var showBackground = false; // projects view: include them in cards
+    // v3 wall-honesty: orphan-tagged sessions (their tag names a known
+    // program but they bind to no lane) — surfaced in their own collapsed
+    // sub-section of the unmapped strip, same reveal pattern as background.
+    var orphansOpen = false;
     // Round 9: a workflow run's actors collapse into ONE expandable projects
     // row; the expansion lives HERE (keyed by run id) so 5 s poll rebuilds —
     // which swap the projects view every tick — never snap it shut.
@@ -2598,7 +2602,13 @@
     function renderUnmappedStrip(rootEl) {
       var res = MCW.state.items(stateDoc.sessions_unmapped, "id");
       if (res.skipped > 0) appendNote(rootEl, "skipped " + res.skipped + " malformed rows", "data-note");
-      if (res.valid.length === 0) return 0;
+      // v3 wall-honesty: the orphan section renders even when the unmapped
+      // list is EMPTY — the incident's exact shape (0 unmapped, N orphans)
+      // must still surface its orphans, so the early return waits for BOTH.
+      var orphanRes = stateDoc === null || !Array.isArray(stateDoc.sessions_orphaned)
+        ? { valid: [] }
+        : MCW.state.items(stateDoc.sessions_orphaned, "id");
+      if (res.valid.length === 0 && orphanRes.valid.length === 0) return 0;
       var split = splitBackgroundRows(res.valid);
       var bgCount = res.valid.length - split.main.length;
       // W2-L2 (SC-5): the 496-row haystack bound — main rows default to the
@@ -2619,11 +2629,13 @@
       head.classList.add("unmapped-head");
       // Round 6: the count names what is VISIBLE and owns the hidden tail —
       // "unmapped (2)" with no hidden rows stays byte-identical (AC-16).
+      // v3: orphaned sessions join the head count when present.
       head.setText(
         "unmapped (" +
           visibleMain.length +
           (!unmappedOpen && older.length > 0 ? " · " + older.length + " older" : "") +
           (bgCount > 0 ? " · " + bgCount + " hidden" : "") +
+          (orphanRes.valid.length > 0 ? " · " + orphanRes.valid.length + " orphaned" : "") +
           ")"
       );
       strip.appendChild(head);
@@ -2643,6 +2655,7 @@
       rowsEl.setAttribute("id", "unmapped-rows"); // the toggle's aria-controls target
       renderUnmappedGroups(rowsEl, visibleMain);
       if (bgCount > 0) renderBackgroundSection(rowsEl, split);
+      renderOrphanSection(rowsEl);
       strip.appendChild(rowsEl);
       if (typeof toggle.addEventListener === "function") {
         toggle.addEventListener("click", function () {
@@ -2651,7 +2664,82 @@
         });
       }
       rootEl.appendChild(strip);
-      return res.valid.length;
+      // v3: orphan rows count toward the strip's non-emptiness (the col3
+      // "no sessions" note must not fire when orphans are the only content).
+      return res.valid.length + orphanRes.valid.length;
+    }
+
+    // v3 wall-honesty (A6 — the 2026-10-07 incident's Layer-2): orphan-tagged
+    // sessions — their scanned tag/title names a KNOWN program but they bind
+    // to no lane. Yesterday these were invisible (excluded from the unmapped
+    // strip by their single configured tag, bound to nothing); today they own
+    // a collapsed sub-section at the bottom of the strip, same reveal pattern
+    // as the background cluster. Absent/wrong-typed key -> no section (never
+    // a throw — contract item 10).
+    function renderOrphanSection(rowsEl) {
+      if (stateDoc === null || !Array.isArray(stateDoc.sessions_orphaned)) return;
+      var rows = MCW.state.items(stateDoc.sessions_orphaned, "id").valid;
+      if (rows.length === 0) return;
+      var wrap = el("div");
+      wrap.classList.add("unmapped-hidden");
+      if (!orphansOpen) wrap.classList.add("collapsed");
+      var toggle = el("button");
+      toggle.setAttribute("type", "button");
+      toggle.classList.add("unmapped-hidden-toggle");
+      toggle.setText("orphaned (" + rows.length + ")");
+      toggle.setAttribute("aria-expanded", orphansOpen ? "true" : "false");
+      toggle.setAttribute(
+        "title",
+        "tagged for a known program but bound to no lane — the note's row is missing or unparsed"
+      );
+      if (typeof toggle.addEventListener === "function") {
+        toggle.addEventListener("click", function () {
+          orphansOpen = !orphansOpen;
+          if (orphansOpen) {
+            wrap.classList.remove("collapsed");
+            toggle.setAttribute("aria-expanded", "true");
+          } else {
+            wrap.classList.add("collapsed");
+            toggle.setAttribute("aria-expanded", "false");
+          }
+        });
+      }
+      wrap.appendChild(toggle);
+      for (var o = 0; o < rows.length; o += 1) renderOrphanRow(wrap, rows[o]);
+      rowsEl.appendChild(wrap);
+    }
+
+    function renderOrphanRow(wrap, o) {
+      var row = el("div");
+      row.classList.add("orphan-row");
+      row.setAttribute("data-session-id", typeof o.id === "string" ? o.id : "");
+      var oTitle = typeof o.title === "string" && o.title !== "" ? o.title : "title pending";
+      var titleSpan = el("span");
+      titleSpan.classList.add("unmapped-title");
+      titleSpan.setText(oTitle);
+      row.appendChild(titleSpan);
+      var tagSpan = el("span");
+      tagSpan.classList.add("unmapped-project");
+      tagSpan.setText(typeof o.tag === "string" && o.tag !== "" ? o.tag : "?");
+      tagSpan.setAttribute("title", "claims program tag — no lane bound");
+      row.appendChild(tagSpan);
+      var ageSpan = el("span");
+      ageSpan.classList.add("unmapped-age");
+      ageSpan.setText(MCW.util.humanizeAge(isInt(o.last_active_ago_s) ? o.last_active_ago_s : 0));
+      row.appendChild(ageSpan);
+      var rawId = typeof o.id === "string" ? o.id : "";
+      var shortId = rawId.length > 18 ? rawId.slice(0, 15) + "…" : rawId;
+      var idSpan = el("span");
+      idSpan.classList.add("dim");
+      idSpan.setText(shortId);
+      if (shortId !== rawId) idSpan.setAttribute("title", rawId);
+      row.appendChild(idSpan);
+      wireClickable(row, function () {
+        copyText(o.id, null).then(function (ok) {
+          if (ok) transientNoteIn(row, "id copied");
+        });
+      });
+      wrap.appendChild(row);
     }
 
     // Round 6 + rounds 7/8: workflow subagents + side chats collapse into ONE
@@ -3638,13 +3726,28 @@
       rootEl.appendChild(wrap);
     }
 
-    // parse_defects (contract v2): fail-visible degraded cards naming
-    // note_path + defect. Absent/wrong-typed degrades to no cards — never a
-    // throw (contract item 10).
+    // parse_defects (contract v2/v3): fail-visible degraded cards naming
+    // note_path + defect. v3 (wall-honesty): the tower emits the ROOT
+    // aggregation; when it is absent (a pre-v3 server behind fresh assets),
+    // the per-program defects aggregate here so the strip never goes dark on
+    // mixed versions. Absent/wrong-typed degrades to no cards — never a
+    // throw (contract item 10). The defect kinds render generically — stray
+    // row, blank line, width mismatch, cell parse, manifest-absent all flow
+    // through the same card grammar.
     function parseDefectEntries() {
       if (stateDoc === null) return [];
-      if (!Array.isArray(stateDoc.parse_defects)) return [];
-      return MCW.state.items(stateDoc.parse_defects, null).valid;
+      if (Array.isArray(stateDoc.parse_defects)) {
+        return MCW.state.items(stateDoc.parse_defects, null).valid;
+      }
+      if (!Array.isArray(stateDoc.programs)) return [];
+      var agg = [];
+      for (var p = 0; p < stateDoc.programs.length; p += 1) {
+        var prog = stateDoc.programs[p];
+        if (prog && Array.isArray(prog.parse_defects)) {
+          agg = agg.concat(MCW.state.items(prog.parse_defects, null).valid);
+        }
+      }
+      return agg;
     }
 
     function renderTimelineView(rootEl) {
@@ -4040,10 +4143,11 @@
 
   // Frozen key-set manifest of record (contract v2 — SPEC 3.2 tables + tower
   // spec section 9, master = {session_id, title, last_active_ago_s}; v2 adds
-  // root.parse_defects + root.needs_me and lane.deps/verified/verify_due).
+  // root.parse_defects + root.needs_me and lane.deps/verified/verify_due;
+  // v3 wall-honesty adds root.sessions_orphaned + orphanedRow).
   // AC-31's conformance target.
   var KEYSETS = {
-    root: ["schema_version", "server", "programs", "verify_queue", "human_actions", "sessions_unmapped", "launch_pending", "wall", "parse_defects", "needs_me"],
+    root: ["schema_version", "server", "programs", "verify_queue", "human_actions", "sessions_unmapped", "sessions_orphaned", "launch_pending", "wall", "parse_defects", "needs_me"],
     server: ["uptime_s", "generated_ts", "degraded", "banner"],
     program: ["program", "note_path", "note_mtime", "objective", "master", "lanes"],
     master: ["session_id", "title", "last_active_ago_s"],
@@ -4059,6 +4163,7 @@
     verifyRow: ["row_id", "program", "finished_ago_s", "master_hint", "verify_cmd"],
     humanRow: ["kind", "ref", "repo", "repo_host", "title", "pipeline", "ready"],
     unmappedRow: ["id", "title", "dir", "last_active_ago_s", "parent_session_id", "parent_title"],
+    orphanedRow: ["id", "title", "tag", "last_active_ago_s"],
     needsMeRow: ["kind", "row_id", "program", "action", "deep_link"],
     parseDefect: ["note_path", "line", "defect", "row_id"],
     wall: ["pending"],

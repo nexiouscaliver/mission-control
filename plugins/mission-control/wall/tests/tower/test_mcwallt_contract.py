@@ -123,6 +123,7 @@ def test_mcwallt_contract_exact_keys_all_levels(tmp_path, monkeypatch):
 
     assert list(state.keys()) == ["schema_version", "server", "programs", "verify_queue",
                                   "human_actions", "needs_me", "sessions_unmapped",
+                                  "sessions_orphaned", "parse_defects",
                                   "launch_pending"]
     assert list(state["server"].keys()) == ["uptime_s", "generated_ts", "degraded", "banner"]
     prog = state["programs"][0]

@@ -12,9 +12,15 @@ collected into ``NoteParse.defects`` as ``{"note_path", "line", "defect",
 "row_id"}`` instead of silently disappearing. stdlib-only; ~ expansion
 belongs to collect (it owns config), never here.
 
+Wall-honesty (v1.11.1, W5-L5 — the 2026-10-07 lane-invisibility incident):
+FOUR formerly silent classes are now defects — stray lane-shaped rows outside
+any table (the incident's killer), blank lines INSIDE the table region
+(tolerated with a defect so a template leftover can never zero a program),
+extra-cell width mismatches (previously silently truncated), and non-empty
+repo/branch cells parsing to None (previously silently dropped git signals).
+
 Cells containing escaped pipes (``\\|``) get no special handling — the spec
-defines no escape grammar and the corpus has none; a row with MORE cells than
-the header parses positionally and may silently mis-assign columns.
+defines no escape grammar and the corpus has none.
 """
 
 import glob
@@ -25,6 +31,9 @@ from dataclasses import dataclass, field
 VARIANT_A = 0  # combined repo/branch + slug columns (the live notes today)
 VARIANT_B = 1  # separate repo/branch columns, no slug (documented future format)
 VARIANT_C = 2  # variant A + a trailing deps column (wall-overhaul contract v2)
+
+# Human names for defect strings ("extra cells under variant-A header").
+VARIANT_NAME = {VARIANT_A: "A", VARIANT_B: "B", VARIANT_C: "C"}
 
 
 def _norm(cell: str) -> str:
@@ -59,6 +68,13 @@ VERIFY_TOKEN = "verify:ok"
 # main and master as the recognized branch tokens.
 _BRANCH_RE = re.compile(r"^(loop/[A-Za-z0-9._-]+|fix/[A-Za-z0-9._-]+|main|master)$")
 _SEP_CELL_RE = re.compile(r"^:?-+:?$")
+
+# W5-L5 stray-row class: a lane row's first cell is a row ID (``W1-L0``,
+# ``A9-L1`` — the prompt-log grammar's id shape), which distinguishes genuine
+# stray lane rows from the notes' OTHER markdown tables (the Waves table's
+# rows lead with wave NUMBERS). Without this shape test every markdown table
+# in a program note would flood the defect surface.
+ROW_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*-L\d+$")
 
 
 @dataclass(frozen=True)
@@ -113,6 +129,13 @@ def parse_status(cell: str) -> tuple[str, str]:
     else "UNPARSED" (the empty cell included)."""
     t = cell.strip()
     return (cell, t if t in VOCAB else "UNPARSED")
+
+
+_NULL_CELL = {"n/a", "—", ""}
+
+
+def _cell_is_null(cell: str) -> bool:
+    return cell.strip() in _NULL_CELL
 
 
 def parse_repo_branch(cell: str, variant: int) -> tuple[str | None, str | None]:
@@ -226,6 +249,38 @@ def _objective_defect(lines: list[str]) -> dict | None:
     return {"line": 0, "defect": "objective missing", "row_id": None}
 
 
+def _cell_defects(cells: list[str], variant: int, lineno: int,
+                  note_path: str, row_id: str) -> list[dict]:
+    """A4 cell-parse defects: a non-empty repo/branch cell that parses to None
+    names the cell and what failed — the lane loses its git signals silently
+    no longer. Null cells (``n/a`` / ``—`` / empty) never defect."""
+    out: list[dict] = []
+    if variant == VARIANT_B:
+        repo_cell, branch_cell = cells[3], cells[4]
+        if not _cell_is_null(repo_cell) and parse_repo_branch(repo_cell, variant)[0] is None:
+            out.append({"note_path": note_path, "line": lineno,
+                        "defect": f"repo cell '{repo_cell}' has no path token",
+                        "row_id": row_id})
+        if not _cell_is_null(branch_cell) and parse_repo_branch(branch_cell, variant)[1] is None:
+            out.append({"note_path": note_path, "line": lineno,
+                        "defect": f"branch cell '{branch_cell}' has no branch token",
+                        "row_id": row_id})
+        return out
+    cell = cells[3]
+    if _cell_is_null(cell):
+        return out
+    repo, branch = parse_repo_branch(cell, variant)
+    if repo is None:
+        out.append({"note_path": note_path, "line": lineno,
+                    "defect": f"repo/branch cell '{cell}' has no repo path token",
+                    "row_id": row_id})
+    if branch is None:
+        out.append({"note_path": note_path, "line": lineno,
+                    "defect": f"repo/branch cell '{cell}' has no branch token",
+                    "row_id": row_id})
+    return out
+
+
 def parse_note(text: str, note_path: str = "") -> NoteParse:
     """Parse one vault program note. A table starts at a line whose normalized
     cell-name sequence equals HEADER_A, HEADER_B or HEADER_C; the line
@@ -236,7 +291,16 @@ def parse_note(text: str, note_path: str = "") -> NoteParse:
     ``defects`` with their 1-based line number and row_id when known. A row
     that parses with an off-vocabulary status keeps rendering AND carries a
     defect. Prose-bullet prompt logs are out of scope: a note with no matching
-    header yields header_found=False, rows == [] (entry 3 is the caller's)."""
+    header yields header_found=False, rows == [] (entry 3 is the caller's).
+
+    Wall-honesty (v1.11.1, the 2026-10-07 incident): a BLANK line inside a
+    table region — followed within the next 2 lines by another table line —
+    no longer closes the table (rows beneath it parse) but records a
+    "blank line inside prompt-log table" defect; a lane-shaped line (row-id
+    first cell, >= 2 cells) OUTSIDE any table records a "lane row outside
+    prompt-log table" defect instead of vanishing; a row with MORE cells than
+    its header parses its known-prefix cells AND defects per row; a non-empty
+    repo/branch cell parsing to None defects naming the cell."""
     lines = text.split("\n")
     rows: list[NoteRow] = []
     skipped = 0
@@ -244,14 +308,33 @@ def parse_note(text: str, note_path: str = "") -> NoteParse:
     header_found = False
     variant: int | None = None
     after_header = False  # the next table line may be separator furniture
+    table_open = False    # variant is not None OR a header/separator just ran
+
+    def _table_line_ahead(idx: int) -> bool:
+        # A2's look-ahead: another table line within the next 2 lines.
+        for j in (idx + 1, idx + 2):
+            if j < len(lines) and lines[j].strip().startswith("|"):
+                return True
+        return False
+
     for lineno, line in enumerate(lines, start=1):
         if not line.strip().startswith("|"):
+            if line.strip() == "" and table_open and _table_line_ahead(lineno - 1):
+                # A2: a blank INSIDE the table region (table continues within
+                # 2 lines) — tolerate AND defect; yesterday this silently
+                # closed the table and dropped every row beneath it.
+                defects.append({"note_path": note_path, "line": lineno,
+                                "defect": "blank line inside prompt-log table",
+                                "row_id": None})
+                continue
             variant = None      # a non-table line ends the open table
             after_header = False
+            table_open = False
             continue
         cells = _row_cells(line)
         if after_header and _is_separator(cells):
             after_header = False  # furniture directly under the header: not counted
+            table_open = True
             continue
         after_header = False
         detected = _header_variant(cells)
@@ -259,20 +342,32 @@ def parse_note(text: str, note_path: str = "") -> NoteParse:
             header_found = True    # begins after a prior table in the same note)
             variant = detected
             after_header = True
+            table_open = True
             continue
         if variant is None:
-            continue               # stray table line outside any table
+            # A1: a lane-shaped line outside any table defects instead of
+            # silently vanishing. Row-ID-shaped first cell + >= 2 cells (the
+            # id shape distinguishes lane rows from other markdown tables);
+            # separator furniture and non-prompt-log headers are not lane rows.
+            if (len(cells) >= 2 and not _is_separator(cells)
+                    and cells[0] and ROW_ID_RE.match(cells[0])):
+                defects.append({"note_path": note_path, "line": lineno,
+                                "defect": "lane row outside prompt-log table",
+                                "row_id": cells[0]})
+            continue
+        table_open = True
         if _is_separator(cells):
             skipped += 1           # defensive skip: counted, never raised
             defects.append({"note_path": note_path, "line": lineno,
                             "defect": "row skipped: separator row mid-table",
                             "row_id": cells[0] if cells and cells[0] else None})
             continue
-        if len(cells) < len(_HEADER_BY_VARIANT[variant]):
+        header_len = len(_HEADER_BY_VARIANT[variant])
+        if len(cells) < header_len:
             skipped += 1
             defects.append({"note_path": note_path, "line": lineno,
                             "defect": f"row skipped: {len(cells)} cells"
-                                      f" < {len(_HEADER_BY_VARIANT[variant])}",
+                                      f" < {header_len}",
                             "row_id": cells[0] if cells and cells[0] else None})
             continue
         if cells[0] == "":
@@ -280,7 +375,15 @@ def parse_note(text: str, note_path: str = "") -> NoteParse:
             defects.append({"note_path": note_path, "line": lineno,
                             "defect": "row skipped: empty id cell", "row_id": None})
             continue
+        if len(cells) > header_len:
+            # A3: extra cells parse-truncate at the known prefix — no longer
+            # silently: each over-wide row defects once.
+            defects.append({"note_path": note_path, "line": lineno,
+                            "defect": f"{len(cells) - header_len} extra cells"
+                                      f" under variant-{VARIANT_NAME[variant]} header",
+                            "row_id": cells[0]})
         row = _parse_row(cells, variant)
+        defects.extend(_cell_defects(cells, variant, lineno, note_path, row.row_id))
         if row.status_parsed == "UNPARSED":
             defects.append({"note_path": note_path, "line": lineno,
                             "defect": f"status not in vocabulary:"
