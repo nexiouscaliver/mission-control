@@ -129,9 +129,12 @@ class Resp:
 @contextmanager
 def serve(token: str = "mcwalls-token", *, collect_state=None, runner=None, web_dir=None,
           state_dir=None, log_dir=None, db_path=None, port=0, allow_hosts=None,
-          monitor_interval_s=0.05, clock=None, start_monitor=True):
+          monitor_interval_s=0.05, clock=None, start_monitor=True,
+          state_deadline_s=None):
     # db_path/monitor_interval_s/clock/start_monitor forward into
     # create_server's monitor wiring (T9); db_path=None -> no monitor.
+    # state_deadline_s forwards into the wd1 CollectGate deadline (None ->
+    # MC_WALL_STATE_DEADLINE_S env -> the 10s default).
     from mc_wall.server import create_server
 
     tmp = make_tmp_root()
@@ -143,7 +146,8 @@ def serve(token: str = "mcwalls-token", *, collect_state=None, runner=None, web_
                         allow_hosts=allow_hosts, collect_state=collect_state,
                         state_dir=state, runner=runner, db_path=db_path,
                         monitor_interval_s=monitor_interval_s, clock=clock,
-                        start_monitor=start_monitor)
+                        start_monitor=start_monitor,
+                        state_deadline_s=state_deadline_s)
     class Handle:
         pass
 

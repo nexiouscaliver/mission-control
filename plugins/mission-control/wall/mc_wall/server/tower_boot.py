@@ -165,9 +165,18 @@ class PerPollTowerConfig:
     config — a poll never crashes on it) and discovery re-scans per cycle
     (new/deleted program notes appear on the next poll with no restart). The
     ``git remote -v`` probes discovery makes for derived repos cache by path
-    on SUCCESS only, so a per-cycle re-scan costs scandirs, not spawns."""
+    on SUCCESS permanently; a FAILING probe is cached for a bounded backoff
+    window (wd1, wall-deadlock 2026-10-07: success-only caching made every
+    failed probe respawn every cycle — a per-cycle livelock vector, ~5 s per
+    probe under a stalled environment)."""
 
-    def __init__(self, wall_home, data: dict | None = None):
+    #: A failed ``git remote -v`` probe is retried at most this often (s).
+    GIT_PROBE_FAIL_BACKOFF_S = 300.0
+
+    def __init__(self, wall_home, data: dict | None = None,
+                 clock=None):
+        import time as _time
+
         wall_home = pathlib.Path(wall_home)
         if data is None:
             data = _read_wall_json(wall_home)
@@ -179,6 +188,8 @@ class PerPollTowerConfig:
         self._declared = _declared_config(data, wall_home)
         self._mtime = self._stat_mtime()
         self._git_cache: dict[str, tuple[int, str]] = {}
+        self._git_fail_until: dict[str, float] = {}
+        self._clock = clock or _time.monotonic
 
     @property
     def db_path(self) -> str:
@@ -194,9 +205,15 @@ class PerPollTowerConfig:
         hit = self._git_cache.get(path)
         if hit is not None:
             return hit
+        until = self._git_fail_until.get(path)
+        if until is not None and self._clock() < until:
+            return (1, "")  # bounded failure cache: no respawn this cycle
         rc, out = discovery._run_git(path)
         if rc == 0:
-            self._git_cache[path] = (rc, out)  # successes only: failures retry
+            self._git_cache[path] = (rc, out)  # successes cache permanently
+        else:
+            self._git_fail_until[path] = (self._clock()
+                                          + self.GIT_PROBE_FAIL_BACKOFF_S)
         return (rc, out)
 
     def current(self) -> TowerConfig:
