@@ -16,7 +16,7 @@ import json
 import logging
 import os
 
-from . import contract, derive, goals, notes, session_store, signals
+from . import contract, derive, goals, merges, notes, session_store, signals
 from .config import TowerConfig
 
 _DISCOVERY_DISABLED_LOGGED = False  # decision 3b: the wall.log disabled-line lands once per process
@@ -55,8 +55,12 @@ def _collect(config: TowerConfig) -> dict:
                        #  repo_idx_or_None, branch, status_parsed, mr_bang,
                        #  mr_hash, verified) — _read_signals appends (mr,
                        #  mr_failed) per record for T-6's human_actions.
+    # W4-L4 registry rows: (program_name, row_id, branch|None, sess_token|None,
+    # expanded repo path|None) in document order — merges' live join + repo set.
+    registry_rows: list = []
     for i, p in enumerate(config.programs):
-        programs.append(_read_program_notes(config, p, i, log, lane_records))
+        programs.append(_read_program_notes(config, p, i, log, lane_records,
+                                            registry_rows))
     sessions_unmapped, session_epochs = _read_sessions(config, now, log, programs,
                                                        lane_records)
     _read_goals(config, log, lane_records)
@@ -64,7 +68,7 @@ def _collect(config: TowerConfig) -> dict:
     verify_queue, human_actions, needs_me = _derive(config, programs, log,
                                                     lane_records, session_epochs,
                                                     now)
-    return {"schema_version": 2,
+    return {"schema_version": 3,
             "server": {"uptime_s": int(config.uptime_s_provider()),
                        "generated_ts": int(now),
                        "degraded": log.emit(),
@@ -73,12 +77,14 @@ def _collect(config: TowerConfig) -> dict:
             "verify_queue": verify_queue,
             "human_actions": human_actions,
             "needs_me": needs_me,
+            "merges": _read_merges(config, registry_rows),
             "sessions_unmapped": sessions_unmapped,
             "launch_pending": launch}
 
 
 def _read_program_notes(config: TowerConfig, program, idx: int,
-                        log: "DegradedLog", lane_records: list) -> dict:
+                        log: "DegradedLog", lane_records: list,
+                        registry_rows: list) -> dict:
     """§4.2 + contract v2 note read for one program: resolve the glob (0
     matches -> entry 3 + zero row; >1 -> newest mtime, no degradation), parse,
     build the program row and its lanes in note order. A present-but-headerless
@@ -116,6 +122,10 @@ def _read_program_notes(config: TowerConfig, program, idx: int,
         lane_records.append((idx, lane, row.sess_token, repo_name, repo_idx,
                              row.branch, row.status_parsed, row.mr_bang,
                              row.mr_hash, row.verified))
+        registry_rows.append((program.program, row.row_id, row.branch,
+                              row.sess_token,
+                              os.path.expanduser(row.repo_token)
+                              if row.repo_token else None))
     if parsed.skipped >= 1:
         log.add((1, idx, 1, ""), f"note rows skipped: {parsed.skipped} ({abs_path})")
     return {"program": program.program, "note_path": abs_path,
@@ -356,6 +366,16 @@ def _read_signals(config: TowerConfig, log: "DegradedLog", lane_records: list,
             log.add((3, repo_idx, 1, ""), f"network degraded: mr {repo.name}")
         rec[1]["signals"]["mr"] = mr
         lane_records[i] = rec + (mr, mr_failed)  # T-6 consumes (mr, mr_failed)
+
+
+def _read_merges(config: TowerConfig, registry_rows: list) -> list:
+    """W4-L4 MR/PR registry: the per-repo gh/glab list scan over the union
+    repo set, joined to live rows (with the forge-manifest fallback), through
+    NetCache at the 300 s registry TTL. A module-level seam like
+    ``_read_signals`` — corpus-style tests neutralize it for hermeticity.
+    Registry scan failures degrade silently inside merges (the document's
+    degraded vocabulary belongs to the lane-signal entries)."""
+    return merges.collect_registry(config, registry_rows)
 
 
 def _derive(config: TowerConfig, programs: list, log: "DegradedLog",

@@ -12,6 +12,7 @@
     <button id="view-timeline" type="button" aria-pressed="true">TIMELINE</button>
     <button id="view-needs" type="button" aria-pressed="false">NEEDS ME</button>
     <button id="view-wall" type="button" aria-pressed="false">WALL</button>
+    <button id="view-merges" type="button" aria-pressed="false">MERGES</button>
     <button id="view-projects" type="button" aria-pressed="false">PROJECTS</button>
   </div>
   <div class="tb-cluster tb-owed">
@@ -36,6 +37,7 @@
 </main>
 <section id="timeline-view" hidden></section>
 <section id="needs-view" hidden></section>
+<section id="merges-view" hidden></section>
 <section id="projects-view" hidden></section>
 <div id="panel-backdrop" hidden></div>
 <div id="launch-panel" hidden></div>
@@ -276,7 +278,13 @@
     {"kind": "verify-due", "row_id": "W2-L4", "program": "secfix", "action": "/mission-control-verify sess_w2l4", "deep_link": null},
     {"kind": "stalled", "row_id": "W2-L9", "program": "secfix", "action": "inspect queue.md — stalled 6h", "deep_link": null}
   ],
-  "launch_pending": null,
+    "merges": [
+    {"host": "gitlab", "repo": "cleo", "number": 41, "title": "wip: verify queue clear", "branch": "loop/secfix-w2-l6", "program": null, "row_id": null, "session": null, "state": "open", "conflicts": true, "draft": false, "created_at": 1789860000, "updated_at": 1789863000, "merged_at": null, "url": "https://gitlab.example/cleo/cleo/-/merge_requests/41", "author": "dev-b"},
+    {"host": "gitlab", "repo": "cleo", "number": 34, "title": "secfix: join hardening", "branch": "loop/secfix-w2-l1", "program": "secfix", "row_id": "W2-L1", "session": "sess_9a690ab2", "state": "open", "conflicts": false, "draft": false, "created_at": 1789858800, "updated_at": 1789862400, "merged_at": null, "url": "https://gitlab.example/cleo/cleo/-/merge_requests/34", "author": "shahil"},
+    {"host": "github", "repo": "mission-control", "number": 14, "title": "fix: unmapped recency order", "branch": "fix/unmapped-recency-order", "program": "secfix", "row_id": "W1-L0", "session": null, "state": "merged", "conflicts": false, "draft": false, "created_at": 1789772400, "updated_at": 1789824000, "merged_at": 1789824000, "url": "https://github.com/nexiouscaliver/mission-control/pull/14", "author": "nexiouscaliver"},
+    {"host": "github", "repo": "mission-control", "number": 9, "title": "chore: draft cleanup", "branch": "loop/draft-cleanup", "program": "secfix", "row_id": "W2-L9", "session": "sess_1111aaaa", "state": "closed", "conflicts": null, "draft": true, "created_at": 1789600000, "updated_at": 1789700000, "merged_at": null, "url": "https://github.com/nexiouscaliver/mission-control/pull/9", "author": "nexiouscaliver"}
+  ],
+"launch_pending": null,
   "wall": {
     "pending": {
       "version": 2,
@@ -306,7 +314,8 @@
   "sessions_unmapped": [],
   "parse_defects": [],
   "needs_me": [],
-  "launch_pending": null,
+    "merges": [],
+"launch_pending": null,
   "wall": {"pending": null}
 }</script>
 <script type="application/json" id="mock-null-program">{
@@ -346,7 +355,8 @@
   "sessions_unmapped": [],
   "parse_defects": [],
   "needs_me": [],
-  "launch_pending": null,
+    "merges": [],
+"launch_pending": null,
   "wall": {"pending": null}
 }</script>
 <script type="application/json" id="mock-unparsed">{
@@ -385,7 +395,8 @@
   "sessions_unmapped": [],
   "parse_defects": [],
   "needs_me": [],
-  "launch_pending": null,
+    "merges": [],
+"launch_pending": null,
   "wall": {"pending": null}
 }</script>
 <script type="application/json" id="mock-no-schema-version">{
@@ -423,7 +434,8 @@
   "sessions_unmapped": [],
   "parse_defects": [],
   "needs_me": [],
-  "launch_pending": null,
+    "merges": [],
+"launch_pending": null,
   "wall": {"pending": null}
 }</script>
 <script type="application/json" id="mock-empty-lanes">{
@@ -444,7 +456,8 @@
   "sessions_unmapped": [],
   "parse_defects": [],
   "needs_me": [],
-  "launch_pending": null,
+    "merges": [],
+"launch_pending": null,
   "wall": {"pending": null}
 }</script>
 <script type="application/json" id="mock-freeze">{
@@ -456,7 +469,8 @@
   "sessions_unmapped": [],
   "parse_defects": [],
   "needs_me": [],
-  "launch_pending": null,
+    "merges": [],
+"launch_pending": null,
   "wall": {"pending": null}
 }</script>
 <script type="application/json" id="mock-pending-null">{
@@ -495,7 +509,8 @@
   "sessions_unmapped": [],
   "parse_defects": [],
   "needs_me": [],
-  "launch_pending": null,
+    "merges": [],
+"launch_pending": null,
   "wall": {"pending": null}
 }</script>
 <script type="application/json" id="mock-pending-flagged">{
@@ -507,7 +522,8 @@
   "sessions_unmapped": [],
   "parse_defects": [],
   "needs_me": [],
-  "launch_pending": null,
+    "merges": [],
+"launch_pending": null,
   "wall": {
     "pending": {
       "version": 5,

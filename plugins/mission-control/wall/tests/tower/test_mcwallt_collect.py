@@ -35,13 +35,13 @@ def test_mcwallt_api_signature_and_defaults(tmp_path):
                        now_s=lambda: 1234.5)
     state = collect_state(ccfg)
     assert isinstance(state, dict)
-    assert state["schema_version"] == 2
+    assert state["schema_version"] == 3  # contract v3 (W4-L4): additive merges
     assert state["server"] == {"uptime_s": 0, "generated_ts": int(ccfg.now_s()),
                                "degraded": [], "banner": None}
     assert list(state["server"].keys()) == ["uptime_s", "generated_ts", "degraded", "banner"]
     assert list(state.keys()) == ["schema_version", "server", "programs", "verify_queue",
-                                  "human_actions", "needs_me", "sessions_unmapped",
-                                  "launch_pending"]
+                                  "human_actions", "needs_me", "merges",
+                                  "sessions_unmapped", "launch_pending"]
 
 
 def test_mcwallt_launch_passthrough(tmp_path):
@@ -101,6 +101,8 @@ def test_mcwallt_failopen_notes_missing(tmp_path, monkeypatch):
     # fixture-only by test_mcwallt_signals.py); neutralize them here.
     from mc_wall.tower import collect as collect_module
     monkeypatch.setattr(collect_module, "_read_signals", lambda *args: None)
+    # W4-L4: same hermeticity rule for the registry collector (mr1- covers it).
+    monkeypatch.setattr(collect_module, "_read_merges", lambda *args: [])
     db_path = mcwallt_make_session_db(tmp_path)
 
     # 0 glob matches: program row zeroed per §4.2 + entry 3 exactly.
