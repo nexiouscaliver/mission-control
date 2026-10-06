@@ -103,10 +103,13 @@ def test_mcwallt_derive_suggest_verify(tmp_path, monkeypatch):
         f"| W1-L1 | W1 | L1 | {repo} loop/mcwall-tower | mcwallt-slug | n/a | !5; sess_9a690ab2 | launched |"])
     assert _lane1(collect_state(cfg))["suggest_verify"] is None
 
-    # No session -> finished_ago_s 0 -> null (W1-L3, done without a token).
+    # No session -> UNKNOWN age -> due-with-unknown-age (contract v2 item 5:
+    # W1-L3, done without a token — the age can never be proven in-grace).
     cfg, _set = mcwallt_world(tmp_path, monkeypatch)
     lanes = {l["row_id"]: l for l in collect_state(cfg)["programs"][0]["lanes"]}
-    assert lanes["W1-L3"]["suggest_verify"] is None
+    assert lanes["W1-L3"]["suggest_verify"] == \
+        {"because": ["status=done", "finished_ago_s=unknown"]}
+    assert lanes["W1-L3"]["verify_due"] == lanes["W1-L3"]["suggest_verify"]
 
 
 def test_mcwallt_derive_verify_queue(tmp_path, monkeypatch):
@@ -119,8 +122,9 @@ def test_mcwallt_derive_verify_queue(tmp_path, monkeypatch):
         {"row_id": "W1-L1", "program": "secfix", "finished_ago_s": 400,
          "master_hint": master_id,
          "verify_cmd": f"/mission-control-verify {MCWALLT_WORLD_LANE}"},
-        # done with no token parsed: finished 0, master hint still set, "" cmd.
-        {"row_id": "W1-L3", "program": "secfix", "finished_ago_s": 0,
+        # done with no token parsed: UNKNOWN age (no session) renders
+        # due-with-unknown-age (finished_ago_s None), master hint still set.
+        {"row_id": "W1-L3", "program": "secfix", "finished_ago_s": None,
          "master_hint": master_id, "verify_cmd": ""},
     ]
 
@@ -134,7 +138,8 @@ def test_mcwallt_derive_verify_queue(tmp_path, monkeypatch):
     cfg, _set = mcwallt_world(tmp_path, monkeypatch, manifest=no_preconds, rows=[
         f"| W1-L1 | W1 | L1 | {repo} loop/mcwall-tower | mcwallt-slug | n/a | !5; sess_0dddaaa0 | done |"])
     state = collect_state(cfg)
-    assert state["verify_queue"][0]["finished_ago_s"] == 0
+    # 0-hit join = no session = unknown age: due-with-unknown-age (None).
+    assert state["verify_queue"][0]["finished_ago_s"] is None
     assert state["verify_queue"][0]["verify_cmd"] == "/mission-control-verify sess_0dddaaa0"
     assert state["server"]["degraded"] == []  # 0 hits is NOT degradation
 

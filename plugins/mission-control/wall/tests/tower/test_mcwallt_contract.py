@@ -100,6 +100,7 @@ def test_mcwallt_contract_keys_survive_full_degradation(tmp_path):
         "note_path": "",
         "note_mtime": 0,
         "objective": "",
+        "parse_defects": [],
         "master": {"session_id": None, "title": None, "last_active_ago_s": None},
         "lanes": [],
     }
@@ -121,15 +122,17 @@ def test_mcwallt_contract_exact_keys_all_levels(tmp_path, monkeypatch):
     contract.assert_shape(state)
 
     assert list(state.keys()) == ["schema_version", "server", "programs", "verify_queue",
-                                  "human_actions", "sessions_unmapped", "launch_pending"]
+                                  "human_actions", "needs_me", "sessions_unmapped",
+                                  "launch_pending"]
     assert list(state["server"].keys()) == ["uptime_s", "generated_ts", "degraded", "banner"]
     prog = state["programs"][0]
     assert list(prog.keys()) == ["program", "note_path", "note_mtime", "objective",
-                                 "master", "lanes"]
+                                 "parse_defects", "master", "lanes"]
     assert list(prog["master"].keys()) == ["session_id", "title", "last_active_ago_s"]
     lane = {l["row_id"]: l for l in prog["lanes"]}["W1-L1"]
     assert list(lane.keys()) == ["row_id", "repo", "branch", "slug", "status_note",
-                                 "status_parsed", "manifest", "session", "goal",
+                                 "status_parsed", "deps", "verified", "verify_due",
+                                 "manifest", "session", "goal",
                                  "signals", "suggest_verify", "stalled"]
     assert list(lane["manifest"].keys()) == ["path", "prompt_md", "goal_md",
                                              "precondition_mrs", "stall_t_hours"]
@@ -141,11 +144,15 @@ def test_mcwallt_contract_exact_keys_all_levels(tmp_path, monkeypatch):
     assert list(lane["signals"]["mr"].keys()) == ["ref", "repo_host", "state", "title",
                                                   "pipeline", "age_s"]
     assert list(lane["suggest_verify"].keys()) == ["because"]
+    assert list(lane["verify_due"].keys()) == ["because"]
+    assert lane["deps"] == [] and lane["verified"] is False
     assert list(lane["stalled"].keys()) == ["because", "last_event"]
     assert list(state["verify_queue"][0].keys()) == ["row_id", "program", "finished_ago_s",
                                                      "master_hint", "verify_cmd"]
     assert list(state["human_actions"][0].keys()) == ["kind", "ref", "repo", "repo_host",
                                                       "title", "pipeline", "ready"]
+    assert list(state["needs_me"][0].keys()) == ["kind", "row_id", "program", "action",
+                                                 "deep_link"]
     assert list(state["sessions_unmapped"][0].keys()) == ["id", "title", "dir",
                                                           "last_active_ago_s",
                                                           "parent_session_id",

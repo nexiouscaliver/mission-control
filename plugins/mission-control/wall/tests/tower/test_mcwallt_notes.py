@@ -105,7 +105,8 @@ def test_mcwallt_notes_corpus_rows(tmp_path, monkeypatch):
                           host="gitlab"),),
     )
     state = collect_state(cfg)
-    assert state["server"]["degraded"] == ["note rows skipped: 1"]
+    # contract v2: entry 10 keeps the count and now names the note path.
+    assert state["server"]["degraded"] == [f"note rows skipped: 1 ({note})"]
     lanes = {l["row_id"]: l for l in state["programs"][0]["lanes"]}
     assert set(lanes) == {"W1-L1", "W1-L2", "W1-L3", "W1-L4", "W0-L0"}
     assert lanes["W1-L1"]["repo"] == "mc-wall"
@@ -184,7 +185,7 @@ def test_mcwallt_notes_malformed_rows_skipped(tmp_path):
         programs=(ProgramConfig(program="mcwallt-prog", tag="t", note_glob=note),),
     )
     state = collect_state(cfg)
-    assert state["server"]["degraded"] == ["note rows skipped: 3"]  # exactly once
+    assert state["server"]["degraded"] == [f"note rows skipped: 3 ({note})"]  # exactly once
     assert [l["row_id"] for l in state["programs"][0]["lanes"]] == ["W1-L1"]
 
 
@@ -256,7 +257,7 @@ def test_mcwallt_notes_find_note_vanish_race(tmp_path, monkeypatch):
     assert [l["row_id"] for l in state["programs"][0]["lanes"]] == ["W1-L1"]
     # ...the doomed program takes the §4.2 zeroed row + entry 3...
     assert state["programs"][1] == {"program": "doomed", "note_path": "", "note_mtime": 0,
-                                    "objective": "",
+                                    "objective": "", "parse_defects": [],
                                     "master": {"session_id": None, "title": None,
                                                "last_active_ago_s": None},
                                     "lanes": []}
@@ -278,7 +279,7 @@ def test_mcwallt_notes_undecodable_note(tmp_path):
     )
     state = collect_state(cfg)
     assert state["programs"][0] == {"program": "mcwallt-prog", "note_path": "",
-                                    "note_mtime": 0, "objective": "",
+                                    "note_mtime": 0, "objective": "", "parse_defects": [],
                                     "master": {"session_id": None, "title": None,
                                                "last_active_ago_s": None},
                                     "lanes": []}

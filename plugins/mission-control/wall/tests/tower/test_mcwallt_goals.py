@@ -160,7 +160,7 @@ def test_mcwallt_goal_manifest_defaults(tmp_path):
                                          "prompt_md": os.path.join(gd, "prompt.md"),
                                          "goal_md": os.path.join(gd, "goal.md"),
                                          "precondition_mrs": [],
-                                         "stall_t_hours": 0}
+                                         "stall_t_hours": 6}
     assert state["server"]["degraded"] == []
     contract.assert_shape(state)
 
@@ -169,7 +169,7 @@ def test_mcwallt_goal_manifest_defaults(tmp_path):
         fh.write(json.dumps({"stall_t_hours": "x", "precondition_mrs": "no"}))
     state = _goal_collect(tmp_path, repo)
     manifest = _lane0(state)["manifest"]
-    assert (manifest["stall_t_hours"], manifest["precondition_mrs"]) == (0, [])
+    assert (manifest["stall_t_hours"], manifest["precondition_mrs"]) == (6, [])
     assert state["server"]["degraded"] == []
 
     # No goal dir -> manifest null.
@@ -200,7 +200,7 @@ def test_mcwallt_goal_manifest_json_present(tmp_path):
         fh.write("{bad")
     state = _goal_collect(tmp_path, repo)
     manifest = _lane0(state)["manifest"]
-    assert (manifest["stall_t_hours"], manifest["precondition_mrs"]) == (0, [])
+    assert (manifest["stall_t_hours"], manifest["precondition_mrs"]) == (6, [])
     assert manifest["path"] == gd
     assert state["server"]["degraded"] == []
 

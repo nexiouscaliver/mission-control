@@ -1,12 +1,16 @@
 """Vault program-note parsing (spec §4.2): note discovery by glob (newest
 mtime, lexicographic-path tie), prompt-log table detection over the CLOSED set
-of header variants A/B (column names normalized: casefold + all whitespace
+of header variants A/B/C (column names normalized: casefold + all whitespace
 removed; the stored constants are POST-normalization so the comparison cannot
 self-defeat), defensive row parsing with the explicit cell-count skip rule,
 the closed status vocabulary, variant-A slug null rules, the repo/branch
 whitespace-token grammar, artifacts-cell session-token / MR-ref / verified-
-token extraction, and the objective line. stdlib-only; ~ expansion belongs to
-collect (it owns config), never here.
+token extraction, the variant-C deps cell, and the objective line.
+Contract v2 (wall-overhaul): off-grammar input is FAIL-VISIBLE — every
+skipped row, off-vocabulary status, and missing/bolded objective line is
+collected into ``NoteParse.defects`` as ``{"note_path", "line", "defect",
+"row_id"}`` instead of silently disappearing. stdlib-only; ~ expansion
+belongs to collect (it owns config), never here.
 
 Cells containing escaped pipes (``\\|``) get no special handling — the spec
 defines no escape grammar and the corpus has none; a row with MORE cells than
@@ -16,10 +20,11 @@ the header parses positionally and may silently mis-assign columns.
 import glob
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 VARIANT_A = 0  # combined repo/branch + slug columns (the live notes today)
 VARIANT_B = 1  # separate repo/branch columns, no slug (documented future format)
+VARIANT_C = 2  # variant A + a trailing deps column (wall-overhaul contract v2)
 
 
 def _norm(cell: str) -> str:
@@ -33,8 +38,9 @@ HEADER_A = ("id", "wave", "lane", "repo/branch", "slug", "base",
             "session/mrartifacts", "status")
 HEADER_B = ("id", "wave", "lane", "repo", "branch", "base_sha",
             "session/mrartifacts", "status")
-_HEADER_BY_VARIANT = {VARIANT_A: HEADER_A, VARIANT_B: HEADER_B}
-_HEADER_VARIANTS = {HEADER_A: VARIANT_A, HEADER_B: VARIANT_B}
+HEADER_C = HEADER_A + ("deps",)  # contract v2: deps LAST, 9 cells
+_HEADER_BY_VARIANT = {VARIANT_A: HEADER_A, VARIANT_B: HEADER_B, VARIANT_C: HEADER_C}
+_HEADER_VARIANTS = {HEADER_A: VARIANT_A, HEADER_B: VARIANT_B, HEADER_C: VARIANT_C}
 
 # Closed lane-status vocabulary (§4, assumption 3): exact after trim; anything
 # else — including the empty cell — parses UNPARSED with the raw preserved.
@@ -49,7 +55,9 @@ HASH_RE = re.compile(r"#\d+")               # github PR ref
 # by design; it cannot collide with the SESS_RE/BANG_RE/HASH_RE extractions).
 VERIFY_TOKEN = "verify:ok"
 
-_BRANCH_RE = re.compile(r"^(loop/[A-Za-z0-9._-]+|main|master)$")
+# Contract v2 item 7: the fix/<name> hotfix branch form joins loop/<slug>,
+# main and master as the recognized branch tokens.
+_BRANCH_RE = re.compile(r"^(loop/[A-Za-z0-9._-]+|fix/[A-Za-z0-9._-]+|main|master)$")
 _SEP_CELL_RE = re.compile(r"^:?-+:?$")
 
 
@@ -58,13 +66,14 @@ class NoteRow:
     row_id: str
     status_note: str           # status cell verbatim (as split+stripped)
     status_parsed: str         # VOCAB member or "UNPARSED"
-    slug: str | None           # variant A cell value or None; variant B rows -> None
+    slug: str | None           # variant A/C cell value or None; variant B rows -> None
     repo_token: str | None     # raw path token from the cell (e.g. "~/.zcode/mc-wall"); None if n/a
     branch: str | None
     sess_token: str | None     # first sess_[0-9a-f]{8,} match in the artifacts cell
     mr_bang: str | None        # first "!\d+" match (gitlab ref)
     mr_hash: str | None        # first "#\d+" match (github ref)
     verified: bool = False     # VERIFY_TOKEN substring in the artifacts cell
+    deps: tuple[str, ...] = ()  # variant C deps cell (row_ids); () under A/B
 
 
 @dataclass(frozen=True)
@@ -73,6 +82,9 @@ class NoteParse:
     rows: list[NoteRow]
     header_found: bool
     skipped: int
+    # Contract v2 item 2: fail-visible parse defects, each
+    # {"note_path", "line" (1-based), "defect", "row_id" (None when unknown)}.
+    defects: list[dict] = field(default_factory=list)
 
 
 def find_note(note_glob: str) -> str | None:
@@ -128,11 +140,20 @@ def parse_repo_branch(cell: str, variant: int) -> tuple[str | None, str | None]:
 
 
 def _parse_slug(cell: str) -> str | None:
-    """Variant-A slug cell: None for ``n/a`` / ``—`` / empty / a cell leading
+    """Variant-A/C slug cell: None for ``n/a`` / ``—`` / empty / a cell leading
     with ``n/a (`` (real corpus: ``n/a (plain lane)``); else verbatim."""
     if cell in {"n/a", "—", ""} or cell.startswith("n/a ("):
         return None
     return cell
+
+
+def parse_deps(cell: str) -> tuple[str, ...]:
+    """Variant-C deps cell -> row_id tuple: one or more row_ids separated by
+    commas and/or whitespace; ``—`` / ``n/a`` / empty -> ()."""
+    c = cell.strip()
+    if c in {"—", "n/a", ""} or c.startswith("n/a ("):
+        return ()
+    return tuple(t for t in re.split(r"[,\s]+", c) if t and t not in {"—", "n/a"})
 
 
 def _row_cells(line: str) -> list[str]:
@@ -152,15 +173,17 @@ def _parse_row(cells: list[str], variant: int) -> NoteRow:
     """Column access is guarded by the caller's cell-count check — no
     positional IndexError is reachable. Variant A indices: id 0, repo/branch 3,
     slug 4, artifacts 6, status 7. Variant B: id 0, repo 3, branch 4,
-    artifacts 6, status 7, no slug -> None."""
+    artifacts 6, status 7, no slug -> None. Variant C = A plus deps at 8."""
     status_note, status_parsed = parse_status(cells[7])
-    if variant == VARIANT_A:
-        repo_token, branch = parse_repo_branch(cells[3], VARIANT_A)
-        slug = _parse_slug(cells[4])
-    else:
+    if variant == VARIANT_B:
         repo_token, _ = parse_repo_branch(cells[3], VARIANT_B)
         _, branch = parse_repo_branch(cells[4], VARIANT_B)
         slug = None
+        deps: tuple[str, ...] = ()
+    else:  # variants A and C share the A column layout
+        repo_token, branch = parse_repo_branch(cells[3], VARIANT_A)
+        slug = _parse_slug(cells[4])
+        deps = parse_deps(cells[8]) if variant == VARIANT_C else ()
     artifacts = cells[6]
     sess = SESS_RE.search(artifacts)
     bang = BANG_RE.search(artifacts)
@@ -176,6 +199,7 @@ def _parse_row(cells: list[str], variant: int) -> NoteRow:
         mr_bang=bang.group(0) if bang else None,
         mr_hash=ref.group(0) if ref else None,
         verified=VERIFY_TOKEN in artifacts,
+        deps=deps,
     )
 
 
@@ -188,22 +212,39 @@ def _objective(lines: list[str]) -> str:
     return ""
 
 
-def parse_note(text: str) -> NoteParse:
+_OBJ_NEAR_MISS_RE = re.compile(r"^[\*_\s]*objective\b", re.IGNORECASE)
+
+
+def _objective_defect(lines: list[str]) -> dict | None:
+    """Contract v2 declared-path objective check: a note whose objective did
+    not parse gets ONE defect — naming the near-miss line when an objective
+    was attempted but malformed (bolded/emphasized), else "objective missing"."""
+    for n, line in enumerate(lines, start=1):
+        if _OBJ_NEAR_MISS_RE.match(line.strip()):
+            return {"line": n, "defect": "objective not parsed (bolded/malformed)",
+                    "row_id": None}
+    return {"line": 0, "defect": "objective missing", "row_id": None}
+
+
+def parse_note(text: str, note_path: str = "") -> NoteParse:
     """Parse one vault program note. A table starts at a line whose normalized
-    cell-name sequence equals HEADER_A or HEADER_B; the line immediately after
-    a matched header is consumed as separator furniture when separator-shaped;
-    data rows run until a non-table line. Malformed rows (fewer cells than the
-    header, empty id, separator-shaped) are skipped and counted — no exception
-    path exists. Prose-bullet prompt logs are out of scope: a note with no
-    matching header yields header_found=False, rows == [] (entry 3 is the
-    caller's)."""
+    cell-name sequence equals HEADER_A, HEADER_B or HEADER_C; the line
+    immediately after a matched header is consumed as separator furniture when
+    separator-shaped; data rows run until a non-table line. Malformed rows
+    (fewer cells than the header, empty id, separator-shaped) are skipped,
+    counted — no exception path exists — and (contract v2) recorded in
+    ``defects`` with their 1-based line number and row_id when known. A row
+    that parses with an off-vocabulary status keeps rendering AND carries a
+    defect. Prose-bullet prompt logs are out of scope: a note with no matching
+    header yields header_found=False, rows == [] (entry 3 is the caller's)."""
     lines = text.split("\n")
     rows: list[NoteRow] = []
     skipped = 0
+    defects: list[dict] = []
     header_found = False
     variant: int | None = None
     after_header = False  # the next table line may be separator furniture
-    for line in lines:
+    for lineno, line in enumerate(lines, start=1):
         if not line.strip().startswith("|"):
             variant = None      # a non-table line ends the open table
             after_header = False
@@ -221,11 +262,37 @@ def parse_note(text: str) -> NoteParse:
             continue
         if variant is None:
             continue               # stray table line outside any table
-        if (_is_separator(cells)
-                or len(cells) < len(_HEADER_BY_VARIANT[variant])
-                or cells[0] == ""):
+        if _is_separator(cells):
             skipped += 1           # defensive skip: counted, never raised
+            defects.append({"note_path": note_path, "line": lineno,
+                            "defect": "row skipped: separator row mid-table",
+                            "row_id": cells[0] if cells and cells[0] else None})
             continue
-        rows.append(_parse_row(cells, variant))
-    return NoteParse(objective=_objective(lines), rows=rows,
-                     header_found=header_found, skipped=skipped)
+        if len(cells) < len(_HEADER_BY_VARIANT[variant]):
+            skipped += 1
+            defects.append({"note_path": note_path, "line": lineno,
+                            "defect": f"row skipped: {len(cells)} cells"
+                                      f" < {len(_HEADER_BY_VARIANT[variant])}",
+                            "row_id": cells[0] if cells and cells[0] else None})
+            continue
+        if cells[0] == "":
+            skipped += 1
+            defects.append({"note_path": note_path, "line": lineno,
+                            "defect": "row skipped: empty id cell", "row_id": None})
+            continue
+        row = _parse_row(cells, variant)
+        if row.status_parsed == "UNPARSED":
+            defects.append({"note_path": note_path, "line": lineno,
+                            "defect": f"status not in vocabulary:"
+                                      f" {row.status_note.strip()!r}",
+                            "row_id": row.row_id})
+        rows.append(row)
+    objective = _objective(lines)
+    if objective == "":
+        obj = _objective_defect(lines)
+        if obj is not None:
+            defects.append({"note_path": note_path, **obj})
+    defects.sort(key=lambda d: d["line"])  # line order; stable within a line
+    return NoteParse(objective=objective, rows=rows,
+                     header_found=header_found, skipped=skipped,
+                     defects=defects)

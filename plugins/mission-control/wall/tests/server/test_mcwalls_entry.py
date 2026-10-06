@@ -180,7 +180,7 @@ def test_mcwallf_module_entry_serves_live_board():
             "server never answered /state"
         assert got["status"] == 200, got["status"]
         data = json.loads(got["body"].decode("utf-8"))
-        assert data["schema_version"] == 1
+        assert data["schema_version"] == 2  # contract v2
         lanes = data["programs"][0]["lanes"]
         assert [l["row_id"] for l in lanes] == ["mcwallf-l1"]
         vq = [r for r in data["verify_queue"] if r["row_id"] == "mcwallf-l1"]

@@ -65,8 +65,20 @@ _default_tower_config_box: list = []  # F-1: built at most once per process (tes
 _default_tower_config_lock = threading.Lock()
 
 
+def _resolve_tower_config(tower_config: typing.Any) -> typing.Any:
+    """Contract v2 item 8: a PerPollTowerConfig resolves to the CURRENT
+    per-cycle config (``.current()`` — wall.json mtime re-check + discovery
+    re-scan); a plain TowerConfig (test injections) passes through
+    unchanged."""
+    current = getattr(tower_config, "current", None)
+    return current() if callable(current) else tower_config
+
+
 def _default_tower_config() -> typing.Any:
-    """The default boot's TowerConfig, built AT MOST once per process.
+    """The default boot's per-poll tower config provider, constructed AT MOST
+    once per process (F-1 seam kept); each call resolves the CURRENT cycle's
+    TowerConfig (contract v2 item 8 — registration is per-poll, not
+    boot-frozen).
 
     Double-checked locking, NOT functools.lru_cache: a bounded lru_cache does
     not serialize user-function evaluation (verified on this interpreter —
@@ -75,12 +87,12 @@ def _default_tower_config() -> typing.Any:
     if not _default_tower_config_box:
         with _default_tower_config_lock:
             if not _default_tower_config_box:
-                from mc_wall.server.tower_boot import build_tower_config
+                from mc_wall.server.tower_boot import PerPollTowerConfig
 
                 _default_tower_config_box.append(
-                    build_tower_config(resolve_wall_home())
+                    PerPollTowerConfig(resolve_wall_home())
                 )
-    return _default_tower_config_box[0]
+    return _default_tower_config_box[0].current()
 
 
 def _default_collect_state() -> dict:
@@ -933,7 +945,8 @@ def run_server(cfg: ServerConfig) -> int:
         from mc_wall.tower import collect_state as _collect_state  # lazy (L2 discipline)
 
         _tower_cfg = cfg.tower_config
-        collect_state_fn = lambda: _collect_state(_tower_cfg)  # noqa: E731
+        collect_state_fn = lambda: _collect_state(  # noqa: E731
+            _resolve_tower_config(_tower_cfg))
     try:
         server = create_server(
             cfg.token,

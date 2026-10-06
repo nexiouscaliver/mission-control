@@ -78,11 +78,16 @@ size 0, so they render in `sessions_unmapped` — degraded, never hidden.
 At verdict time the mission-control controller writes the literal token
 `verify:ok` into the row's session/MR-artifacts cell (skill §4). The Wall is
 only a consumer: `mc_wall/tower/notes.py` `VERIFY_TOKEN` is a substring test
-on the artifacts cell (`NoteRow.verified`), and `mc_wall/tower/derive.py`
+on the artifacts cell (`NoteRow.verified`, surfaced as the lane's
+`verified` flag in /state), and `mc_wall/tower/derive.py`
 `derive_suggest_verify(…, verified=True)` returns None immediately — the
-lane's `suggest_verify` cue clears on reading the token. `verify_queue` is
-unaffected by design: a verified done/partial row keeps its queue entry (the
-operator's `/mission-control-verify` entry point).
+lane's `suggest_verify` AND `verify_due` cues clear on reading the token.
+Wall-overhaul contract v2 REVERSED the v1 queue pin (decision D15): a
+verified done/partial row's `verify_queue` entry is REMOVED too — cue and
+queue clear together. The queue itself is machine-due: rows appear only for
+done/partial lanes past `verify_grace_s` (a lane with no joined session is
+due-with-unknown-age: `finished_ago_s` null in the row, `finished_ago_s=unknown`
+in the lane's `verify_due` because list).
 
 ## The session store stays read-only
 

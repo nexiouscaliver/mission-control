@@ -1,4 +1,5 @@
-"""F-1: build a TowerConfig from wall.json + env (the default boot contract).
+"""F-1 + contract v2 item 8: build a TowerConfig from wall.json + env — and
+re-check it EVERY collect cycle (per-poll registration).
 
 Field precedence (spec S4 table, pinned): store = wall.json "store" >
 "zcode" (validated against the session-store registry); db_path = MC_WALL_DB >
@@ -10,12 +11,18 @@ every other TowerConfig field keeps its dataclass default. Malformed
 wall.json content raises ValueError with ONE clear line naming wall.json —
 main() prints it and exits 1 (install-time contract; the entry never
 guesses). Runtime collect failures are NOT boot failures: they degrade
-inside collect_state (fail-open), never here. Boot-time program-note
-discovery (spec mcwall-tower-discovery): after the declared loops,
-discover_programs appends undeclared mission-control-*-program.md notes
-and their derived repos, carrying skip lines on
-TowerConfig.discovery_degraded; MC_WALL_DISCOVERY=0/off/no/false opts
-out with one INFO line.
+inside collect_state (fail-open), never here.
+
+Program-note discovery (spec mcwall-tower-discovery): ``_declared_config``
+builds the wall.json-declared config alone; ``_refresh_discovery`` re-runs
+``discover_programs`` (appending undeclared mission-control-*-program.md
+notes + their derived repos, carrying skip lines on
+TowerConfig.discovery_degraded) over a declared config. Boot
+(``tower_config_from_wall``) runs it once with the boot-time INFO line;
+``PerPollTowerConfig.current()`` re-runs it EVERY collect cycle — a new or
+deleted program note is picked up on the next poll with no restart, and the
+wall.json mtime is re-checked each cycle (config rebuilt on change).
+MC_WALL_DISCOVERY=0/off/no/false opts out with one INFO line.
 """
 
 from __future__ import annotations
@@ -50,7 +57,9 @@ def _optional_str(entry: dict, key: str, where: str):
     return v
 
 
-def tower_config_from_wall(data: dict, wall_home: pathlib.Path) -> TowerConfig:
+def _declared_config(data: dict, wall_home: pathlib.Path) -> TowerConfig:
+    """The wall.json-DECLARED config only (no discovery) — the stable base the
+    per-poll provider re-derives discovery over."""
     wall_home = pathlib.Path(wall_home)
     raw_programs = data.get("programs", [])  # .get default never fires on null
     if not isinstance(raw_programs, list):
@@ -59,7 +68,7 @@ def tower_config_from_wall(data: dict, wall_home: pathlib.Path) -> TowerConfig:
     for i, p in enumerate(raw_programs):
         where = f"wall.json programs[{i}]"
         if not isinstance(p, dict):
-            raise ValueError(f"mc-wall: {where} must be an object — fix wall.json")
+            raise ValueError(f'mc-wall: {where} must be an object — fix wall.json')
         programs.append(ProgramConfig(
             program=_require_str(p, "program", where),
             tag=_require_str(p, "tag", where),
@@ -73,7 +82,7 @@ def tower_config_from_wall(data: dict, wall_home: pathlib.Path) -> TowerConfig:
     for i, r in enumerate(raw_repos):
         where = f"wall.json repos[{i}]"
         if not isinstance(r, dict):
-            raise ValueError(f"mc-wall: {where} must be an object — fix wall.json")
+            raise ValueError(f'mc-wall: {where} must be an object — fix wall.json')
         repos.append(RepoConfig(
             name=_require_str(r, "name", where),
             path=os.path.expanduser(_require_str(r, "path", where)),
@@ -99,27 +108,110 @@ def tower_config_from_wall(data: dict, wall_home: pathlib.Path) -> TowerConfig:
         db_path = pathlib.Path(db)
     else:
         db_path = default_db_path()
-    if discovery.enabled():
-        disc = discovery.discover_programs(programs, declared_repos=tuple(repos))
-        discovery_disabled = False
-    else:
-        logging.getLogger("mc_wall.server").info(
-            "MC_WALL_DISCOVERY set — boot-time discovery disabled")
-        disc = discovery.DiscoveryResult((), (), ())
-        discovery_disabled = True  # collect re-emits the line once (decision 3b)
     return TowerConfig(
         db_path=str(db_path),
-        programs=tuple(programs) + disc.programs,
+        programs=tuple(programs),
         store=store,
-        repos=tuple(repos) + disc.repos,
-        discovery_degraded=disc.degraded,
-        discovery_disabled=discovery_disabled,
+        repos=tuple(repos),
         pending_launch_path=str(pending) if pending is not None
         else str(wall_home / "pending-launch.json"),
     )
 
 
-def build_tower_config(wall_home: pathlib.Path) -> TowerConfig:
+def _refresh_discovery(cfg: TowerConfig, run_git=None) -> TowerConfig:
+    """Declared config + a FRESH discovery pass (contract v2 item 8): the
+    scan itself is identical to the boot pass — declared wins, degraded lines
+    keep their wording; only WHEN it runs changed (boot once -> every cycle).
+    Discovery disabled -> the declared config verbatim."""
+    if not discovery.enabled():
+        disc = discovery.DiscoveryResult((), (), ())
+        disabled = True
+    else:
+        disc = discovery.discover_programs(cfg.programs, run_git=run_git,
+                                           declared_repos=cfg.repos)
+        disabled = False
+    return TowerConfig(
+        db_path=cfg.db_path,
+        programs=cfg.programs + disc.programs,
+        store=cfg.store,
+        repos=cfg.repos + disc.repos,
+        pending_launch_path=cfg.pending_launch_path,
+        now_s=cfg.now_s,
+        uptime_s_provider=cfg.uptime_s_provider,
+        banner_provider=cfg.banner_provider,
+        session_window_s=cfg.session_window_s,
+        tag_scan_window_s=cfg.tag_scan_window_s,
+        verify_grace_s=cfg.verify_grace_s,
+        network=cfg.network,
+        network_cache=cfg.network_cache,  # SAME cache: poll refresh keeps TTLs
+        discovery_degraded=disc.degraded,
+        discovery_disabled=disabled,
+    )
+
+
+def tower_config_from_wall(data: dict, wall_home: pathlib.Path) -> TowerConfig:
+    cfg = _declared_config(data, wall_home)
+    if not discovery.enabled():
+        logging.getLogger("mc_wall.server").info(
+            "MC_WALL_DISCOVERY set — boot-time discovery disabled")
+    return _refresh_discovery(cfg)
+
+
+class PerPollTowerConfig:
+    """Contract v2 item 8 — per-poll registration. Holds the DECLARED config
+    (built once at construction from wall.json) and serves ``current()``
+    per collect cycle: wall.json's mtime is re-checked (full rebuild on
+    change; a transient unreadable/unparseable wall.json keeps the last good
+    config — a poll never crashes on it) and discovery re-scans per cycle
+    (new/deleted program notes appear on the next poll with no restart). The
+    ``git remote -v`` probes discovery makes for derived repos cache by path
+    on SUCCESS only, so a per-cycle re-scan costs scandirs, not spawns."""
+
+    def __init__(self, wall_home, data: dict | None = None):
+        wall_home = pathlib.Path(wall_home)
+        if data is None:
+            data = _read_wall_json(wall_home)
+        if not discovery.enabled():
+            logging.getLogger("mc_wall.server").info(
+                "MC_WALL_DISCOVERY set — boot-time discovery disabled")
+        self._wall_home = wall_home
+        self._wall_json = wall_home / "wall.json"
+        self._declared = _declared_config(data, wall_home)
+        self._mtime = self._stat_mtime()
+        self._git_cache: dict[str, tuple[int, str]] = {}
+
+    @property
+    def db_path(self) -> str:
+        return self._declared.db_path
+
+    def _stat_mtime(self):
+        try:
+            return os.stat(self._wall_json).st_mtime
+        except OSError:
+            return None
+
+    def _cached_run_git(self, path: str) -> tuple[int, str]:
+        hit = self._git_cache.get(path)
+        if hit is not None:
+            return hit
+        rc, out = discovery._run_git(path)
+        if rc == 0:
+            self._git_cache[path] = (rc, out)  # successes only: failures retry
+        return (rc, out)
+
+    def current(self) -> TowerConfig:
+        mtime = self._stat_mtime()
+        if mtime is not None and mtime != self._mtime:
+            try:  # rebuild on change; a bad mid-write file keeps the last good
+                data = _read_wall_json(self._wall_home)
+                self._declared = _declared_config(data, self._wall_home)
+                self._mtime = mtime
+            except (OSError, ValueError):
+                pass
+        return _refresh_discovery(self._declared, run_git=self._cached_run_git)
+
+
+def _read_wall_json(wall_home: pathlib.Path) -> dict:
     path = pathlib.Path(wall_home) / "wall.json"
     try:
         with open(path, encoding="utf-8") as f:
@@ -128,4 +220,9 @@ def build_tower_config(wall_home: pathlib.Path) -> TowerConfig:
         raise ValueError(f"mc-wall: cannot read {path} — run `mc-wall install` first")
     if not isinstance(data, dict) or not data.get("token"):
         raise ValueError(f"mc-wall: {path} has no token — run `mc-wall install`")
-    return tower_config_from_wall(data, pathlib.Path(wall_home))
+    return data
+
+
+def build_tower_config(wall_home: pathlib.Path) -> TowerConfig:
+    return tower_config_from_wall(_read_wall_json(wall_home),
+                                  pathlib.Path(wall_home))

@@ -61,9 +61,10 @@ def _collect(config: TowerConfig) -> dict:
                                                        lane_records)
     _read_goals(config, log, lane_records)
     _read_signals(config, log, lane_records, now)
-    verify_queue, human_actions = _derive(config, programs, log, lane_records,
-                                          session_epochs, now)
-    return {"schema_version": 1,
+    verify_queue, human_actions, needs_me = _derive(config, programs, log,
+                                                    lane_records, session_epochs,
+                                                    now)
+    return {"schema_version": 2,
             "server": {"uptime_s": int(config.uptime_s_provider()),
                        "generated_ts": int(now),
                        "degraded": log.emit(),
@@ -71,23 +72,25 @@ def _collect(config: TowerConfig) -> dict:
             "programs": programs,
             "verify_queue": verify_queue,
             "human_actions": human_actions,
+            "needs_me": needs_me,
             "sessions_unmapped": sessions_unmapped,
             "launch_pending": launch}
 
 
 def _read_program_notes(config: TowerConfig, program, idx: int,
                         log: "DegradedLog", lane_records: list) -> dict:
-    """§4.2 note read for one program: resolve the glob (0 matches -> entry 3 +
-    zero row; >1 -> newest mtime, no degradation), parse, build the program row
-    and its lanes in note order. A present-but-headerless note keeps
-    path/mtime/objective with lanes=[] + entry 3. Entry 10 is ADDED once per
-    program when any row was skipped — but its text is the frozen §4 vocabulary
-    with the count as its only variable, so two programs skipping the SAME
-    number of rows emit identical lines and the §4 dedup (identical text, keep
-    first) collapses them to ONE emitted line; which program it came from is an
-    ambiguity the frozen vocabulary knowingly accepts."""
+    """§4.2 + contract v2 note read for one program: resolve the glob (0
+    matches -> entry 3 + zero row; >1 -> newest mtime, no degradation), parse,
+    build the program row and its lanes in note order. A present-but-headerless
+    note keeps path/mtime/objective with lanes=[] + entry 3. Per-defect parse
+    errors land in the program's ``parse_defects`` (fail-visible, contract v2
+    item 2) — the lanes that CAN parse still render. Entry 10 is ADDED once
+    per program when any row was skipped, carrying the count AND (contract v2)
+    the note path — so two programs skipping the same number of rows no longer
+    dedup into one ambiguous line."""
     zero = {"program": program.program, "note_path": "", "note_mtime": 0,
-            "objective": "", "master": contract.null_master(), "lanes": []}
+            "objective": "", "parse_defects": [],
+            "master": contract.null_master(), "lanes": []}
     path = notes.find_note(program.note_glob)
     if path is None:
         log.add((1, idx, 0, ""), f"notes degraded: {program.program}")
@@ -99,22 +102,25 @@ def _read_program_notes(config: TowerConfig, program, idx: int,
     except (OSError, UnicodeDecodeError):
         log.add((1, idx, 0, ""), f"notes degraded: {program.program}")
         return zero
-    parsed = notes.parse_note(text)
+    abs_path = os.path.abspath(path)
+    parsed = notes.parse_note(text, note_path=abs_path)
     if not parsed.header_found:
         log.add((1, idx, 0, ""), f"notes degraded: {program.program}")
     lanes = []
     for row in parsed.rows:
         repo_name, repo_idx = _map_repo(config.repos, row.repo_token)
         lane = contract.lane_shell(row.row_id, repo_name, row.branch, row.slug,
-                                   row.status_note, row.status_parsed)
+                                   row.status_note, row.status_parsed,
+                                   deps=row.deps, verified=row.verified)
         lanes.append(lane)
         lane_records.append((idx, lane, row.sess_token, repo_name, repo_idx,
                              row.branch, row.status_parsed, row.mr_bang,
                              row.mr_hash, row.verified))
     if parsed.skipped >= 1:
-        log.add((1, idx, 1, ""), f"note rows skipped: {parsed.skipped}")
-    return {"program": program.program, "note_path": os.path.abspath(path),
+        log.add((1, idx, 1, ""), f"note rows skipped: {parsed.skipped} ({abs_path})")
+    return {"program": program.program, "note_path": abs_path,
             "note_mtime": mtime, "objective": parsed.objective,
+            "parse_defects": parsed.defects,
             "master": contract.null_master(), "lanes": lanes}
 
 
@@ -353,15 +359,17 @@ def _read_signals(config: TowerConfig, log: "DegradedLog", lane_records: list,
 
 
 def _derive(config: TowerConfig, programs: list, log: "DegradedLog",
-            lane_records: list, session_epochs: dict, now: float) -> tuple[list[dict], list[dict]]:
-    """§6 derivations, wired into lanes in place; returns (verify_queue,
-    human_actions). Views are built in lane_records order — program-config
-    order then note order, the document order of both row lists. The
-    precondition by-ref lookups and their entry-11 emissions run HERE (collect
-    owns the cache and the log; ``derive`` stays pure) and only for lanes that
-    produce a merge row with non-empty precondition_mrs."""
+            lane_records: list, session_epochs: dict, now: float) -> tuple[list[dict], list[dict], list[dict]]:
+    """§6 + contract v2 derivations, wired into lanes in place; returns
+    (verify_queue, human_actions, needs_me). Views are built in lane_records
+    order — program-config order then note order, the document order of all
+    three row lists. The precondition by-ref lookups and their entry-11
+    emissions run HERE (collect owns the cache and the log; ``derive`` stays
+    pure) and only for lanes that produce a merge row with non-empty
+    precondition_mrs."""
     verify_views: list[dict] = []
     action_views: list[dict] = []
+    stalled_views: list[dict] = []
     for rec in lane_records:
         pidx, lane, token = rec[0], rec[1], rec[2]
         repo_idx = rec[4]
@@ -371,16 +379,24 @@ def _derive(config: TowerConfig, programs: list, log: "DegradedLog",
         mr_failed = rec[11] if len(rec) > 11 else False
         session = lane["session"]
         session_id = session["id"] if session is not None else None
-        # §6.2/§6.3: finished_ago_s is the lane session's age, 0 unknown.
-        finished_ago_s = session["last_active_ago_s"] if session is not None else 0
+        # §6.2/§6.3 + contract v2: the lane session's age, None when the lane
+        # has no session (due-with-unknown-age in the queue, "unknown" in the
+        # verify_due because list).
+        finished_ago_s = session["last_active_ago_s"] if session is not None else None
         manifest = lane["manifest"]
         lane["stalled"] = derive.derive_stalled(
             manifest, session_epochs.get(id(lane)), session_id,
             _queue_mtime(manifest), now,
             manifest["stall_t_hours"] if manifest is not None else None)
-        lane["suggest_verify"] = derive.derive_suggest_verify(
+        if lane["stalled"] is not None:
+            stalled_views.append({"row_id": lane["row_id"],
+                                  "program": config.programs[pidx].program,
+                                  "repo": rec[3], "branch": rec[5]})
+        due = derive.derive_suggest_verify(
             status_parsed, finished_ago_s, config.verify_grace_s,
             verified=rec[9])
+        lane["suggest_verify"] = due
+        lane["verify_due"] = due  # contract v2: the machine-due lane mirror
         master = programs[pidx]["master"]
         verify_views.append({
             "row_id": lane["row_id"],
@@ -388,6 +404,7 @@ def _derive(config: TowerConfig, programs: list, log: "DegradedLog",
             "status_parsed": status_parsed,
             "finished_ago_s": finished_ago_s,
             "master_hint": master["session_id"] or "",
+            "verified": rec[9],
             # §6.3: the JOINED FULL db id on a 1-hit join, else the raw token.
             "verify_id": session_id if session is not None else (token or "")})
         if repo_idx is None or mr is None or mr_failed or mr["state"] != "open":
@@ -406,12 +423,17 @@ def _derive(config: TowerConfig, programs: list, log: "DegradedLog",
                 log.add((3, repo_idx, 2, ref), f"precondition state unknown: {ref}")
             else:
                 results[ref] = pre_mr["state"]
-        action_views.append({"repo_idx": repo_idx, "repo": repo.name,
+        action_views.append({"row_id": lane["row_id"],
+                             "program": config.programs[pidx].program,
+                             "repo_idx": repo_idx, "repo": repo.name,
                              "repo_host": repo.host, "branch": rec[5],
                              "mr": mr, "mr_failed": mr_failed,
                              "manifest": manifest,
                              "precondition_results": results})
-    return derive.verify_queue_rows(verify_views), derive.human_action_rows(action_views)
+    verify_queue = derive.verify_queue_rows(verify_views, grace_s=config.verify_grace_s)
+    return (verify_queue,
+            derive.human_action_rows(action_views),
+            derive.needs_me_rows(action_views, verify_queue, stalled_views))
 
 
 def _queue_mtime(manifest: dict | None) -> float | None:
