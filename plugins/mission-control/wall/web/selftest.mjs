@@ -739,10 +739,11 @@ const NINE_CASES = [
 // exactly; the conformance mocks must equal KEYSETS at every level (AC-31).
 // Contract v2 (pinned 2026-10-06, shared with W2-L1): root gains
 // parse_defects + needs_me; lane gains deps/verified/verify_due.
-// Contract v3 (pinned 2026-10-07, wall-honesty W5-L5): root gains
-// sessions_orphaned + the orphanedRow shape (conservation surfacing).
+// Contract v3 (2026-10-07): W4-L4 adds root.merges + the 16-key mergesRow
+// (program/row_id/session nullable — never guessed); W5-L5 wall-honesty adds
+// root.sessions_orphaned + the orphanedRow shape (conservation surfacing).
 const FROZEN_MANIFEST = {
-  root: ["schema_version", "server", "programs", "verify_queue", "human_actions", "sessions_unmapped", "sessions_orphaned", "launch_pending", "wall", "parse_defects", "needs_me"],
+  root: ["schema_version", "server", "programs", "verify_queue", "human_actions", "sessions_unmapped", "sessions_orphaned", "launch_pending", "wall", "parse_defects", "needs_me", "merges"],
   server: ["uptime_s", "generated_ts", "degraded", "banner"],
   program: ["program", "note_path", "note_mtime", "objective", "master", "lanes"],
   master: ["session_id", "title", "last_active_ago_s"],
@@ -760,6 +761,7 @@ const FROZEN_MANIFEST = {
   unmappedRow: ["id", "title", "dir", "last_active_ago_s", "parent_session_id", "parent_title"],
   orphanedRow: ["id", "title", "tag", "last_active_ago_s"],
   needsMeRow: ["kind", "row_id", "program", "action", "deep_link"],
+  mergesRow: ["host", "repo", "number", "title", "branch", "program", "row_id", "session", "state", "conflicts", "draft", "created_at", "updated_at", "merged_at", "url", "author"],
   parseDefect: ["note_path", "line", "defect", "row_id"],
   wall: ["pending"],
   wallPending: ["version", "status", "flag", "reason", "row_id", "lane_tag", "repo_root", "prompt_sha256", "launch_click_ms", "matched_session_id", "matched_at_ms", "last_eval_ms", "advisory_120s_fired", "canary_fired", "updated_at_ms"],
@@ -803,6 +805,7 @@ function assertManifestWalk(doc, caseName) {
   for (const row of doc.sessions_unmapped) assertKeySet(row, K.unmappedRow, caseName + " unmapped " + row.id);
   for (const row of doc.sessions_orphaned) assertKeySet(row, K.orphanedRow, caseName + " orphaned " + row.id);
   for (const row of doc.needs_me) assertKeySet(row, K.needsMeRow, caseName + " needs_me " + row.row_id);
+  for (const row of doc.merges) assertKeySet(row, K.mergesRow, caseName + " merges " + row.url);
   for (const row of doc.parse_defects) assertKeySet(row, K.parseDefect, caseName + " parse_defects " + (row.note_path || "?"));
   assertKeySet(doc.wall, K.wall, caseName + " wall");
   if (doc.wall.pending !== null) assertKeySet(doc.wall.pending, K.wallPending, caseName + " wall.pending");
@@ -822,16 +825,17 @@ function buildMockDom(mocks) {
   return dom;
 }
 
-test("T2-state: KEYSETS manifest frozen (21 manifests; master 3 keys; wallPending 15 keys)", () => {
+test("T2-state: KEYSETS manifest frozen (22 manifests; master 3 keys; wallPending 15 keys)", () => {
   const K = loadApp().state.KEYSETS;
   assert.ok(K, "MCW.state.KEYSETS must exist");
   assert.deepEqual(K, FROZEN_MANIFEST, "KEYSETS must equal the frozen manifest of record");
-  assert.equal(sortedKeys(K).length, 21, "exactly 21 manifest entries (v2: +needsMeRow, +parseDefect; v3: +orphanedRow)");
+  assert.equal(sortedKeys(K).length, 22, "exactly 22 manifest entries (v2: +needsMeRow, +parseDefect; v3: +mergesRow, +orphanedRow)");
   assert.equal(K.master.length, 3, "master is the tower-section-9 3-key shape");
   assert.equal(K.wallPending.length, 15, "wall.pending is the 15-key pending.json record");
   assert.equal(K.lane.length, 15, "v2 lane: the 12 v1 keys + deps/verified/verify_due");
   assert.equal(K.needsMeRow.length, 5, "needs_me row is the 5-key actionable shape");
   assert.equal(K.parseDefect.length, 4, "parse_defects entry is the 4-key fail-visible shape");
+  assert.equal(K.mergesRow.length, 16, "v3 merges row is the 16-key registry shape");
 });
 
 test("AC-3: index.html embeds exactly the nine mock cases, in the pinned order, all parsable", () => {
@@ -4100,8 +4104,8 @@ test("round 5: view switcher — TIMELINE is the opening tab (W2-L2); projects v
   const projEl = full.dom.getElementById("projects-view");
   const tlEl = full.dom.getElementById("timeline-view");
   const needsEl = full.dom.getElementById("needs-view");
-  // W2-L2: four tabs — TIMELINE (opening), NEEDS ME, WALL (cards), PROJECTS.
-  // The card wall ships hidden but warm (it keeps rendering every pass).
+  // W2-L2 + W4-L4: five tabs — TIMELINE (opening), NEEDS ME, WALL (cards),
+  // MERGES (registry), PROJECTS. The card wall ships hidden but warm.
   assert.ok(tlEl && !("hidden" in tlEl.attrs), "timeline is the default view");
   assert.ok(tlEl.children.length >= 1, "the timeline populates on boot");
   assert.ok("hidden" in grid.attrs, "the card wall ships hidden");
@@ -4630,9 +4634,17 @@ test("W2-L2: timeline node dots exercise every hue; click opens the lane detail;
   node.click();
   assert.ok(!byClass(node, "tl-detail")[0].classList.contains("collapsed"), "click opens the detail");
   const detText = collectText(byClass(node, "tl-detail")[0]);
-  for (const bit of ["session s-101", "branch secfix/w2-l1", "mr !34 open", "active 15m ago", "status forged"]) {
+  // W4-L4 re-pin: mock-full's registry covers W2-L1, so the plain "mr" line is
+  // subsumed by the .tl-mr block (host badge + !34 link + chip) — the other
+  // detail lines stay
+  for (const bit of ["session s-101", "branch secfix/w2-l1", "active 15m ago", "status forged"]) {
     assert.ok(detText.indexOf(bit) !== -1, "detail names: " + bit);
   }
+  assert.equal(detText.indexOf("mr !34 open"), -1, "plain mr line subsumed by the registry block");
+  const mrRow = byClass(node, "tl-mr")[0];
+  assert.ok(mrRow, "the registry MR block renders in the detail");
+  assert.ok(collectText(mrRow).indexOf("cleo !34") !== -1, "block names repo + ref");
+  assert.ok(byClass(mrRow, "mr-state--open")[0], "block carries the state chip");
   app.render(); // a poll tick — ages change, the view rebuilds
   const nodeAfter = findByData(dom.getElementById("timeline-view"), "data-row-id", "W2-L1");
   assert.ok(!byClass(nodeAfter, "tl-detail")[0].classList.contains("collapsed"), "the expanded detail survives the poll rebuild");
@@ -4834,6 +4846,182 @@ test("W2-L2: card view — done/parked lanes collapse under their own head; fini
   byClass(omni, "card-head")[0].click();
   const omni2 = byClass(dom.getElementById("col1-programs"), "program-card")[1];
   assert.ok(!byClass(omni2, "lane-list")[0].classList.contains("collapsed"), "head click expands the finished card");
+});
+
+// =====================================================================
+// W4-L4: MERGES tab (contract v3) — tab order, registry rows, chips, joins
+// =====================================================================
+
+test("W4-L4: tab order — TIMELINE / NEEDS ME / WALL / MERGES / PROJECTS in the shipped topbar", () => {
+  const html = readWebFile("index.html");
+  const ids = [];
+  const re = /<button id="(view-[a-z]+)"/g;
+  let m;
+  while ((m = re.exec(html)) !== null) ids.push(m[1]);
+  assert.deepEqual(
+    ids,
+    ["view-timeline", "view-needs", "view-wall", "view-merges", "view-projects"],
+    "the MERGES tab ships between WALL and PROJECTS"
+  );
+  assert.ok(/<section id="merges-view" hidden>/.test(html), "the merges view section ships hidden");
+});
+
+test("W4-L4: MERGES tab — program groups, host badges, state chips, joins, links, dates", () => {
+  const { app, dom } = makeQaApp("full");
+  app.setView("merges");
+  const view = dom.getElementById("merges-view");
+  assert.ok(!("hidden" in view.attrs), "setView(merges) opens the registry");
+  assert.equal(dom.getElementById("view-merges").attrs["aria-pressed"], "true", "aria-pressed");
+  assert.ok("hidden" in dom.getElementById("timeline-view").attrs, "timeline hides");
+  const rows = byClass(view, "merges-row");
+  assert.equal(rows.length, 4, "all four registry entries render");
+  // program groups in first-seen order — served order is newest updated_at
+  // first (41, 34, 14, 9), so the unjoinable !41 opens the "(no program)" group
+  const groups = byClass(view, "merges-group").map((g) => collectText(g));
+  assert.deepEqual(groups, ["(no program)", "secfix"], "grouped by program, unjoinable under its own group");
+  const first = rows[0]; // !41 — the open+conflicts unjoinable entry
+  assert.ok(byClass(first, "mr-badge--gitlab")[0], "host badge grammar reused");
+  const chip41 = byClass(first, "mr-state")[0];
+  assert.ok(chip41.classList.contains("mr-state--conflicts"), "conflicts wins the chip");
+  assert.equal(collectText(chip41), "conflicts");
+  assert.ok(collectText(first).indexOf("row unknown") !== -1, "row unknown is quiet text");
+  assert.ok(collectText(first).indexOf("session unknown") !== -1, "session unknown is quiet text");
+  const link41 = byClass(first, "merges-main")[0];
+  assert.equal(link41.tag, "a", "an outbound anchor renders");
+  assert.equal(link41.attrs.href, "https://gitlab.example/cleo/cleo/-/merge_requests/41");
+  assert.equal(link41.attrs.target, "_blank", "the MR opens a new tab");
+  assert.equal(link41.attrs.rel, "noopener noreferrer", "the anchor is rel-hardened");
+  assert.ok(collectText(link41).indexOf("cleo !41") !== -1, "gitlab ref reads !N");
+  const merged = rows[2]; // #14 — merged github entry, session null
+  assert.ok(byClass(merged, "mr-badge--github")[0], "github badge");
+  const chip14 = byClass(merged, "mr-state")[0];
+  assert.ok(chip14.classList.contains("mr-state--merged"), "merged chip hue");
+  assert.ok(collectText(merged).indexOf("mission-control #14") !== -1, "github ref reads #N");
+  assert.ok(collectText(byClass(merged, "mr-dates")[0]).indexOf("merged ") !== -1, "merged date renders");
+  assert.ok(collectText(merged).indexOf("session unknown") !== -1, "null session is unknown, never guessed");
+  assert.equal(collectText(byClass(merged, "mr-lane")[0]), "W1-L0", "lane row badge");
+  const closed = rows[3]; // #9 — closed + draft
+  const chip9 = byClass(closed, "mr-state")[0];
+  assert.ok(chip9.classList.contains("mr-state--draft"), "draft wins the chip over the state hue");
+  assert.equal(collectText(chip9), "draft");
+  const open34 = byClass(rows[1], "mr-state")[0];
+  assert.ok(open34.classList.contains("mr-state--open"), "clean open chip");
+  assert.equal(collectText(byClass(rows[1], "mr-session")[0]), "sess_9a690ab2", "the row's session token renders");
+});
+
+test("W4-L4: merges fallbacks — absent key (schema-2 payload) empty state; malformed rows degrade silently", () => {
+  // absent key: a schema-2 shaped doc (merges deleted) renders the pinned
+  // empty state + the honest pointer — never a throw
+  const pre = makeQaApp("minimal");
+  const doc = JSON.parse(JSON.stringify(parseIndexMocks(readWebFile("index.html")).minimal));
+  delete doc.merges;
+  pre.app.setDocument(doc);
+  pre.app.render();
+  pre.app.setView("merges");
+  const view = pre.dom.getElementById("merges-view");
+  const text = collectText(view);
+  assert.ok(text.indexOf("no lane MRs tracked yet") !== -1, "pinned empty-state wording");
+  assert.ok(text.indexOf("schema 3") !== -1, "the pre-contract pointer is honest");
+  // empty array: same words WITHOUT the pointer
+  const mini = makeQaApp("minimal");
+  mini.app.setView("merges");
+  const t2 = collectText(mini.dom.getElementById("merges-view"));
+  assert.ok(t2.indexOf("no lane MRs tracked yet") !== -1, "empty registry wording");
+  assert.equal(t2.indexOf("schema 3"), -1, "no pre-contract pointer on a schema-3 empty registry");
+  // malformed rows (non-objects) are skipped + counted, never a throw
+  const ugly = makeQaApp("full");
+  const udoc = JSON.parse(JSON.stringify(parseIndexMocks(readWebFile("index.html")).full));
+  udoc.merges = [null, "nope", 42].concat(udoc.merges);
+  ugly.app.setDocument(udoc);
+  ugly.app.render();
+  ugly.app.setView("merges");
+  const uview = ugly.dom.getElementById("merges-view");
+  assert.equal(byClass(uview, "merges-row").length, 4, "valid rows still render");
+  assert.ok(collectText(uview).indexOf("skipped 3 malformed rows") !== -1, "skips are counted visibly");
+  // ?view=merges QA deep-link: the bootstrap regex (file:-only affordance,
+  // W2-L2 precedent — verified in browser QA, pinned here at the source)
+  assert.ok(
+    /view=\(timeline\|needs\|wall\|merges\|projects\)/.test(readWebFile("app.js")),
+    "the ?view= deep-link regex accepts merges"
+  );
+});
+
+test("W4-L4: full-mock merges census — every registry state covered, newest-first", () => {
+  const mocks = parseIndexMocks(readWebFile("index.html"));
+  const merges = mocks.full.merges;
+  assert.ok(merges.length >= 3, "at least three registry entries");
+  const states = new Set(merges.map((m) => m.state));
+  assert.ok(states.has("merged") && states.has("open") && states.has("closed"), "merged/open/closed all covered");
+  assert.ok(merges.some((m) => m.conflicts === true), "an open+conflicts entry exists");
+  assert.ok(merges.some((m) => m.draft === true && m.state === "closed"), "a closed+draft entry exists");
+  assert.ok(merges.some((m) => m.program === null), "an unjoinable entry carries null program");
+  for (let i = 1; i < merges.length; i += 1) {
+    assert.ok(merges[i - 1].updated_at >= merges[i].updated_at, "served order is newest updated_at first");
+  }
+  // every branch matches the lane grammar ^(loop|fix)/
+  for (const m of merges) assert.match(m.branch, /^(loop|fix)\//, "registry rows are lane branches only");
+});
+
+test("W4-L4: mr-state chip rules exist on the token palette (contrast rides AC-26's matrix)", () => {
+  const css = readWebFile("style.css");
+  const tokens = parseRootTokens(css);
+  const rules = parseCssRules(css);
+  const ruleOf = (sel) => rules.find((r) => r.selector === sel);
+  const declHas = (sel, prop) => {
+    const r = ruleOf(sel);
+    assert.ok(r, sel + " rule exists");
+    assert.ok(r.decls && r.decls[prop] !== undefined, sel + " declares " + prop);
+    return r.decls[prop];
+  };
+  // the four chip hues + the two row accents are existing :root tokens —
+  // AC-26's matrix already pins each >= 4.5:1 on bg/raise/hover
+  assert.equal(declHas(".mr-state--merged", "color"), "var(--green)");
+  assert.equal(declHas(".mr-state--open", "color"), "var(--amber)");
+  assert.equal(declHas(".mr-state--conflicts", "color"), "var(--red)");
+  assert.equal(declHas(".mr-state--draft", "border-style"), "dashed");
+  assert.equal(declHas(".merges-row--merged", "border-left-color"), "var(--green)");
+  assert.equal(declHas(".merges-row--open", "border-left-color"), "var(--amber)");
+  assert.equal(declHas(".merges-row--conflicts", "border-left-color"), "var(--red)");
+  for (const tok of ["--green", "--amber", "--red", "--dim"]) {
+    assert.match(tokens[tok], /^#[0-9a-f]{6}$/i, tok + " resolves to a hex token");
+  }
+});
+
+test("W4-L4: timeline detail MR window — registry join by row_id, schema-2 fallback keeps the plain mr line", () => {
+  const { app, dom } = makeQaApp("full");
+  app.setView("timeline");
+  const tl = dom.getElementById("timeline-view");
+  // an uncovered lane keeps the honest fallback line (W2-L5 has no registry row)
+  const bare = findByData(tl, "data-row-id", "W2-L5");
+  bare.click();
+  const bareDet = byClass(bare, "tl-detail")[0];
+  const bareText = collectText(bareDet);
+  assert.ok(/mr (— none|!)/.test(bareText), "uncovered lane keeps the plain mr line");
+  assert.equal(byClass(bareDet, "tl-mr").length, 0, "no registry block without a registry row");
+  // the covered lane's block links out with the tab's same grammar
+  const node = findByData(tl, "data-row-id", "W2-L1");
+  node.click();
+  const mrRow = byClass(node, "tl-mr")[0];
+  const link = byClass(mrRow, "tl-mr-main")[0];
+  assert.equal(link.tag, "a", "the MR title links out");
+  assert.equal(link.attrs.target, "_blank", "new tab");
+  assert.equal(link.attrs.rel, "noopener noreferrer", "rel-hardened");
+  // the small window: the open detail is wider than the node (CSS rule of record)
+  const rules = parseCssRules(readWebFile("style.css"));
+  const openDetail = rules.find((r) => r.selector === ".tl-node--open .tl-detail");
+  assert.ok(openDetail && openDetail.decls["width"] === "264px", ".tl-node--open .tl-detail width: 264px");
+  // a schema-2 payload (merges key absent) degrades every lane to the plain line
+  const pre = makeQaApp("full");
+  const doc = JSON.parse(JSON.stringify(parseIndexMocks(readWebFile("index.html")).full));
+  delete doc.merges;
+  pre.app.setDocument(doc);
+  pre.app.render();
+  pre.app.setView("timeline");
+  const preNode = findByData(pre.dom.getElementById("timeline-view"), "data-row-id", "W2-L1");
+  preNode.click();
+  const preDet = byClass(preNode, "tl-detail")[0];
+  assert.ok(collectText(preDet).indexOf("mr !34 open") !== -1, "schema-2 payload: plain mr line returns");
+  assert.equal(byClass(preDet, "tl-mr").length, 0, "schema-2 payload: no registry block");
 });
 
 // ---------------- runner ----------------

@@ -1,4 +1,4 @@
-"""Frozen-contract compliance (spec §9 + wall-overhaul contract v2/v3): the
+"""Frozen-contract compliance (spec §9 + wall-overhaul contracts v2/v3): the
 verbatim example, the declarative shape spec checked by ``assert_shape``, and
 the zero-value builders.
 
@@ -12,12 +12,17 @@ Contract v2 (schema_version 2): lanes carry ``deps`` / ``verified`` /
 ``needs_me``; ``verify_queue_row.finished_ago_s`` is ``int|None`` (null =
 due-with-unknown-age: a done/partial lane with no joined session).
 
-Contract v3 (wall-honesty, v1.11.1 — W5-L5): the document carries
-``sessions_orphaned`` (tagged-for-a-known-program sessions bound to no lane;
-the 2026-10-07 incident's invisible class) and a ROOT ``parse_defects``
-aggregation (flattened per-program defects — the web's defect strip key the
-tower never emitted before). Both additive; W4-L4's ``merges[]`` rides the
-same version when absorbed.
+Contract v3 (schema_version 3) carries two additive root keys:
+- W4-L4: ``merges`` — the MR/PR registry (tower/merges.py). ``program`` /
+  ``row_id`` / ``session`` are nullable (an unjoinable lane MR lists with
+  nulls, never guessed); ``conflicts`` is ``bool|None`` (null = mergeability
+  unknown); ``merged_at`` is ``int|None`` (null = not merged).
+- W5-L5 (wall-honesty, v1.11.1): ``sessions_orphaned``
+  (tagged-for-a-known-program sessions bound to no lane; the 2026-10-07
+  incident's invisible class) and a ROOT ``parse_defects`` aggregation
+  (flattened per-program defects — the web's defect strip key the tower
+  never emitted before).
+All v2 consumers are untouched by the additive keys.
 """
 
 import json
@@ -37,6 +42,9 @@ CONTRACT_EXAMPLE = json.loads(r'''{"schema_version":3,"server":{"uptime_s":0,"ge
  "verify_queue":[{"row_id":"","program":"","finished_ago_s":0,"master_hint":"","verify_cmd":""}],
  "human_actions":[{"kind":"merge","ref":"","repo":"","repo_host":"","title":"","pipeline":"","ready":true}],
  "needs_me":[{"kind":"merge-ready","row_id":"","program":"","action":"","deep_link":null}],
+ "merges":[{"host":"","repo":"","number":0,"title":"","branch":"","program":null,"row_id":null,
+   "session":null,"state":"","conflicts":null,"draft":false,"created_at":0,"updated_at":0,
+   "merged_at":null,"url":"","author":""}],
  "sessions_unmapped":[{"id":"","title":"","dir":"","last_active_ago_s":0,"parent_session_id":null,"parent_title":null}],
  "sessions_orphaned":[{"id":"","title":"","tag":"","last_active_ago_s":0}],
  "parse_defects":[{"note_path":"","line":0,"defect":"","row_id":null}],
@@ -61,6 +69,7 @@ SHAPES = {
         "verify_queue": ["verify_queue_row"],
         "human_actions": ["human_action_row"],
         "needs_me": ["needs_me_row"],
+        "merges": ["merge_row"],
         "sessions_unmapped": ["unmapped_row"],
         # contract v3 (wall-honesty): conservation + root defect aggregation
         "sessions_orphaned": ["orphaned_row"],
@@ -96,6 +105,15 @@ SHAPES = {
                          "title": STR, "pipeline": STR, "ready": bool},
     "needs_me_row": {"kind": STR, "row_id": STR, "program": STR, "action": STR,
                      "deep_link": "str|None"},
+    # contract v3 (W4-L4): the MR/PR registry row. program/row_id/session
+    # null = unjoinable (never guessed); conflicts null = mergeability
+    # unknown; merged_at null = not merged; created_at/updated_at epoch s
+    # (0 = unparseable timestamp, a documented degradation).
+    "merge_row": {"host": STR, "repo": STR, "number": INT, "title": STR,
+                  "branch": STR, "program": NULSTR, "row_id": NULSTR,
+                  "session": NULSTR, "state": STR, "conflicts": "bool|None",
+                  "draft": bool, "created_at": INT, "updated_at": INT,
+                  "merged_at": "int|None", "url": STR, "author": STR},
     "unmapped_row": {"id": STR, "title": STR, "dir": STR, "last_active_ago_s": INT,
                      "parent_session_id": NULSTR, "parent_title": NULSTR},
     # contract v3 (wall-honesty A6): the orphaned-row family — same shape
@@ -190,8 +208,8 @@ def lane_shell(row_id: str, repo: str | None, branch: str | None, slug: str | No
 
 def zero_document(program_names: list[str], uptime_s: int, generated_ts: int,
                   banner: str | None) -> dict:
-    """All-keys-present zero document (§9 + contract v2/v3); the caller supplies
-    provider values (keeps this module config-free)."""
+    """All-keys-present zero document (§9 + contracts v2/v3); the caller
+    supplies provider values (keeps this module config-free)."""
     return {
         "schema_version": 3,
         "server": {"uptime_s": uptime_s, "generated_ts": generated_ts,
@@ -203,6 +221,7 @@ def zero_document(program_names: list[str], uptime_s: int, generated_ts: int,
         "verify_queue": [],
         "human_actions": [],
         "needs_me": [],
+        "merges": [],
         "sessions_unmapped": [],
         "sessions_orphaned": [],
         "parse_defects": [],

@@ -252,9 +252,10 @@
         grid.appendChild(col3);
         body.appendChild(grid);
       }
-      // W2-L2: the four-tab switcher — TIMELINE (opening tab), NEEDS ME,
-      // WALL (the card view), PROJECTS. Ships statically in index.html's
-      // topbar; created here only for shells missing it.
+      // W2-L2 + W4-L4: the five-tab switcher — TIMELINE (opening tab),
+      // NEEDS ME, WALL (the card view), MERGES (the MR/PR registry),
+      // PROJECTS. Ships statically in index.html's topbar; created here only
+      // for shells missing it.
       if (!byId("view-wall")) {
         var views = el("div");
         views.classList.add("tb-cluster");
@@ -274,6 +275,11 @@
         viewWallBtn.setAttribute("aria-pressed", "false");
         viewWallBtn.setText("WALL");
         views.appendChild(viewWallBtn);
+        var viewMergesBtn = el("button", "view-merges");
+        viewMergesBtn.setAttribute("type", "button");
+        viewMergesBtn.setAttribute("aria-pressed", "false");
+        viewMergesBtn.setText("MERGES");
+        views.appendChild(viewMergesBtn);
         var viewProjectsBtn = el("button", "view-projects");
         viewProjectsBtn.setAttribute("type", "button");
         viewProjectsBtn.setAttribute("aria-pressed", "false");
@@ -286,6 +292,11 @@
         var projectsSection = el("section", "projects-view");
         projectsSection.setAttribute("hidden", "");
         body.appendChild(projectsSection);
+      }
+      if (!byId("merges-view")) {
+        var mergesSection = el("section", "merges-view");
+        mergesSection.setAttribute("hidden", "");
+        body.appendChild(mergesSection);
       }
       if (!byId("timeline-view")) {
         var timelineSection = el("section", "timeline-view");
@@ -395,11 +406,13 @@
       ensureShell();
       wireViewSwitcher();
       var valid = stateDoc !== null && MCW.state.validateDoc(stateDoc).ok;
-      // W2-L2: four views. The card wall keeps rendering (hidden) so it stays
-      // warm; timeline / needs / projects render on their own pass.
+      // W2-L2 + W4-L4: five views. The card wall keeps rendering (hidden) so
+      // it stays warm; timeline / needs / merges / projects render on their
+      // own pass.
       var projectsEl = byId("projects-view");
       var timelineEl = byId("timeline-view");
       var needsEl = byId("needs-view");
+      var mergesEl = byId("merges-view");
       var gridForView = byId("grid");
       function showFor(node, name) {
         if (node === null) return;
@@ -409,8 +422,9 @@
       showFor(gridForView, "wall");
       showFor(timelineEl, "timeline");
       showFor(needsEl, "needs");
+      showFor(mergesEl, "merges");
       showFor(projectsEl, "projects");
-      var btnIds = ["view-timeline", "view-needs", "view-wall", "view-projects"];
+      var btnIds = ["view-timeline", "view-needs", "view-wall", "view-merges", "view-projects"];
       for (var b = 0; b < btnIds.length; b += 1) {
         var btn = byId(btnIds[b]);
         if (btn) {
@@ -454,6 +468,11 @@
       if (currentView === "needs" && needsEl !== null) {
         renderContainer(needsEl, "needs-view", pollDriven, function (scratch) {
           renderNeedsView(scratch);
+        });
+      }
+      if (currentView === "merges" && mergesEl !== null) {
+        renderContainer(mergesEl, "merges-view", pollDriven, function (scratch) {
+          renderMergesView(scratch);
         });
       }
       if (currentView === "projects" && projectsEl !== null) {
@@ -540,6 +559,15 @@
       var hero = byId("empty-hero");
       if (!hero) return;
       var mode = "hidden";
+      // W4-L4: the MERGES tab owns its empty state ("no lane MRs tracked
+      // yet") — the wall's all-clear hero would contradict registry rows
+      // rendered right under it on a merges-only document.
+      if (currentView === "merges") {
+        hero.setAttribute("hidden", "");
+        hero.classList.remove("hero--big");
+        hero.classList.remove("hero--slim");
+        return;
+      }
       if (valid) {
         var contentKinds = (counts.p > 0 ? 1 : 0) + (counts.o > 0 ? 1 : 0) + (counts.s > 0 ? 1 : 0);
         if (contentKinds === 0) mode = "big";
@@ -1283,7 +1311,7 @@
 
     // ---- round 5: views + reading-state preservation ----
 
-    var currentView = "timeline"; // "timeline" | "needs" | "wall" | "projects"
+    var currentView = "timeline"; // "timeline" | "needs" | "wall" | "merges" | "projects"
     var projectSort = "recent"; // "recent" | "name"
     var viewWired = false; // view switcher wiring is one-shot
     // Round 6: background sessions are hidden until asked for.
@@ -1371,7 +1399,7 @@
     }
 
     function setView(name) {
-      if (name !== "timeline" && name !== "needs" && name !== "wall" && name !== "projects") return currentView;
+      if (name !== "timeline" && name !== "needs" && name !== "wall" && name !== "merges" && name !== "projects") return currentView;
       if (currentView === name) {
         render();
         return currentView;
@@ -1386,8 +1414,9 @@
       var timelineBtn = byId("view-timeline");
       var needsBtn = byId("view-needs");
       var wallBtn = byId("view-wall");
+      var mergesBtn = byId("view-merges");
       var projBtn = byId("view-projects");
-      if (!timelineBtn || !needsBtn || !wallBtn || !projBtn) return;
+      if (!timelineBtn || !needsBtn || !wallBtn || !mergesBtn || !projBtn) return;
       viewWired = true;
       if (typeof timelineBtn.addEventListener === "function") {
         timelineBtn.addEventListener("click", function () {
@@ -1398,6 +1427,9 @@
         });
         wallBtn.addEventListener("click", function () {
           setView("wall");
+        });
+        mergesBtn.addEventListener("click", function () {
+          setView("merges");
         });
         projBtn.addEventListener("click", function () {
           setView("projects");
@@ -3462,7 +3494,81 @@
     var TL_ROW_GAP = 12;
     var TL_COL_HEAD_H = 30; // the workflow-style header row height
 
-    function renderTimelineNode(parentEl, lane, x, y) {
+    // W4-L4 (operator overlay): row_id -> registry entries (served order =
+    // newest updated_at first). Empty map on a schema-2 payload (no key) —
+    // the plain "mr" text line stays the fallback there.
+    function mergesIndexByRowId() {
+      var idx = {};
+      if (stateDoc === null || !Array.isArray(stateDoc.merges)) return idx;
+      var res = MCW.state.items(stateDoc.merges, null);
+      for (var i = 0; i < res.valid.length; i += 1) {
+        var m = res.valid[i];
+        if (typeof m.row_id !== "string" || m.row_id === "") continue;
+        if (!Object.prototype.hasOwnProperty.call(idx, m.row_id)) idx[m.row_id] = [];
+        idx[m.row_id].push(m);
+      }
+      return idx;
+    }
+
+    // One compact MR row for the timeline detail window: host badge, !N/#N +
+    // title link, state chip (conflicts > draft > state), merged age. Same
+    // chip precedence and badge grammar as the MERGES tab.
+    function buildTlMrRow(entry) {
+      var host = typeof entry.host === "string" ? entry.host : "";
+      var row = el("div");
+      row.classList.add("tl-mr");
+      var badge = el("span");
+      badge.classList.add("mr-badge");
+      if (host === "gitlab" || host === "github") badge.classList.add("mr-badge--" + host);
+      badge.setText(host || "?");
+      row.appendChild(badge);
+      var url = typeof entry.url === "string" && entry.url !== "" ? entry.url : null;
+      var main;
+      if (url !== null) {
+        main = el("a");
+        main.setAttribute("href", url);
+        main.setAttribute("target", "_blank");
+        main.setAttribute("rel", "noopener noreferrer");
+      } else {
+        main = el("span");
+      }
+      main.classList.add("tl-mr-main");
+      var refSep = host === "github" ? "#" : "!";
+      var n = typeof entry.number === "number" && isFinite(entry.number) ? entry.number : 0;
+      var title = typeof entry.title === "string" ? entry.title : "";
+      var repo = typeof entry.repo === "string" ? entry.repo : "";
+      // same grammar as the MERGES tab rows: repo !N · title
+      main.setText(repo + " " + refSep + n + " · " + title);
+      main.setAttribute("title", title);
+      row.appendChild(main);
+      var chip = el("span");
+      chip.classList.add("mr-state");
+      var state = typeof entry.state === "string" ? entry.state : "";
+      if (entry.conflicts === true) {
+        chip.classList.add("mr-state--conflicts");
+        chip.setText("conflicts");
+      } else if (entry.draft === true) {
+        chip.classList.add("mr-state--draft");
+        chip.setText("draft");
+      } else {
+        chip.classList.add("mr-state--" + (state || "unknown"));
+        chip.setText(state || "unknown");
+      }
+      row.appendChild(chip);
+      if (typeof entry.merged_at === "number") {
+        var meta = el("span");
+        meta.classList.add("tl-mr-meta");
+        meta.classList.add("dim");
+        var gen = stateDoc && stateDoc.server && typeof stateDoc.server.generated_ts === "number"
+          ? stateDoc.server.generated_ts
+          : 0;
+        meta.setText("merged " + MCW.util.humanizeAge(gen - entry.merged_at));
+        row.appendChild(meta);
+      }
+      return row;
+    }
+
+    function renderTimelineNode(parentEl, lane, x, y, mergeIndex) {
       var node = el("div");
       node.classList.add("tl-node");
       node.setAttribute("data-row-id", lane.row_id);
@@ -3525,16 +3631,23 @@
       var ses = nullable(lane.session);
       var sig = nullable(lane.signals);
       var mr = sig !== null ? nullable(sig.mr) : null;
+      var regRows = mergeIndex && Object.prototype.hasOwnProperty.call(mergeIndex, lane.row_id)
+        ? mergeIndex[lane.row_id]
+        : [];
       var lines = [];
       lines.push("status " + status);
       lines.push("session " + (ses !== null && typeof ses.id === "string" && ses.id !== "" ? ses.id : "— none"));
       lines.push("branch " + (typeof lane.branch === "string" && lane.branch !== "" ? lane.branch : "— none"));
-      lines.push(
-        "mr " +
-          (mr !== null && typeof mr.ref === "string" && mr.ref !== ""
-            ? mr.ref + (typeof mr.state === "string" && mr.state !== "" ? " " + mr.state : "")
-            : "— none")
-      );
+      if (regRows.length === 0) {
+        // schema-2 tower (no registry) or an unjoinable lane: the plain
+        // signals-mr line stays the honest fallback
+        lines.push(
+          "mr " +
+            (mr !== null && typeof mr.ref === "string" && mr.ref !== ""
+              ? mr.ref + (typeof mr.state === "string" && mr.state !== "" ? " " + mr.state : "")
+              : "— none")
+        );
+      }
       lines.push(
         "active " +
           (ses !== null && isInt(ses.last_active_ago_s)
@@ -3552,6 +3665,9 @@
         line.classList.add("tl-detail-line");
         line.setText(lines[i]);
         det.appendChild(line);
+      }
+      for (var r = 0; r < regRows.length; r += 1) {
+        det.appendChild(buildTlMrRow(regRows[r]));
       }
       node.appendChild(det);
 
@@ -3591,10 +3707,18 @@
     }
 
     function renderTimelineProgram(rootEl, prog) {
+      var mergeIdx = mergesIndexByRowId();  // W4-L4: one index per program pass
       var lanes = MCW.state.items(prog.lanes, "row_id").valid;
       var finished = programFinished(prog);
       var wrap = el("div");
       wrap.classList.add("tl-program");
+      // the open detail is a popup window — the card must not clip it (W4-L4)
+      for (var wi = 0; wi < lanes.length; wi += 1) {
+        if (expandedTimelineNodes[lanes[wi].row_id] === true) {
+          wrap.classList.add("tl-program--open");
+          break;
+        }
+      }
       if (finished && !showFinishedPrograms) wrap.classList.add("collapsed"); // CSS-hidden, nodes stay in the DOM
       if (finished) wrap.classList.add("tl-program--done");
 
@@ -3666,7 +3790,7 @@
         }
         for (i = 0; i < lanes.length; i += 1) {
           var p = pos[lanes[i].row_id];
-          renderTimelineNode(canvas, lanes[i], p.x, p.y);
+          renderTimelineNode(canvas, lanes[i], p.x, p.y, mergeIdx);
         }
         canvas.style.width = (maxLevel + 1) * TL_COL_W - (TL_COL_W - TL_NODE_W) + "px";
         canvas.style.height = maxColHeight + "px";
@@ -3715,7 +3839,7 @@
           }
           canvas.appendChild(headEl);
           for (var n = 0; n < colLanes.length; n += 1) {
-            renderTimelineNode(canvas, colLanes[n], colX, TL_COL_HEAD_H + n * (TL_NODE_H + TL_ROW_GAP));
+            renderTimelineNode(canvas, colLanes[n], colX, TL_COL_HEAD_H + n * (TL_NODE_H + TL_ROW_GAP), mergeIdx);
           }
           if (colLanes.length > maxRows) maxRows = colLanes.length;
         }
@@ -3923,6 +4047,160 @@
         a.setAttribute("rel", "noopener noreferrer");
         a.setText("open ↗");
         rowEl.appendChild(a);
+      }
+      rootEl.appendChild(rowEl);
+    }
+
+    // ---- MERGES tab (contract v3, W4-L4): the lane MR/PR registry — every
+    // loop/ or fix/ branch MR across the wall's repos, grouped by program,
+    // with state/conflict chips and honest fallbacks (absent key or empty ->
+    // the pinned empty state; wrong-typed fields degrade silently, never a
+    // throw). ----
+
+    function renderMergesView(rootEl) {
+      clearNode(rootEl);
+      var head = el("div");
+      head.classList.add("merges-head");
+      head.setText("MERGES");
+      rootEl.appendChild(head);
+      if (stateDoc === null || !MCW.state.validateDoc(stateDoc).ok) {
+        appendNote(rootEl, "no data");
+        return;
+      }
+      if (!Array.isArray(stateDoc.merges)) {
+        renderMergesEmpty(rootEl, true);
+        return;
+      }
+      var res = MCW.state.items(stateDoc.merges, null);
+      if (res.valid.length === 0) renderMergesEmpty(rootEl, false);
+      // Grouped by program (first-seen order; unjoinable rows under their own
+      // group), served order (newest updated_at first) preserved inside.
+      var groupOrder = [];
+      var byProgram = {};
+      for (var i = 0; i < res.valid.length; i += 1) {
+        var row = res.valid[i];
+        var key = typeof row.program === "string" && row.program !== ""
+          ? row.program
+          : "(no program)";
+        if (!Object.prototype.hasOwnProperty.call(byProgram, key)) {
+          byProgram[key] = [];
+          groupOrder.push(key);
+        }
+        byProgram[key].push(row);
+      }
+      for (var g = 0; g < groupOrder.length; g += 1) {
+        var groupHead = el("div");
+        groupHead.classList.add("merges-group");
+        groupHead.setText(groupOrder[g]);
+        rootEl.appendChild(groupHead);
+        var rows = byProgram[groupOrder[g]];
+        for (var r = 0; r < rows.length; r += 1) renderMergesRow(rootEl, rows[r]);
+      }
+      if (res.skipped > 0) appendNote(rootEl, "skipped " + res.skipped + " malformed rows", "data-note");
+    }
+
+    // The pinned empty state. A pre-schema-3 payload (no merges key at all)
+    // gets the same words plus an honest pointer — the lane MR signals still
+    // render on the WALL tab.
+    function renderMergesEmpty(rootEl, preContract) {
+      var empty = el("div");
+      empty.classList.add("merges-empty");
+      empty.setText("no lane MRs tracked yet");
+      rootEl.appendChild(empty);
+      if (preContract) {
+        appendHint(
+          rootEl,
+          "The MR/PR registry arrives with wall server contract schema 3 — lane MR signals still render on the WALL tab."
+        );
+      }
+    }
+
+    function renderMergesRow(rootEl, row) {
+      var host = typeof row.host === "string" ? row.host : "";
+      var rowEl = el("div");
+      rowEl.classList.add("merges-row");
+      var state = typeof row.state === "string" ? row.state : "";
+      if (state === "merged" || state === "open" || state === "closed") {
+        rowEl.classList.add("merges-row--" + state);
+      }
+      if (row.conflicts === true) rowEl.classList.add("merges-row--conflicts");
+      var badge = el("span");
+      badge.classList.add("mr-badge");
+      if (host === "gitlab" || host === "github") badge.classList.add("mr-badge--" + host);
+      badge.setText(host || "?");
+      rowEl.appendChild(badge);
+      // repo !N/#N · title — an outbound anchor when the url exists
+      var url = typeof row.url === "string" && row.url !== "" ? row.url : null;
+      var main;
+      if (url !== null) {
+        main = el("a");
+        main.setAttribute("href", url);
+        main.setAttribute("target", "_blank");
+        main.setAttribute("rel", "noopener noreferrer");
+      } else {
+        main = el("span");
+        main.classList.add("dim");
+      }
+      main.classList.add("merges-main");
+      var refSep = host === "github" ? "#" : "!";
+      var n = typeof row.number === "number" && isFinite(row.number) ? row.number : 0;
+      var title = typeof row.title === "string" ? row.title : "";
+      var repo = typeof row.repo === "string" ? row.repo : "";
+      main.setText(repo + " " + refSep + n + " · " + title);
+      rowEl.appendChild(main);
+      // one state chip: conflicts (red outline) > draft (dashed) > state hue
+      var chip = el("span");
+      chip.classList.add("mr-state");
+      if (row.conflicts === true) {
+        chip.classList.add("mr-state--conflicts");
+        chip.setText("conflicts");
+      } else if (row.draft === true) {
+        chip.classList.add("mr-state--draft");
+        chip.setText("draft");
+      } else {
+        chip.classList.add("mr-state--" + (state || "unknown"));
+        chip.setText(state || "unknown");
+      }
+      rowEl.appendChild(chip);
+      // lane row badge / session badge — quiet "unknown" text, never a guess
+      var lane = el("span");
+      lane.classList.add("mr-lane");
+      if (typeof row.row_id === "string" && row.row_id !== "") {
+        lane.setText(row.row_id);
+      } else {
+        lane.classList.add("dim");
+        lane.setText("row unknown");
+      }
+      rowEl.appendChild(lane);
+      var ses = el("span");
+      ses.classList.add("mr-session");
+      if (typeof row.session === "string" && row.session !== "") {
+        ses.setText(row.session);
+      } else {
+        ses.classList.add("dim");
+        ses.setText("session unknown");
+      }
+      rowEl.appendChild(ses);
+      // dates, doc-clock ages (server.generated_ts), author
+      var gen = stateDoc && stateDoc.server && typeof stateDoc.server.generated_ts === "number"
+        ? stateDoc.server.generated_ts
+        : 0;
+      var dates = el("span");
+      dates.classList.add("mr-dates");
+      dates.classList.add("dim");
+      var createdAge = gen - (typeof row.created_at === "number" ? row.created_at : gen);
+      var parts = ["created " + MCW.util.humanizeAge(createdAge)];
+      if (typeof row.merged_at === "number") {
+        parts.push("merged " + MCW.util.humanizeAge(gen - row.merged_at));
+      }
+      dates.setText(parts.join(" · "));
+      rowEl.appendChild(dates);
+      if (typeof row.author === "string" && row.author !== "") {
+        var author = el("span");
+        author.classList.add("mr-author");
+        author.classList.add("dim");
+        author.setText("@" + row.author);
+        rowEl.appendChild(author);
       }
       rootEl.appendChild(rowEl);
     }
@@ -4141,13 +4419,14 @@
   // Everything here is pure data code: it degrades on bad input, never throws.
   // =====================================================================
 
-  // Frozen key-set manifest of record (contract v2 — SPEC 3.2 tables + tower
-  // spec section 9, master = {session_id, title, last_active_ago_s}; v2 adds
-  // root.parse_defects + root.needs_me and lane.deps/verified/verify_due;
-  // v3 wall-honesty adds root.sessions_orphaned + orphanedRow).
+  // Frozen key-set manifest of record (contract v2/v3 — SPEC 3.2 tables +
+  // tower spec section 9, master = {session_id, title, last_active_ago_s};
+  // v2 adds root.parse_defects + root.needs_me and lane.deps/verified/
+  // verify_due; v3 adds root.merges + the 16-key mergesRow (W4-L4) and
+  // root.sessions_orphaned + orphanedRow (W5-L5 wall-honesty).
   // AC-31's conformance target.
   var KEYSETS = {
-    root: ["schema_version", "server", "programs", "verify_queue", "human_actions", "sessions_unmapped", "sessions_orphaned", "launch_pending", "wall", "parse_defects", "needs_me"],
+    root: ["schema_version", "server", "programs", "verify_queue", "human_actions", "sessions_unmapped", "sessions_orphaned", "launch_pending", "wall", "parse_defects", "needs_me", "merges"],
     server: ["uptime_s", "generated_ts", "degraded", "banner"],
     program: ["program", "note_path", "note_mtime", "objective", "master", "lanes"],
     master: ["session_id", "title", "last_active_ago_s"],
@@ -4165,6 +4444,7 @@
     unmappedRow: ["id", "title", "dir", "last_active_ago_s", "parent_session_id", "parent_title"],
     orphanedRow: ["id", "title", "tag", "last_active_ago_s"],
     needsMeRow: ["kind", "row_id", "program", "action", "deep_link"],
+    mergesRow: ["host", "repo", "number", "title", "branch", "program", "row_id", "session", "state", "conflicts", "draft", "created_at", "updated_at", "merged_at", "url", "author"],
     parseDefect: ["note_path", "line", "defect", "row_id"],
     wall: ["pending"],
     wallPending: ["version", "status", "flag", "reason", "row_id", "lane_tag", "repo_root", "prompt_sha256", "launch_click_ms", "matched_session_id", "matched_at_ms", "last_eval_ms", "advisory_120s_fired", "canary_fired", "updated_at_ms"],
@@ -4364,7 +4644,7 @@
       app.mountQA(caseNameFromSearch(deps.location.search));
       // W2-L2 QA affordance: ?view= picks the opening tab (timeline default);
       // file:-only — LIVE always opens on the timeline.
-      var m = /(?:[?&])view=(timeline|needs|wall|projects)(?:&|$)/.exec(deps.location.search || "");
+      var m = /(?:[?&])view=(timeline|needs|wall|merges|projects)(?:&|$)/.exec(deps.location.search || "");
       if (m) app.setView(m[1]);
     } else {
       // LIVE mode (SPEC 4.3): token + poll chain (missing token -> banner,

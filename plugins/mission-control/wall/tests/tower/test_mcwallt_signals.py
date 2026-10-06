@@ -103,8 +103,10 @@ def test_mcwallt_pushed_age(tmp_path, monkeypatch):
     state2 = collect_state(cfg)                       # same config -> shared cache
     assert state2["programs"][0]["lanes"][0]["signals"]["pushed"] == \
         {"value": True, "age_s": 40}                  # now - observation ts
-    assert [a for a in calls["argv"] if a[0] == "git"] == \
-        [["git", "ls-remote", "origin", "loop/mcwallt-hit"]]  # ONE spawn, reused
+    # ONE signals spawn, reused (the registry's `git remote -v` probe runs on
+    # its own cache keys — W4-L4 — so the census filters ls-remote argv only)
+    assert [a for a in calls["argv"] if a[:2] == ["git", "ls-remote"]] == \
+        [["git", "ls-remote", "origin", "loop/mcwallt-hit"]]
 
 
 def test_mcwallt_mr_normalize_and_precedence(tmp_path, monkeypatch):

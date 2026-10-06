@@ -11,12 +11,24 @@ import os
 import sqlite3
 from pathlib import Path
 
+import pytest
 from mc_wall.tower import ProgramConfig, RepoConfig, TowerConfig, collect_state
 from mc_wall.tower import contract
 from tests.tower.conftest import (mcwallt_clock, mcwallt_make_db, mcwallt_make_note,
                                   mcwallt_tag_input)
 
 NOW = 2_000_000_000.0
+
+@pytest.fixture(autouse=True)
+def _mr1_no_registry(monkeypatch):
+    """W4-L4 hermeticity: this file's worlds configure repos (or carry real
+    note path tokens) that the registry collector would probe/list for real.
+    The registry is mr1-'s subject (fixture-only, in
+    test_mcwallt_mr1_registry.py); neutralize it here — same rule the corpus
+    test documents for T-5's _read_signals."""
+    from mc_wall.tower import collect as collect_module
+    monkeypatch.setattr(collect_module, "_read_merges", lambda *a: [])
+
 
 
 def ms_ago(age_s):

@@ -8,6 +8,7 @@ live vault). FX1 is the real 7-cells-under-8-columns skip case.
 
 import os
 
+import pytest
 from mc_wall.tower import ProgramConfig, RepoConfig, TowerConfig, collect_state
 from mc_wall.tower import collect as collect_module
 from mc_wall.tower import contract, notes
@@ -28,6 +29,17 @@ CORPUS_NOTE = """\
 | W1-L4 | W1 | L4 skill-edits + persona-gate | plugin cache 1.3.0 (plain lane) | n/a | plugin cache sha256s recorded by lane | forged 23:00 controller sess_9a690ab2 | forged |
 | W0-L0 | W0 | L0 bootstrap | ~/.zcode/mc-wall main @ d55cbde | n/a (plain lane) | behavioral: dir absent, verified 22:31; created fresh (initial commit bb06a68) | session sess_2243e9a1 (title custom: "W0 - Bootstrap mc-wall repo…", 12 min run); operator base-recheck done at launch | done |
 """
+
+@pytest.fixture(autouse=True)
+def _mr1_no_registry(monkeypatch):
+    """W4-L4 hermeticity: this file's worlds configure repos (or carry real
+    note path tokens) that the registry collector would probe/list for real.
+    The registry is mr1-'s subject (fixture-only, in
+    test_mcwallt_mr1_registry.py); neutralize it here — same rule the corpus
+    test documents for T-5's _read_signals."""
+    from mc_wall.tower import collect as collect_module
+    monkeypatch.setattr(collect_module, "_read_merges", lambda *a: [])
+
 
 
 def test_mcwallt_notes_status_vocab_all():
