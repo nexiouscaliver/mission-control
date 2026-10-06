@@ -1,4 +1,7 @@
 /* MC Wall — app.js (canonical). The copy at assets/app.js must stay byte-identical (AC-32).
+ * W2-L2 (contract v2): the wall opens on the TIMELINE tab — a horizontal
+ * dependency DAG per active program with machine-observed dots — with the
+ * NEEDS-ME inbox one tab away; the card wall remains on the third tab.
  * Classic script on purpose: file:// QA cannot load ES modules (SPEC section 9).
  * Architecture:
  *   - window.MCW in the browser; module.exports under require() for the node selftest.
@@ -249,15 +252,26 @@
         grid.appendChild(col3);
         body.appendChild(grid);
       }
-      // Round 5: WALL / PROJECTS view switcher — ships statically in
-      // index.html's topbar; created here only for shells missing it.
+      // W2-L2: the four-tab switcher — TIMELINE (opening tab), NEEDS ME,
+      // WALL (the card view), PROJECTS. Ships statically in index.html's
+      // topbar; created here only for shells missing it.
       if (!byId("view-wall")) {
         var views = el("div");
         views.classList.add("tb-cluster");
         views.classList.add("tb-views");
+        var viewTimelineBtn = el("button", "view-timeline");
+        viewTimelineBtn.setAttribute("type", "button");
+        viewTimelineBtn.setAttribute("aria-pressed", "true");
+        viewTimelineBtn.setText("TIMELINE");
+        views.appendChild(viewTimelineBtn);
+        var viewNeedsBtn = el("button", "view-needs");
+        viewNeedsBtn.setAttribute("type", "button");
+        viewNeedsBtn.setAttribute("aria-pressed", "false");
+        viewNeedsBtn.setText("NEEDS ME");
+        views.appendChild(viewNeedsBtn);
         var viewWallBtn = el("button", "view-wall");
         viewWallBtn.setAttribute("type", "button");
-        viewWallBtn.setAttribute("aria-pressed", "true");
+        viewWallBtn.setAttribute("aria-pressed", "false");
         viewWallBtn.setText("WALL");
         views.appendChild(viewWallBtn);
         var viewProjectsBtn = el("button", "view-projects");
@@ -273,6 +287,16 @@
         projectsSection.setAttribute("hidden", "");
         body.appendChild(projectsSection);
       }
+      if (!byId("timeline-view")) {
+        var timelineSection = el("section", "timeline-view");
+        timelineSection.setAttribute("hidden", "");
+        body.appendChild(timelineSection);
+      }
+      if (!byId("needs-view")) {
+        var needsSection = el("section", "needs-view");
+        needsSection.setAttribute("hidden", "");
+        body.appendChild(needsSection);
+      }
       if (!byId("panel-backdrop")) {
         var backdrop = el("div", "panel-backdrop");
         backdrop.setAttribute("hidden", "");
@@ -284,12 +308,13 @@
         body.appendChild(launch);
       }
       if (!byId("kbd-hint")) {
-        // Signal-panel footer: the severity legend line of record + shortcuts.
-        // Text mirrors index.html's static footer EXACTLY (kbd-hint pins both).
+        // Timeline-tab footer: the dot legend of record (contract v2 semantics)
+        // + shortcuts. Text mirrors index.html's static footer EXACTLY
+        // (kbd-hint pins both).
         var kbd = el("footer", "kbd-hint");
         var seg;
         seg = el("span");
-        seg.setText("● in-flight ◐ ready ✓ done ✕ failed ◌ parked ? unparsed ⚠ stalled · shortcuts: [");
+        seg.setText("timeline dots: yellow working · green done (✓ verified) · red blocked · grey idle/forged · shortcuts: [");
         kbd.appendChild(seg);
         seg = el("span");
         seg.classList.add("kbd");
@@ -370,24 +395,31 @@
       ensureShell();
       wireViewSwitcher();
       var valid = stateDoc !== null && MCW.state.validateDoc(stateDoc).ok;
-      // Round 5: WALL / PROJECTS view. The grid keeps rendering (hidden) so
-      // the wall stays warm; the projects screen renders on every pass.
+      // W2-L2: four views. The card wall keeps rendering (hidden) so it stays
+      // warm; timeline / needs / projects render on their own pass.
       var projectsEl = byId("projects-view");
+      var timelineEl = byId("timeline-view");
+      var needsEl = byId("needs-view");
       var gridForView = byId("grid");
-      var projectsMode = currentView === "projects";
-      if (projectsEl !== null && gridForView !== null) {
-        if (projectsMode) {
-          gridForView.setAttribute("hidden", "");
-          projectsEl.removeAttribute("hidden");
-        } else {
-          projectsEl.setAttribute("hidden", "");
-          gridForView.removeAttribute("hidden");
+      function showFor(node, name) {
+        if (node === null) return;
+        if (currentView === name) node.removeAttribute("hidden");
+        else node.setAttribute("hidden", "");
+      }
+      showFor(gridForView, "wall");
+      showFor(timelineEl, "timeline");
+      showFor(needsEl, "needs");
+      showFor(projectsEl, "projects");
+      var btnIds = ["view-timeline", "view-needs", "view-wall", "view-projects"];
+      for (var b = 0; b < btnIds.length; b += 1) {
+        var btn = byId(btnIds[b]);
+        if (btn) {
+          btn.setAttribute(
+            "aria-pressed",
+            currentView === btnIds[b].slice(5) ? "true" : "false"
+          );
         }
       }
-      var wallBtn = byId("view-wall");
-      var projBtn = byId("view-projects");
-      if (wallBtn) wallBtn.setAttribute("aria-pressed", projectsMode ? "false" : "true");
-      if (projBtn) projBtn.setAttribute("aria-pressed", projectsMode ? "true" : "false");
       // T6: LIVE panels blank differently — waiting for the first state (or a
       // missing token); QA keeps the mock/no-data wordings.
       var blankNote = "no data";
@@ -414,7 +446,17 @@
         });
       }
       restoreCol3ViewState();
-      if (projectsMode && projectsEl !== null) {
+      if (currentView === "timeline" && timelineEl !== null) {
+        renderContainer(timelineEl, "timeline-view", pollDriven, function (scratch) {
+          renderTimelineView(scratch);
+        });
+      }
+      if (currentView === "needs" && needsEl !== null) {
+        renderContainer(needsEl, "needs-view", pollDriven, function (scratch) {
+          renderNeedsView(scratch);
+        });
+      }
+      if (currentView === "projects" && projectsEl !== null) {
         renderContainer(projectsEl, "projects-view", pollDriven, function (scratch) {
           renderProjectsView(scratch);
         });
@@ -558,10 +600,11 @@
     function renderProgramCard(rootEl, prog) {
       var card = el("div");
       card.classList.add("program-card");
+      var name = typeof prog.program === "string" ? prog.program : "";
+      var programKey = name !== "" ? name : "(unnamed program)";
 
       var head = el("div");
       head.classList.add("card-head");
-      var name = typeof prog.program === "string" ? prog.program : "";
       var title = el("span");
       title.classList.add("card-title");
       if (name === "") {
@@ -590,6 +633,18 @@
       head.appendChild(stamp);
       card.appendChild(head);
 
+      // W2-L2 (SC-5): a finished program (every lane done/parked) demotes to a
+      // collapsed row — head + caption stay readable, the lane list CSS-hides
+      // until the head is clicked (state keyed by program, poll-surviving).
+      var finished = programFinished(prog);
+      if (finished) {
+        card.classList.add("program-card--done");
+        var doneCap = el("div");
+        doneCap.classList.add("program-done-caption");
+        doneCap.setText("all lanes done/parked — collapsed");
+        card.appendChild(doneCap);
+      }
+
       // T5 degraded reaction (SPEC 8): "notes degraded: {program}" hatches the
       // named card + carries the caption. Exact prefix match only.
       if (name !== "" && degradedTargets("notes degraded: ")[name]) {
@@ -603,15 +658,66 @@
       var laneRes = MCW.state.items(prog.lanes, "row_id");
       var listEl = el("div");
       listEl.classList.add("lane-list");
+      if (finished && expandedDonePrograms[programKey] !== true) {
+        listEl.classList.add("collapsed"); // CSS-hidden; the rows stay in the DOM
+      }
       if (laneRes.valid.length === 0) {
         appendNote(listEl, "no lanes");
         appendHint(listEl, "No lanes are open for this program yet.");
       }
       var orderedLanes = lanesBySeverity(laneRes.valid, mtime);
-      for (var i = 0; i < orderedLanes.length; i += 1) renderLane(listEl, mtime, orderedLanes[i]);
+      // W2-L2 (SC-5): done/parked lanes collapse out of the working set —
+      // triage order runs on the ACTIVE lanes; the done/parked tail keeps its
+      // own served order under a collapsed sub-head (idle>24h pattern).
+      var activeLanes = [];
+      var settledLanes = [];
+      for (var i = 0; i < orderedLanes.length; i += 1) {
+        var s = typeof orderedLanes[i].status_parsed === "string" ? orderedLanes[i].status_parsed : "UNPARSED";
+        if (!finished && (s === "done" || s === "parked")) settledLanes.push(orderedLanes[i]);
+        else activeLanes.push(orderedLanes[i]);
+      }
+      for (var a = 0; a < activeLanes.length; a += 1) renderLane(listEl, mtime, activeLanes[a]);
+      if (settledLanes.length > 0) {
+        var sub = el("div");
+        sub.classList.add("done-sub");
+        var startOpen = expandedDoneLanes[programKey] === true;
+        if (!startOpen) sub.classList.add("collapsed");
+        var subHead = el("button");
+        subHead.setAttribute("type", "button");
+        subHead.classList.add("done-sub-head");
+        subHead.setText("done/parked (" + settledLanes.length + ")");
+        subHead.setAttribute("aria-expanded", startOpen ? "true" : "false");
+        if (typeof subHead.addEventListener === "function") {
+          subHead.addEventListener("click", function () {
+            var nowOpen = sub.classList.contains("collapsed");
+            if (nowOpen) {
+              sub.classList.remove("collapsed");
+              subHead.setAttribute("aria-expanded", "true");
+            } else {
+              sub.classList.add("collapsed");
+              subHead.setAttribute("aria-expanded", "false");
+            }
+            expandedDoneLanes[programKey] = nowOpen;
+          });
+        }
+        sub.appendChild(subHead);
+        for (var d = 0; d < settledLanes.length; d += 1) renderLane(sub, mtime, settledLanes[d]);
+        listEl.appendChild(sub);
+      }
       card.appendChild(listEl);
       if (laneRes.skipped > 0) appendNote(card, "skipped " + laneRes.skipped + " malformed rows", "data-note");
 
+      if (finished && typeof head.addEventListener === "function") {
+        wireClickable(head, function () {
+          var nowOpen = listEl.classList.contains("collapsed");
+          if (nowOpen) {
+            listEl.classList.remove("collapsed");
+          } else {
+            listEl.classList.add("collapsed");
+          }
+          expandedDonePrograms[programKey] = nowOpen;
+        });
+      }
       rootEl.appendChild(card);
     }
 
@@ -1177,7 +1283,7 @@
 
     // ---- round 5: views + reading-state preservation ----
 
-    var currentView = "wall"; // "wall" | "projects"
+    var currentView = "timeline"; // "timeline" | "needs" | "wall" | "projects"
     var projectSort = "recent"; // "recent" | "name"
     var viewWired = false; // view switcher wiring is one-shot
     // Round 6: background sessions are hidden until asked for.
@@ -1187,6 +1293,17 @@
     // row; the expansion lives HERE (keyed by run id) so 5 s poll rebuilds —
     // which swap the projects view every tick — never snap it shut.
     var expandedProjectRuns = {};
+    // W2-L2: reading state that must survive 5 s poll rebuilds of the new
+    // surfaces — expanded timeline-node details (keyed row_id), the card
+    // view's done/parked sub (keyed program), finished program cards (keyed
+    // program), and the timeline's completed-programs toggle.
+    var expandedTimelineNodes = {};
+    var expandedDoneLanes = {};
+    var expandedDonePrograms = {};
+    var showFinishedPrograms = false;
+    // W2-L2 (SC-5): the unmapped haystack bound — main rows default to the
+    // last hour of activity; "show all" reveals the older tail.
+    var UNMAPPED_RECENT_S = 3600;
     // Reading state across poll rebuilds (user report: the session list
     // snapped to its top every cadence tick). Captured from the live column
     // before the churn-guard swap, re-applied after it.
@@ -1250,7 +1367,7 @@
     }
 
     function setView(name) {
-      if (name !== "wall" && name !== "projects") return currentView;
+      if (name !== "timeline" && name !== "needs" && name !== "wall" && name !== "projects") return currentView;
       if (currentView === name) {
         render();
         return currentView;
@@ -1262,11 +1379,19 @@
 
     function wireViewSwitcher() {
       if (viewWired) return;
+      var timelineBtn = byId("view-timeline");
+      var needsBtn = byId("view-needs");
       var wallBtn = byId("view-wall");
       var projBtn = byId("view-projects");
-      if (!wallBtn || !projBtn) return;
+      if (!timelineBtn || !needsBtn || !wallBtn || !projBtn) return;
       viewWired = true;
-      if (typeof wallBtn.addEventListener === "function") {
+      if (typeof timelineBtn.addEventListener === "function") {
+        timelineBtn.addEventListener("click", function () {
+          setView("timeline");
+        });
+        needsBtn.addEventListener("click", function () {
+          setView("needs");
+        });
         wallBtn.addEventListener("click", function () {
           setView("wall");
         });
@@ -2476,15 +2601,28 @@
       if (res.valid.length === 0) return 0;
       var split = splitBackgroundRows(res.valid);
       var bgCount = res.valid.length - split.main.length;
+      // W2-L2 (SC-5): the 496-row haystack bound — main rows default to the
+      // last hour of activity (recency order already landed in v1.9.2); the
+      // show-all toggle reveals the older tail AND lifts the scroll cap, so
+      // the reveal needs a re-render (the older rows are not in the DOM yet).
+      var recent = [];
+      var older = [];
+      for (var i = 0; i < split.main.length; i += 1) {
+        var ago = isInt(split.main[i].last_active_ago_s) ? split.main[i].last_active_ago_s : 0;
+        if (ago <= UNMAPPED_RECENT_S) recent.push(split.main[i]);
+        else older.push(split.main[i]);
+      }
+      var visibleMain = unmappedOpen ? split.main : recent;
       var strip = el("div");
       strip.classList.add("unmapped-strip");
       var head = el("div");
       head.classList.add("unmapped-head");
       // Round 6: the count names what is VISIBLE and owns the hidden tail —
-      // "unmapped (2)" with no background stays byte-identical (AC-16).
+      // "unmapped (2)" with no hidden rows stays byte-identical (AC-16).
       head.setText(
         "unmapped (" +
-          split.main.length +
+          visibleMain.length +
+          (!unmappedOpen && older.length > 0 ? " · " + older.length + " older" : "") +
           (bgCount > 0 ? " · " + bgCount + " hidden" : "") +
           ")"
       );
@@ -2503,19 +2641,13 @@
       rowsEl.classList.add("unmapped-rows");
       if (unmappedOpen) rowsEl.classList.add("open");
       rowsEl.setAttribute("id", "unmapped-rows"); // the toggle's aria-controls target
-      renderUnmappedGroups(rowsEl, split.main);
+      renderUnmappedGroups(rowsEl, visibleMain);
       if (bgCount > 0) renderBackgroundSection(rowsEl, split);
       strip.appendChild(rowsEl);
       if (typeof toggle.addEventListener === "function") {
         toggle.addEventListener("click", function () {
           unmappedOpen = !unmappedOpen;
-          if (unmappedOpen) {
-            rowsEl.classList.add("open");
-            toggle.setAttribute("aria-expanded", "true");
-          } else {
-            rowsEl.classList.remove("open");
-            toggle.setAttribute("aria-expanded", "false");
-          }
+          render(); // the reveal changes WHICH rows render — a re-render, not a class flip
         });
       }
       rootEl.appendChild(strip);
@@ -3099,6 +3231,600 @@
     }
 
     // =====================================================================
+    // W2-L2 (contract v2): TIMELINE tab — one horizontal dependency DAG per
+    // active program with machine-observed dots — and the NEEDS-ME inbox.
+    // =====================================================================
+
+    // Working-recency bound (contract v2): a session active within 15 min
+    // reads "working" even when the note status is stale — the dot is
+    // MACHINE-OBSERVED first.
+    var TL_ACTIVE_S = 900;
+
+    // Timeline dot semantics (contract v2; the AC-9 twin restates this):
+    //   red    = failed/partial, or a stalled lane — the alarm wins;
+    //   green  = done (lane.verified === true adds the ✓ overlay);
+    //   yellow = working — status launched/in-flight, OR a session active
+    //            within TL_ACTIVE_S;
+    //   grey   = everything else (forged, parked, UNPARSED): not started.
+    function timelineDot(lane) {
+      var status = typeof lane.status_parsed === "string" && lane.status_parsed !== "" ? lane.status_parsed : "UNPARSED";
+      if (status === "failed" || status === "partial") return "red";
+      if (nullable(lane.stalled) !== null) return "red";
+      if (status === "done") return "green";
+      if (status === "launched" || status === "in-flight") return "yellow";
+      var ses = nullable(lane.session);
+      if (ses !== null && isInt(ses.last_active_ago_s) && ses.last_active_ago_s <= TL_ACTIVE_S) return "yellow";
+      return "grey";
+    }
+
+    // deps L4 (contract v2): absent/wrong-typed reads as null — a lane without
+    // a deps array is a pre-contract lane and flips its program to the
+    // wave-column fallback. Junk entries are dropped, never thrown on.
+    function laneDeps(lane) {
+      if (!Array.isArray(lane.deps)) return null;
+      var out = [];
+      for (var i = 0; i < lane.deps.length; i += 1) {
+        if (typeof lane.deps[i] === "string" && lane.deps[i] !== "") out.push(lane.deps[i]);
+      }
+      return out;
+    }
+
+    function programHasDeps(lanes) {
+      for (var i = 0; i < lanes.length; i += 1) {
+        if (laneDeps(lanes[i]) !== null) return true;
+      }
+      return false;
+    }
+
+    // Longest-path levels over the deps edges THAT RESOLVE inside the program.
+    // Dangling ids and self-references are dropped first; the relaxation cap
+    // (one pass per lane) bounds cycles — a lane whose deps never settle sits
+    // at the deepest level it honestly reached, never at Infinity.
+    function laneLevels(lanes) {
+      var ids = {};
+      var level = {};
+      var depsMap = {};
+      var i;
+      for (i = 0; i < lanes.length; i += 1) {
+        var rid = lanes[i].row_id;
+        ids[rid] = true;
+        level[rid] = 0;
+        var d = laneDeps(lanes[i]);
+        depsMap[rid] = d === null ? [] : d.filter(function (id) { return id !== rid; });
+      }
+      var pass;
+      for (pass = 0; pass < lanes.length; pass += 1) {
+        var changed = false;
+        for (i = 0; i < lanes.length; i += 1) {
+          var rowId = lanes[i].row_id;
+          var ds = depsMap[rowId];
+          for (var m = 0; m < ds.length; m += 1) {
+            if (ids[ds[m]] !== true) continue;
+            var cand = level[ds[m]] + 1;
+            if (cand > level[rowId] && cand <= lanes.length) {
+              level[rowId] = cand;
+              changed = true;
+            }
+          }
+        }
+        if (!changed) break;
+      }
+      return level;
+    }
+
+    // Wave number from a row_id like W2-L1 (wave-column fallback grouping);
+    // null for ids that do not carry one ("(unsorted)" column, last).
+    function waveOf(rowId) {
+      var m = /^W(\d+)-/.exec(String(rowId || ""));
+      return m ? parseInt(m[1], 10) : null;
+    }
+
+    // A program is FINISHED only when at least one lane exists and every lane
+    // reads done/parked — a just-registered program (lanes:[]) must stay
+    // visible (SC-1 zero-beg registration).
+    function programFinished(prog) {
+      var lanes = MCW.state.items(prog.lanes, "row_id").valid;
+      if (lanes.length === 0) return false;
+      for (var i = 0; i < lanes.length; i += 1) {
+        var s = typeof lanes[i].status_parsed === "string" ? lanes[i].status_parsed : "UNPARSED";
+        if (s !== "done" && s !== "parked") return false;
+      }
+      return true;
+    }
+
+    // Column roll-up for the workflow-style header row: a column reads as its
+    // WORST honest dot — red beats yellow beats green; all-grey stays hollow.
+    function columnStatus(lanes) {
+      var rank = { red: 3, yellow: 2, green: 1, grey: 0 };
+      var out = "grey";
+      for (var i = 0; i < lanes.length; i += 1) {
+        var d = timelineDot(lanes[i]);
+        if (rank[d] > rank[out]) out = d;
+      }
+      return out;
+    }
+
+    // Workflow-style column header (the ZCode-UI reference): status circle +
+    // label, dash connector to the next column on every non-last header.
+    function tlStepHeadInto(canvas, label, status, x, isLast) {
+      var head = el("div");
+      head.classList.add("tl-step-head");
+      if (isLast) head.classList.add("tl-step-head--last");
+      head.style.left = x + "px";
+      head.style.top = "0px";
+      head.style.width = TL_NODE_W + "px";
+      var dot = el("span");
+      dot.classList.add("tl-step-dot");
+      if (status !== "grey") dot.classList.add("tl-step-dot--" + status);
+      head.appendChild(dot);
+      var labelEl = el("span");
+      labelEl.classList.add("tl-step-label");
+      labelEl.setText(label);
+      head.appendChild(labelEl);
+      canvas.appendChild(head);
+      return head;
+    }
+
+    // Node geometry: fixed-size cards on an absolute canvas; COL_W leaves a
+    // routing gutter for the edge lines between columns. Sized so a 7-column
+    // chain fits a 1440px viewport without horizontal scroll.
+    var TL_COL_W = 196;
+    var TL_NODE_W = 172;
+    var TL_NODE_H = 40;
+    var TL_ROW_GAP = 12;
+    var TL_COL_HEAD_H = 30; // the workflow-style header row height
+
+    function renderTimelineNode(parentEl, lane, x, y) {
+      var node = el("div");
+      node.classList.add("tl-node");
+      node.setAttribute("data-row-id", lane.row_id);
+      node.style.position = "absolute";
+      node.style.left = x + "px";
+      node.style.top = y + "px";
+      node.style.width = TL_NODE_W + "px";
+
+      var dotName = timelineDot(lane);
+      var dot = el("span");
+      dot.classList.add("tl-dot");
+      dot.classList.add("tl-dot--" + dotName);
+      node.appendChild(dot);
+      // workflow-reference affordance: a working lane spins (reduced-motion
+      // kills the animation via the global override)
+      if (dotName === "yellow") node.classList.add("tl-node--working");
+      node.classList.add("tl-node--" + dotName);
+      var label = el("span");
+      label.classList.add("tl-label");
+      label.setText(lane.row_id);
+      node.appendChild(label);
+      var status = typeof lane.status_parsed === "string" && lane.status_parsed !== "" ? lane.status_parsed : "UNPARSED";
+      var meta = el("span");
+      meta.classList.add("tl-meta");
+      meta.setText(status === "UNPARSED" ? "?" : status);
+      node.appendChild(meta);
+
+      if (nullable(lane.stalled) !== null) node.classList.add("tl-node--stalled");
+      if (lane.verified === true) {
+        var v = el("span");
+        v.classList.add("tl-verified");
+        v.setText("✓");
+        v.setAttribute("title", "verified");
+        node.appendChild(v);
+      }
+      var due = nullable(lane.verify_due);
+      if (due !== null) {
+        var cue = el("span");
+        cue.classList.add("tl-verifydue");
+        cue.setText("verify due");
+        var because =
+          Array.isArray(due.because)
+            ? due.because.join("; ")
+            : due.because === null || due.because === undefined
+              ? ""
+              : String(due.because);
+        cue.setAttribute("title", because);
+        node.appendChild(cue);
+      }
+
+      // Lane detail (contract: hover/click opens session id, branch, MR ref,
+      // last activity, status). Collapsed by default; the expanded state is
+      // keyed by row_id so 5 s poll rebuilds never snap it shut — and the
+      // open border re-applies with it (same poll-surviving rule).
+      var expanded = expandedTimelineNodes[lane.row_id] === true;
+      var det = el("div");
+      det.classList.add("tl-detail");
+      if (!expanded) det.classList.add("collapsed");
+      if (expanded) node.classList.add("tl-node--open");
+      var ses = nullable(lane.session);
+      var sig = nullable(lane.signals);
+      var mr = sig !== null ? nullable(sig.mr) : null;
+      var lines = [];
+      lines.push("status " + status);
+      lines.push("session " + (ses !== null && typeof ses.id === "string" && ses.id !== "" ? ses.id : "— none"));
+      lines.push("branch " + (typeof lane.branch === "string" && lane.branch !== "" ? lane.branch : "— none"));
+      lines.push(
+        "mr " +
+          (mr !== null && typeof mr.ref === "string" && mr.ref !== ""
+            ? mr.ref + (typeof mr.state === "string" && mr.state !== "" ? " " + mr.state : "")
+            : "— none")
+      );
+      lines.push(
+        "active " +
+          (ses !== null && isInt(ses.last_active_ago_s)
+            ? MCW.util.humanizeAge(ses.last_active_ago_s) + " ago"
+            : "unknown")
+      );
+      if (nullable(lane.stalled) !== null) {
+        var sb = lane.stalled;
+        lines.push(
+          "stalled " + (sb.because === null || sb.because === undefined ? "" : String(sb.because))
+        );
+      }
+      for (var i = 0; i < lines.length; i += 1) {
+        var line = el("div");
+        line.classList.add("tl-detail-line");
+        line.setText(lines[i]);
+        det.appendChild(line);
+      }
+      node.appendChild(det);
+
+      wireClickable(node, function () {
+        var nowOpen = det.classList.contains("collapsed");
+        if (nowOpen) {
+          det.classList.remove("collapsed");
+          node.classList.add("tl-node--open");
+        } else {
+          det.classList.add("collapsed");
+          node.classList.remove("tl-node--open");
+        }
+        expandedTimelineNodes[lane.row_id] = nowOpen;
+      });
+      parentEl.appendChild(node);
+      return node;
+    }
+
+    // Straight edge line from source center to target center — a 2px div
+    // rotated about its origin (SVG would need createElementNS, which is
+    // outside the pinned DOM surface).
+    function tlEdgeInto(parentEl, from, to) {
+      var e = el("div");
+      e.classList.add("tl-edge");
+      e.setAttribute("data-edge", from.rowId + "->" + to.rowId);
+      var sx = from.x + TL_NODE_W / 2;
+      var sy = from.y + TL_NODE_H / 2;
+      var tx = to.x + TL_NODE_W / 2;
+      var ty = to.y + TL_NODE_H / 2;
+      var dx = tx - sx;
+      var dy = ty - sy;
+      e.style.left = sx + "px";
+      e.style.top = sy + "px";
+      e.style.width = Math.sqrt(dx * dx + dy * dy) + "px";
+      e.style.transform = "rotate(" + Math.atan2(dy, dx) + "rad)";
+      parentEl.appendChild(e);
+    }
+
+    function renderTimelineProgram(rootEl, prog) {
+      var lanes = MCW.state.items(prog.lanes, "row_id").valid;
+      var finished = programFinished(prog);
+      var wrap = el("div");
+      wrap.classList.add("tl-program");
+      if (finished && !showFinishedPrograms) wrap.classList.add("collapsed"); // CSS-hidden, nodes stay in the DOM
+      if (finished) wrap.classList.add("tl-program--done");
+
+      var head = el("div");
+      head.classList.add("tl-program-head");
+      var name = typeof prog.program === "string" && prog.program !== "" ? prog.program : "(unnamed program)";
+      var title = el("span");
+      title.classList.add("tl-program-name");
+      title.setText(name);
+      head.appendChild(title);
+      if (finished) {
+        var flag = el("span");
+        flag.classList.add("tl-program-flag");
+        flag.setText("all lanes done/parked");
+        head.appendChild(flag);
+      }
+      var count = el("span");
+      count.classList.add("tl-program-count");
+      count.setText(lanes.length + " lane" + (lanes.length === 1 ? "" : "s"));
+      head.appendChild(count);
+      wrap.appendChild(head);
+
+      if (lanes.length === 0) {
+        appendNote(wrap, "no lanes");
+        rootEl.appendChild(wrap);
+        return;
+      }
+
+      var canvas = el("div");
+      canvas.classList.add("tl-canvas");
+      if (programHasDeps(lanes)) {
+        // DAG layout: columns = longest-path levels over the deps edges; a
+        // workflow-style header row (status circle + stage label + dash
+        // connector) leads each column, nodes stack under it.
+        var level = laneLevels(lanes);
+        var byLevel = [];
+        var i;
+        for (i = 0; i < lanes.length; i += 1) {
+          var lv = level[lanes[i].row_id];
+          if (!byLevel[lv]) byLevel[lv] = [];
+          byLevel[lv].push(lanes[i]);
+        }
+        var pos = {};
+        var maxLevel = 0;
+        var maxColHeight = 0;
+        for (var c = 0; c < byLevel.length; c += 1) {
+          if (!byLevel[c]) continue;
+          if (c > maxLevel) maxLevel = c;
+          for (var r = 0; r < byLevel[c].length; r += 1) {
+            var x = c * TL_COL_W;
+            var y = TL_COL_HEAD_H + r * (TL_NODE_H + TL_ROW_GAP);
+            pos[byLevel[c][r].row_id] = { x: x, y: y, rowId: byLevel[c][r].row_id };
+            var colH = y + TL_NODE_H;
+            if (colH > maxColHeight) maxColHeight = colH;
+          }
+        }
+        for (var h = 0; h < byLevel.length; h += 1) {
+          if (!byLevel[h]) continue;
+          tlStepHeadInto(canvas, "stage " + (h + 1), columnStatus(byLevel[h]), h * TL_COL_W, h === byLevel.length - 1);
+        }
+        for (i = 0; i < lanes.length; i += 1) {
+          var deps = laneDeps(lanes[i]) || [];
+          for (var d = 0; d < deps.length; d += 1) {
+            var src = pos[deps[d]];
+            if (src !== undefined && pos[lanes[i].row_id] !== undefined) {
+              tlEdgeInto(canvas, src, pos[lanes[i].row_id]);
+            }
+          }
+        }
+        for (i = 0; i < lanes.length; i += 1) {
+          var p = pos[lanes[i].row_id];
+          renderTimelineNode(canvas, lanes[i], p.x, p.y);
+        }
+        canvas.style.width = (maxLevel + 1) * TL_COL_W - (TL_COL_W - TL_NODE_W) + "px";
+        canvas.style.height = maxColHeight + "px";
+      } else {
+        // Wave-column fallback (contract v2): waves as columns, lanes as
+        // nodes, edges implied left→right. The common shape for the served
+        // pre-L1 payload, whose lanes carry no deps key.
+        var waves = {};
+        var waveOrder = [];
+        for (i = 0; i < lanes.length; i += 1) {
+          var w = waveOf(lanes[i].row_id);
+          var key = w === null ? "(unsorted)" : String(w);
+          if (!waves[key]) {
+            waves[key] = [];
+            waveOrder.push(key);
+          }
+          waves[key].push(lanes[i]);
+        }
+        waveOrder.sort(function (a, b) {
+          var na = a === "(unsorted)" ? Infinity : parseInt(a, 10);
+          var nb = b === "(unsorted)" ? Infinity : parseInt(b, 10);
+          return na - nb;
+        });
+        var maxRows = 0;
+        for (var col = 0; col < waveOrder.length; col += 1) {
+          var colLanes = waves[waveOrder[col]];
+          var colX = col * TL_COL_W;
+          var headEl = el("div");
+          headEl.classList.add("tl-wave-head");
+          headEl.style.left = colX + "px";
+          headEl.style.top = "0px";
+          headEl.style.width = TL_NODE_W + "px";
+          var wdot = el("span");
+          wdot.classList.add("tl-step-dot");
+          var wstatus = columnStatus(colLanes);
+          if (wstatus !== "grey") wdot.classList.add("tl-step-dot--" + wstatus);
+          headEl.appendChild(wdot);
+          var headLabel = el("span");
+          headLabel.setText(waveOrder[col] === "(unsorted)" ? "(unsorted)" : "wave " + waveOrder[col]);
+          headEl.appendChild(headLabel);
+          if (col < waveOrder.length - 1) {
+            var arrow = el("span");
+            arrow.classList.add("tl-wave-arrow");
+            arrow.setText("→");
+            headEl.appendChild(arrow);
+          }
+          canvas.appendChild(headEl);
+          for (var n = 0; n < colLanes.length; n += 1) {
+            renderTimelineNode(canvas, colLanes[n], colX, TL_COL_HEAD_H + n * (TL_NODE_H + TL_ROW_GAP));
+          }
+          if (colLanes.length > maxRows) maxRows = colLanes.length;
+        }
+        canvas.style.width = waveOrder.length * TL_COL_W - (TL_COL_W - TL_NODE_W) + "px";
+        canvas.style.height = TL_COL_HEAD_H + maxRows * (TL_NODE_H + TL_ROW_GAP) - TL_ROW_GAP + "px";
+      }
+      wrap.appendChild(canvas);
+      rootEl.appendChild(wrap);
+    }
+
+    // parse_defects (contract v2): fail-visible degraded cards naming
+    // note_path + defect. Absent/wrong-typed degrades to no cards — never a
+    // throw (contract item 10).
+    function parseDefectEntries() {
+      if (stateDoc === null) return [];
+      if (!Array.isArray(stateDoc.parse_defects)) return [];
+      return MCW.state.items(stateDoc.parse_defects, null).valid;
+    }
+
+    function renderTimelineView(rootEl) {
+      clearNode(rootEl);
+      var headRow = el("div");
+      headRow.classList.add("tl-headrow");
+      var head = el("div");
+      head.classList.add("tl-head");
+      head.setText("TIMELINE");
+      headRow.appendChild(head);
+      var controls = el("div");
+      controls.classList.add("tl-controls");
+      if (stateDoc !== null && MCW.state.classify(stateDoc).programs === "ok") {
+        var progs = MCW.state.items(stateDoc.programs, null).valid;
+        var finishedCount = 0;
+        for (var f = 0; f < progs.length; f += 1) {
+          if (programFinished(progs[f])) finishedCount += 1;
+        }
+        if (finishedCount > 0) {
+          var finBtn = el("button");
+          finBtn.setAttribute("type", "button");
+          finBtn.classList.add("tl-finished-toggle");
+          finBtn.setAttribute("aria-pressed", showFinishedPrograms ? "true" : "false");
+          finBtn.setText(
+            showFinishedPrograms ? "completed: shown" : "completed: hidden (" + finishedCount + ")"
+          );
+          finBtn.setAttribute(
+            "title",
+            "programs whose lanes are all done/parked stay out of the timeline until you show them"
+          );
+          if (typeof finBtn.addEventListener === "function") {
+            finBtn.addEventListener("click", function () {
+              showFinishedPrograms = !showFinishedPrograms;
+              render();
+            });
+          }
+          controls.appendChild(finBtn);
+        }
+      }
+      headRow.appendChild(controls);
+      rootEl.appendChild(headRow);
+
+      var defects = parseDefectEntries();
+      if (defects.length > 0) {
+        var dWrap = el("div");
+        dWrap.classList.add("defect-strip");
+        var dHead = el("div");
+        dHead.classList.add("defect-head");
+        dHead.setText("PARSE DEFECTS (" + defects.length + ")");
+        dWrap.appendChild(dHead);
+        for (var d = 0; d < defects.length; d += 1) renderDefectCard(dWrap, defects[d]);
+        rootEl.appendChild(dWrap);
+      }
+
+      var cls = MCW.state.classify(stateDoc);
+      if (cls.programs !== "ok") {
+        appendNote(rootEl, "no data"); // L2
+        return;
+      }
+      var res = MCW.state.items(stateDoc.programs, null);
+      if (res.valid.length === 0) {
+        appendNote(rootEl, "no programs");
+        appendHint(rootEl, "Programs appear here once the tower registers one — this page updates itself every 5 s.");
+      }
+      var i;
+      for (i = 0; i < res.valid.length; i += 1) {
+        if (!programFinished(res.valid[i])) renderTimelineProgram(rootEl, res.valid[i]);
+      }
+      for (i = 0; i < res.valid.length; i += 1) {
+        if (programFinished(res.valid[i])) renderTimelineProgram(rootEl, res.valid[i]);
+      }
+      if (res.skipped > 0) appendNote(rootEl, "skipped " + res.skipped + " malformed rows", "data-note");
+    }
+
+    function renderDefectCard(rootEl, d) {
+      var card = el("div");
+      card.classList.add("defect-card");
+      var notePath = typeof d.note_path === "string" && d.note_path !== "" ? d.note_path : "(unknown note)";
+      var lineEl = el("div");
+      lineEl.classList.add("defect-path");
+      lineEl.setText(notePath);
+      card.appendChild(lineEl);
+      var lineNo = isInt(d.line) ? d.line : null;
+      var defect = typeof d.defect === "string" && d.defect !== "" ? d.defect : "(no defect text)";
+      var what = el("div");
+      what.classList.add("defect-what");
+      what.setText("line " + (lineNo === null ? "?" : lineNo) + ": " + defect);
+      card.appendChild(what);
+      if (typeof d.row_id === "string" && d.row_id !== "") {
+        var rid = el("span");
+        rid.classList.add("defect-row");
+        rid.setText(d.row_id);
+        card.appendChild(rid);
+      }
+      rootEl.appendChild(card);
+    }
+
+    // ---- NEEDS-ME tab (contract v2): the actionable inbox. Renders from
+    // state on every pass — a cue clears the moment its underlying state
+    // clears; no local sticky state. ----
+
+    function renderNeedsView(rootEl) {
+      clearNode(rootEl);
+      var head = el("div");
+      head.classList.add("needs-head");
+      head.setText("NEEDS ME");
+      rootEl.appendChild(head);
+      if (stateDoc === null || !MCW.state.validateDoc(stateDoc).ok) {
+        appendNote(rootEl, "no data");
+        return;
+      }
+      if (!Array.isArray(stateDoc.needs_me)) {
+        renderNeedsEmpty(rootEl, true);
+        return;
+      }
+      var res = MCW.state.items(stateDoc.needs_me, "row_id");
+      if (res.valid.length === 0) {
+        renderNeedsEmpty(rootEl, false);
+      }
+      for (var i = 0; i < res.valid.length; i += 1) renderNeedsRow(rootEl, res.valid[i]);
+      if (res.skipped > 0) appendNote(rootEl, "skipped " + res.skipped + " malformed rows", "data-note");
+    }
+
+    // The pinned empty state (contract v2 item 10). The pre-contract tower
+    // (no needs_me key at all) gets the same words plus an honest pointer —
+    // never a false all-clear while owed data renders on the WALL tab.
+    function renderNeedsEmpty(rootEl, preContract) {
+      var empty = el("div");
+      empty.classList.add("needs-empty");
+      empty.setText("nothing needs you right now");
+      rootEl.appendChild(empty);
+      if (preContract) {
+        appendHint(
+          rootEl,
+          "The needs-me feed arrives with wall server contract v2 — verify rows and owed merges still render on the WALL tab."
+        );
+      }
+    }
+
+    function renderNeedsRow(rootEl, row) {
+      var kind = typeof row.kind === "string" && row.kind !== "" ? row.kind : "unknown";
+      var rowEl = el("div");
+      rowEl.classList.add("needs-row");
+      rowEl.setAttribute("data-row-id", row.row_id);
+      if (kind === "merge-ready" || kind === "verify-due" || kind === "stalled") {
+        rowEl.classList.add("needs-row--" + kind);
+      }
+      var badge = el("span");
+      badge.classList.add("needs-kind");
+      badge.setText(kind);
+      rowEl.appendChild(badge);
+      var main = el("span");
+      main.classList.add("needs-main");
+      var prog = typeof row.program === "string" && row.program !== "" ? row.program : "(no program)";
+      main.setText(row.row_id + " · " + prog);
+      rowEl.appendChild(main);
+      var action = typeof row.action === "string" ? row.action : "";
+      var act = el("span");
+      act.classList.add("needs-action");
+      if (action === "") {
+        act.classList.add("dim");
+        act.setText("(no action given)");
+      } else {
+        act.setText(action);
+      }
+      rowEl.appendChild(act);
+      var link = typeof row.deep_link === "string" && row.deep_link !== "" ? row.deep_link : null;
+      if (link !== null) {
+        var a = el("a");
+        a.classList.add("needs-link");
+        a.setAttribute("href", link);
+        a.setAttribute("target", "_blank");
+        a.setAttribute("rel", "noopener noreferrer");
+        a.setText("open ↗");
+        rowEl.appendChild(a);
+      }
+      rootEl.appendChild(rowEl);
+    }
+
+    // =====================================================================
     // T6: LIVE mode lifecycle (SPEC 4.3) — token, 5s poll chain, first-state
     //     semantics, 3-strike debounce, flap-safe schema_version reload, dot.
     // =====================================================================
@@ -3312,14 +4038,16 @@
   // Everything here is pure data code: it degrades on bad input, never throws.
   // =====================================================================
 
-  // Frozen key-set manifest of record (SPEC 3.2 tables + tower spec section 9,
-  // master = {session_id, title, last_active_ago_s}). AC-31's conformance target.
+  // Frozen key-set manifest of record (contract v2 — SPEC 3.2 tables + tower
+  // spec section 9, master = {session_id, title, last_active_ago_s}; v2 adds
+  // root.parse_defects + root.needs_me and lane.deps/verified/verify_due).
+  // AC-31's conformance target.
   var KEYSETS = {
-    root: ["schema_version", "server", "programs", "verify_queue", "human_actions", "sessions_unmapped", "launch_pending", "wall"],
+    root: ["schema_version", "server", "programs", "verify_queue", "human_actions", "sessions_unmapped", "launch_pending", "wall", "parse_defects", "needs_me"],
     server: ["uptime_s", "generated_ts", "degraded", "banner"],
     program: ["program", "note_path", "note_mtime", "objective", "master", "lanes"],
     master: ["session_id", "title", "last_active_ago_s"],
-    lane: ["row_id", "repo", "branch", "slug", "status_note", "status_parsed", "manifest", "session", "goal", "signals", "suggest_verify", "stalled"],
+    lane: ["row_id", "repo", "branch", "slug", "status_note", "status_parsed", "manifest", "session", "goal", "signals", "suggest_verify", "stalled", "deps", "verified", "verify_due"],
     manifest: ["path", "prompt_md", "goal_md", "precondition_mrs", "stall_t_hours"],
     session: ["id", "title", "title_pending", "dir", "last_active_ago_s", "parent_session_id"],
     goal: ["state", "queue_tail", "budget"],
@@ -3331,6 +4059,8 @@
     verifyRow: ["row_id", "program", "finished_ago_s", "master_hint", "verify_cmd"],
     humanRow: ["kind", "ref", "repo", "repo_host", "title", "pipeline", "ready"],
     unmappedRow: ["id", "title", "dir", "last_active_ago_s", "parent_session_id", "parent_title"],
+    needsMeRow: ["kind", "row_id", "program", "action", "deep_link"],
+    parseDefect: ["note_path", "line", "defect", "row_id"],
     wall: ["pending"],
     wallPending: ["version", "status", "flag", "reason", "row_id", "lane_tag", "repo_root", "prompt_sha256", "launch_click_ms", "matched_session_id", "matched_at_ms", "last_eval_ms", "advisory_120s_fired", "canary_fired", "updated_at_ms"],
   };
@@ -3527,6 +4257,10 @@
     if (deps.location.protocol === "file:") {
       // QA mode (SPEC 4.1): mount the embedded mock case picked by ?case=
       app.mountQA(caseNameFromSearch(deps.location.search));
+      // W2-L2 QA affordance: ?view= picks the opening tab (timeline default);
+      // file:-only — LIVE always opens on the timeline.
+      var m = /(?:[?&])view=(timeline|needs|wall|projects)(?:&|$)/.exec(deps.location.search || "");
+      if (m) app.setView(m[1]);
     } else {
       // LIVE mode (SPEC 4.3): token + poll chain (missing token -> banner,
       // blank panels, zero fetch — startLive handles it).
