@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Case 06 — plan-mode Wall registration + program-note grammar (wall-signal-panel W1-L2).
+# Case 06 — plan-mode Wall registration + program-note grammar (wall-signal-panel W1-L2;
+# re-pinned for contract v2 at 1.11.0: per-poll registration, 9-cell deps rows).
 # Pins SKILL §3 step 7 (idempotent ~/.mc-wall/wall.json registration at plan time, with the
-# boot-restart + state-probe verification and the skip-when-absent rule) and the §1 note
-# grammar the Wall's notes.py parser actually reads (8-cell rows, path-token repo cell,
-# no pre-forge placeholder rows, unbolded objective, fork-disclosure display rule).
+# per-poll no-restart visibility + state-probe verification and the skip-when-absent rule)
+# and the §1 note grammar the Wall's notes.py parser actually reads (9-cell deps rows,
+# legacy 8-cell compatibility, path-token repo cell, no pre-forge placeholder rows,
+# unbolded objective, fail-visible defects, fork-disclosure display rule).
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$ROOT" || exit 1
 SKILL="plugins/mission-control/skills/mission-control/SKILL.md"
@@ -38,9 +40,13 @@ printf '%s\n' "$S3" | grep -Fq -- 'repos[]' \
 printf '%s\n' "$S3" | grep -Fq -- 'timestamped backup' \
   || fail "§3 lacks the timestamped backup before wall.json is touched"
 
-# 5. Boot-time config: the restart command is named.
-printf '%s\n' "$S3" | grep -Fq -- 'launchctl kickstart -k gui/$(id -u)/ai.zcode.mc-wall' \
-  || fail "§3 lacks the wall restart command (launchctl kickstart -k gui/$(id -u)/ai.zcode.mc-wall)"
+# 5. Registration is per-poll (contract v2): visible on the next poll, NO restart.
+printf '%s\n' "$S3" | grep -Fq -- 'per-poll' \
+  || fail "§3 lacks the per-poll registration rule (contract v2)"
+printf '%s\n' "$S3" | grep -Fq -- 'NO restart' \
+  || fail "§3 lacks the explicit NO-restart statement for registration"
+printf '%s\n' "$S3" | grep -Fq -- 'BOOT only' \
+  && fail "§3 still carries the stale BOOT-only registration text (superseded by per-poll)"
 
 # 6. Verification via the state probe.
 printf '%s\n' "$S3" | grep -Fq -- '<token>/state' \
@@ -53,25 +59,39 @@ printf '%s\n' "$S3" | grep -Fq -- 'NEVER create the file' \
   || fail "§3 lacks the NEVER-create-the-file guard for absent ~/.mc-wall/wall.json"
 
 # --- §1: program-note grammar for the Wall --------------------------------------------
-# 8. Prompt-log rows carry exactly 8 cells (7-cell rows are silently skipped).
-printf '%s\n' "$S1" | grep -Fq -- 'EXACTLY 8 cells' \
-  || fail "§1 lacks the 8-cell prompt-log row rule (the Wall silently skips 7-cell rows)"
+# 8. Prompt-log rows carry exactly 9 cells — the variant-C deps form (contract v2).
+printf '%s\n' "$S1" | grep -Fq -- 'EXACTLY 9 cells' \
+  || fail "§1 lacks the 9-cell prompt-log row rule (variant C: trailing deps cell)"
+printf '%s\n' "$S1" | grep -Fq -- 'session/MR artifacts | status | deps' \
+  || fail "§1 lacks the 9-cell column list (… status | deps)"
+printf '%s\n' "$S1" | grep -Fq -- 'still parse unchanged' \
+  || fail "§1 lacks the legacy-header compatibility rule (8-cell A and B forms still parse unchanged)"
+printf '%s\n' "$S1" | grep -Fq -- 'silently skipped' \
+  && fail "§1 still claims malformed rows are silently skipped (fail-visible since contract v2)"
+printf '%s\n' "$S1" | grep -Fq -- 'parse defect' \
+  || fail "§1 lacks the fail-visible parse-defect rule (malformed rows surface naming note path + defect)"
 
-# 9. The repo/branch cell needs a path token (bare repo name parses repo=None).
+# 9. The deps cell carries row_ids (comma/space-separated) or — when none.
+printf '%s\n' "$S1" | grep -Fq -- 'comma/space-separated' \
+  || fail "§1 lacks the deps-cell format rule (comma/space-separated row_ids)"
+printf '%s\n' "$S1" | grep -Fq -- '`—` when the lane depends on nothing' \
+  || fail "§1 lacks the empty-deps rule (— when the lane depends on nothing)"
+
+# 10. The repo/branch cell needs a path token (bare repo name parses repo=None).
 printf '%s\n' "$S1" | grep -Fq -- 'path token' \
   || fail "§1 lacks the path-token rule for the repo/branch cell (repo=None without it)"
 
-# 10. No pre-forge placeholder rows (status vocabulary has no 'planned' state).
+# 11. No pre-forge placeholder rows (status vocabulary has no 'planned' state).
 printf '%s\n' "$S1" | grep -Fq -- 'pre-forge placeholder rows' \
   || fail "§1 lacks the no-pre-forge-placeholder-rows rule"
 printf '%s\n' "$S1" | grep -Fq -- '"planned" state' \
   || fail "§1 does not state the status vocabulary has no \"planned\" state"
 
-# 11. Objective line unbolded (parser matches the literal prefix).
+# 12. Objective line unbolded (parser matches the literal prefix).
 printf '%s\n' "$S1" | grep -Fq -- 'unbolded `Objective:`' \
   || fail "§1 lacks the unbolded-Objective rule (**Objective:** does not parse)"
 
-# 12. Fork disclosure display rule for wall-declared programs (operator ruling 2026-09-22).
+# 13. Fork disclosure display rule for wall-declared programs (operator ruling 2026-09-22).
 printf '%s\n' "$S1" | grep -Fq -- 'evidence prose' \
   || fail "§1 lacks the fork-disclosure evidence-prose rule for wall-declared programs"
 printf '%s\n' "$S1" | grep -Fq -- 'renders as a lane' \

@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 New changes accumulate here between releases, above the latest version entry (Keep a Changelog convention; the release gates skip this section when reading the head version).
 
+## [1.11.0] - 2026-10-06
+
+The skill now teaches the system that exists: the Wall's contract v2 — 9-cell deps rows, per-poll registration, fail-visible parsing — is what `/mission-control` forges and verifies against. Program-end release of the wall-overhaul program (with its sibling v1.10.1).
+
+### Changed
+- **SKILL §1 program-note grammar re-specified to the 9-cell variant-C row** — `id | wave | lane | repo/branch | slug | base | session/MR artifacts | status | deps` (contract v2): the deps cell carries the row_ids the lane gates on (comma/space-separated, `—` when none); the legacy 8-cell A and B header variants still parse unchanged, so old programs are never rewritten. Malformed rows are fail-visible, not silent: the old "a 7-cell row is silently skipped" text is replaced with the truth — short-celled, empty-id, or off-vocabulary rows surface on the Wall as parse defects naming the note path, the 1-based line, the defect, and the row_id when known.
+- **SKILL §3 step 7 registration is per-poll — no restart**: the Wall re-checks wall.json's mtime on every collect cycle, so a plan-time registration is visible on the next ~5 s poll; the BOOT-only/restart instruction is gone (a restart remains necessary only for wall code changes or env, never for registration). The `/state` verify now expects the program present with its lanes and READS `degraded` lines (fail-visible defects may legitimately appear there) rather than demanding the field empty.
+- **SKILL §4 step 5 forge writes the deps cell** from the plan's wave-table dependency edges — each row's deps list the row_ids it gates on, `—` when none; derived from the plan, never improvised at emit time.
+- **Case 06 re-pinned** to the per-poll + 9-cell grammar: positive pins for `EXACTLY 9 cells`, the deps-cell format, legacy-header compatibility, the fail-visible parse-defect rule, and per-poll/NO-restart registration; negative guards fail the suite if the stale `BOOT only` or `silently skipped` text returns.
+
+### Added (wall — tower contract v2, merged in PR #16)
+- **Deps variant C** prompt-log parsing (9-cell trailing `deps` column, backward-compatible with the A/B headers); **fail-visible parse defects** per malformed row (`note_path`, 1-based `line`, `defect`, `row_id` when known) surfaced on the Wall and in `/state` `parse_defects`; **`verified` / `verify_due`** lane fields in the `/state` payload; **per-poll registration** (wall.json mtime re-check + discovery re-scan every collect cycle — new programs and note edits appear on the next poll with no restart); **`needs_me`** state-level aggregation (merge-ready + verify-due + stalled); **verify:ok token-clearing** of the verify queue; the **find_row "rows"-key fix** (POST /launch 404); and **`fix/<name>` branch-form parsing** in `_BRANCH_RE`. `/state` `schema_version` 2.
+
+### Fixed (wall — released in the sibling v1.10.1, PR #14)
+- **Unmapped group recency ordering + 50vh strip cap** — detailed in the [1.10.1] entry below; named here so the program-end release notes cover the full wall-overhaul delta.
+
+Gates: `tests/run_smoke.sh` exit 0 (7/7 cases, case 06 re-pinned); `scripts/verify_packaging.sh` green at 1.11.0. Wall suite not run by this lane (owns no `wall/` files) — covered by PR #16's receipts at the identical tree (hermetic pytest 317 passed + web selftest 106/106, `MC_WALL_DISCOVERY=0`).
+
 ## [1.10.1] - 2026-10-06
 
 The Wall's busiest repos surface at the top of the unmapped strip instead of burying themselves down its scroll box.
