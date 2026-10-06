@@ -3332,14 +3332,47 @@
       return true;
     }
 
+    // Column roll-up for the workflow-style header row: a column reads as its
+    // WORST honest dot — red beats yellow beats green; all-grey stays hollow.
+    function columnStatus(lanes) {
+      var rank = { red: 3, yellow: 2, green: 1, grey: 0 };
+      var out = "grey";
+      for (var i = 0; i < lanes.length; i += 1) {
+        var d = timelineDot(lanes[i]);
+        if (rank[d] > rank[out]) out = d;
+      }
+      return out;
+    }
+
+    // Workflow-style column header (the ZCode-UI reference): status circle +
+    // label, dash connector to the next column on every non-last header.
+    function tlStepHeadInto(canvas, label, status, x, isLast) {
+      var head = el("div");
+      head.classList.add("tl-step-head");
+      if (isLast) head.classList.add("tl-step-head--last");
+      head.style.left = x + "px";
+      head.style.top = "0px";
+      head.style.width = TL_NODE_W + "px";
+      var dot = el("span");
+      dot.classList.add("tl-step-dot");
+      if (status !== "grey") dot.classList.add("tl-step-dot--" + status);
+      head.appendChild(dot);
+      var labelEl = el("span");
+      labelEl.classList.add("tl-step-label");
+      labelEl.setText(label);
+      head.appendChild(labelEl);
+      canvas.appendChild(head);
+      return head;
+    }
+
     // Node geometry: fixed-size cards on an absolute canvas; COL_W leaves a
     // routing gutter for the edge lines between columns. Sized so a 7-column
     // chain fits a 1440px viewport without horizontal scroll.
     var TL_COL_W = 196;
     var TL_NODE_W = 172;
-    var TL_NODE_H = 58;
-    var TL_ROW_GAP = 14;
-    var TL_COL_HEAD_H = 26; // wave-fallback column headers only
+    var TL_NODE_H = 40;
+    var TL_ROW_GAP = 12;
+    var TL_COL_HEAD_H = 30; // the workflow-style header row height
 
     function renderTimelineNode(parentEl, lane, x, y) {
       var node = el("div");
@@ -3350,10 +3383,15 @@
       node.style.top = y + "px";
       node.style.width = TL_NODE_W + "px";
 
+      var dotName = timelineDot(lane);
       var dot = el("span");
       dot.classList.add("tl-dot");
-      dot.classList.add("tl-dot--" + timelineDot(lane));
+      dot.classList.add("tl-dot--" + dotName);
       node.appendChild(dot);
+      // workflow-reference affordance: a working lane spins (reduced-motion
+      // kills the animation via the global override)
+      if (dotName === "yellow") node.classList.add("tl-node--working");
+      node.classList.add("tl-node--" + dotName);
       var label = el("span");
       label.classList.add("tl-label");
       label.setText(lane.row_id);
@@ -3389,10 +3427,13 @@
 
       // Lane detail (contract: hover/click opens session id, branch, MR ref,
       // last activity, status). Collapsed by default; the expanded state is
-      // keyed by row_id so 5 s poll rebuilds never snap it shut.
+      // keyed by row_id so 5 s poll rebuilds never snap it shut — and the
+      // open border re-applies with it (same poll-surviving rule).
+      var expanded = expandedTimelineNodes[lane.row_id] === true;
       var det = el("div");
       det.classList.add("tl-detail");
-      if (expandedTimelineNodes[lane.row_id] !== true) det.classList.add("collapsed");
+      if (!expanded) det.classList.add("collapsed");
+      if (expanded) node.classList.add("tl-node--open");
       var ses = nullable(lane.session);
       var sig = nullable(lane.signals);
       var mr = sig !== null ? nullable(sig.mr) : null;
@@ -3497,7 +3538,9 @@
       var canvas = el("div");
       canvas.classList.add("tl-canvas");
       if (programHasDeps(lanes)) {
-        // DAG layout: columns = longest-path levels over the deps edges.
+        // DAG layout: columns = longest-path levels over the deps edges; a
+        // workflow-style header row (status circle + stage label + dash
+        // connector) leads each column, nodes stack under it.
         var level = laneLevels(lanes);
         var byLevel = [];
         var i;
@@ -3514,11 +3557,15 @@
           if (c > maxLevel) maxLevel = c;
           for (var r = 0; r < byLevel[c].length; r += 1) {
             var x = c * TL_COL_W;
-            var y = r * (TL_NODE_H + TL_ROW_GAP);
+            var y = TL_COL_HEAD_H + r * (TL_NODE_H + TL_ROW_GAP);
             pos[byLevel[c][r].row_id] = { x: x, y: y, rowId: byLevel[c][r].row_id };
             var colH = y + TL_NODE_H;
             if (colH > maxColHeight) maxColHeight = colH;
           }
+        }
+        for (var h = 0; h < byLevel.length; h += 1) {
+          if (!byLevel[h]) continue;
+          tlStepHeadInto(canvas, "stage " + (h + 1), columnStatus(byLevel[h]), h * TL_COL_W, h === byLevel.length - 1);
         }
         for (i = 0; i < lanes.length; i += 1) {
           var deps = laneDeps(lanes[i]) || [];
@@ -3564,7 +3611,14 @@
           headEl.style.left = colX + "px";
           headEl.style.top = "0px";
           headEl.style.width = TL_NODE_W + "px";
-          headEl.setText(waveOrder[col] === "(unsorted)" ? "(unsorted)" : "wave " + waveOrder[col]);
+          var wdot = el("span");
+          wdot.classList.add("tl-step-dot");
+          var wstatus = columnStatus(colLanes);
+          if (wstatus !== "grey") wdot.classList.add("tl-step-dot--" + wstatus);
+          headEl.appendChild(wdot);
+          var headLabel = el("span");
+          headLabel.setText(waveOrder[col] === "(unsorted)" ? "(unsorted)" : "wave " + waveOrder[col]);
+          headEl.appendChild(headLabel);
           if (col < waveOrder.length - 1) {
             var arrow = el("span");
             arrow.classList.add("tl-wave-arrow");

@@ -4560,6 +4560,38 @@ test("W2-L2: timeline DAG — deps edges, level layout, diamond, finished hidden
   assert.ok(left("W2-L7") > left("W2-L5"), "L7 right of L5");
   assert.ok(left("W2-L9") > left("W2-L8"), "the chain ascends to the right");
   assert.equal(left("W2-L6"), 0, "a dep-less lane sits at column 0");
+  // workflow-style header row (operator reference, adapted): one status
+  // circle + stage label per column, dash connector on every non-last header
+  const stepHeads = byClass(programs[0], "tl-step-head"); // secfix's block (omniforge contributes its own single-column header)
+  assert.equal(stepHeads.length, 7, "one header per DAG column");
+  assert.ok(collectText(stepHeads[0]).indexOf("stage 1") !== -1, "columns label as stage N");
+  assert.ok(collectText(stepHeads[6]).indexOf("stage 7") !== -1);
+  const stepSeq = ["yellow", "yellow", "red", "red", "yellow", "grey", "red"];
+  for (let i = 0; i < stepSeq.length; i += 1) {
+    const d = byClass(stepHeads[i], "tl-step-dot")[0];
+    assert.ok(d, "header " + i + " carries a status circle");
+    if (stepSeq[i] === "grey") {
+      assert.equal(String(d.className), "tl-step-dot", "an all-idle column reads hollow (grey)");
+    } else {
+      assert.ok(d.classList.contains("tl-step-dot--" + stepSeq[i]), "column " + i + " rolls up to " + stepSeq[i]);
+    }
+  }
+  assert.ok(!stepHeads[0].classList.contains("tl-step-head--last"), "non-last headers carry the dash");
+  assert.ok(stepHeads[6].classList.contains("tl-step-head--last"), "the last header has no dash");
+  // working lanes spin (yellow dot -> working affordance on the pill)
+  assert.ok(
+    findByData(tl, "data-row-id", "W2-L1").classList.contains("tl-node--working"),
+    "a working lane carries the spin affordance"
+  );
+  assert.ok(
+    !findByData(tl, "data-row-id", "W2-L3").classList.contains("tl-node--working"),
+    "a done lane does not spin"
+  );
+  const spinRule = parseCssRules(readWebFile("style.css")).find(
+    (r) => r.selector === ".tl-node--working::after" && r.media === ""
+  );
+  assert.ok(spinRule && /var\(--amber\)/.test(spinRule.decls["border"] || ""), "the spinner rides the amber token");
+  assert.ok(spinRule.decls["animation"] && spinRule.decls["animation"].indexOf("tl-spin") !== -1, "spinner animation pinned");
   // the completed toggle reveals the finished program
   const fin = byClass(tl, "tl-finished-toggle")[0];
   assert.ok(fin, "the completed toggle renders when a finished program exists");

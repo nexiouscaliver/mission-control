@@ -1727,6 +1727,7 @@ body.frozen .sig {
 .projects-head,
 .tl-head,
 .tl-wave-head,
+.tl-step-head,
 .needs-head,
 .defect-head {
   font-family: var(--font-mono);
@@ -1820,19 +1821,109 @@ body.frozen .sig {
   margin-top: var(--s2);
 }
 
+/* workflow-style header row: status circle + stage label; a dash connector
+ * bridges every non-last header into the column gap (the reference shape,
+ * drawn in the ledger's hairline grey) */
+
+.tl-step-head,
+.tl-wave-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tl-step-head {
+  position: absolute;
+}
+
+.tl-step-head::after {
+  content: "";
+  position: absolute;
+  right: -20px;
+  top: 50%;
+  width: 14px;
+  height: 2px;
+  background: var(--border-2);
+}
+
+.tl-step-head--last::after {
+  display: none;
+}
+
+.tl-step-label {
+  color: var(--dim);
+}
+
+.tl-step-dot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid var(--faint);
+  background: transparent;
+}
+
+.tl-step-dot--red {
+  background: var(--red);
+  border-color: var(--red);
+}
+
+.tl-step-dot--yellow {
+  background: var(--amber);
+  border-color: var(--amber);
+}
+
+.tl-step-dot--green {
+  background: var(--green);
+  border-color: var(--green);
+}
+
 .tl-node {
   position: absolute;
   z-index: 1;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
-  min-height: 44px;
-  padding: 7px 9px;
-  background: var(--hover);
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 12px;
+  background: var(--raise);
   border: 1px solid var(--border);
-  border-radius: var(--r-s);
+  border-radius: 9px;
   cursor: pointer;
+}
+
+/* the lane label truncates inside the pill; the status word never squeezes out */
+.tl-label {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tl-meta {
+  flex: 0 0 auto;
+}
+
+/* a working lane spins (the reference affordance) — the global
+ * prefers-reduced-motion override neutralizes the animation */
+.tl-node--working::after {
+  content: "";
+  flex: 0 0 auto;
+  margin-left: auto;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--amber);
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: tl-spin 0.9s linear infinite;
+}
+
+@keyframes tl-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .tl-node:hover {
@@ -1879,9 +1970,10 @@ body.frozen .sig {
 }
 
 .tl-meta {
-  color: var(--dim);
+  margin-left: auto;
+  color: var(--faint);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .tl-verified {
@@ -1921,8 +2013,8 @@ body.frozen .sig {
 .tl-edge {
   position: absolute;
   z-index: 0;
-  height: 2px;
-  background: var(--border-2);
+  height: 1.5px;
+  background: color-mix(in srgb, var(--border-2) 80%, transparent);
   transform-origin: 0 0;
 }
 
