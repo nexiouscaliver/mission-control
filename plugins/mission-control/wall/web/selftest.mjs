@@ -4601,11 +4601,18 @@ test("W2-L2: timeline DAG — deps edges, level layout, diamond, finished hidden
   // working lanes spin (yellow dot -> working affordance on the pill)
   assert.ok(
     findByData(tl, "data-row-id", "W2-L1").classList.contains("tl-node--working"),
-    "a working lane carries the spin affordance"
+    "a lane with a session active <=900s carries the spin affordance (activity, not status)"
   );
   assert.ok(
     !findByData(tl, "data-row-id", "W2-L3").classList.contains("tl-node--working"),
-    "a done lane does not spin"
+    "a done lane does not spin",
+  );
+  // W2-L7: in-flight STATUS but its session is 1800s idle — status alone
+  // must never read as working (the W0-O1 incident: 41h-dead "launched"
+  // row rendered yellow+spin; spinner is activity-only since 2026-10-07)
+  assert.ok(
+    !findByData(tl, "data-row-id", "W2-L7").classList.contains("tl-node--working"),
+    "an in-flight lane with an idle session (1800s) does NOT spin",
   );
   const spinRule = parseCssRules(readWebFile("style.css")).find(
     (r) => r.selector === ".tl-node--working::after" && r.media === ""

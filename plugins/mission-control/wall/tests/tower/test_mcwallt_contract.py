@@ -117,7 +117,17 @@ def test_mcwallt_contract_exact_keys_all_levels(tmp_path, monkeypatch):
     # 7h-idle over an 8h-old queue.md — so EVERY nullable object is non-null)
     # passes assert_shape AND carries exactly the §9 key sequences, in order,
     # at every level.
-    cfg, _set = mcwallt_world(tmp_path, monkeypatch, lane1_age_s=25200.0, queue_age_s=28800.0)
+    # Since the sd1 status guard (W0-O1 incident) stalled belongs to WORKING
+    # rows: W1-L1 stays done (verify_due/suggest_verify non-null) and a 4th
+    # lane W1-L4 (launched, own 7h-idle session) carries stalled.
+    rows4 = [f"| W1-L1 | W1 | L1 | {tmp_path}/mcwallt_world_repo loop/mcwallt-tower | mcwallt-slug | n/a | !5; sess_9a690ab2-cde8-4e9a-bc4e-177fcc68545f | done |",
+             "| W1-L2 | W1 | L2 | plugin cache 1.3.0 (plain lane) | n/a | n/a | n/a | launched |",
+             f"| W1-L3 | W1 | L3 | {tmp_path}/mcwallt_world_repo main | mcwallt-slug-3 | n/a | n/a | done |",
+             f"| W1-L4 | W1 | L4 | {tmp_path}/mcwallt_world_repo loop/mcwallt-fixes | mcwallt-slug | n/a | !9; sess_5ca1e000-dead-4bee-a1de-5ca1e000dead | launched |"]
+    stale_sess = {"id": "sess_5ca1e000-dead-4bee-a1de-5ca1e000dead", "title": "mcwallt stalled lane",
+                  "directory": "/mcwallt/s4", "time_updated": 0, "time_created": 0}
+    cfg, _set = mcwallt_world(tmp_path, monkeypatch, lane1_age_s=25200.0, queue_age_s=28800.0,
+                              rows=rows4, extra_sessions=[stale_sess])
     state = collect_state(cfg)
     contract.assert_shape(state)
 
@@ -148,7 +158,9 @@ def test_mcwallt_contract_exact_keys_all_levels(tmp_path, monkeypatch):
     assert list(lane["suggest_verify"].keys()) == ["because"]
     assert list(lane["verify_due"].keys()) == ["because"]
     assert lane["deps"] == [] and lane["verified"] is False
-    assert list(lane["stalled"].keys()) == ["because", "last_event"]
+    assert lane["stalled"] is None  # sd1: a DONE lane never stalls
+    lane4 = {l["row_id"]: l for l in prog["lanes"]}["W1-L4"]
+    assert list(lane4["stalled"].keys()) == ["because", "last_event"]
     assert list(state["verify_queue"][0].keys()) == ["row_id", "program", "finished_ago_s",
                                                      "master_hint", "verify_cmd"]
     assert list(state["human_actions"][0].keys()) == ["kind", "ref", "repo", "repo_host",

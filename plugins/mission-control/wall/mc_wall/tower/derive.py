@@ -34,7 +34,8 @@ def derive_stalled(manifest: dict | None, session_epoch_s: float | None,
                    now: float, stall_t_raw) -> dict | None:
     """§6.1: {"because", "last_event"} or None.
 
-    Fires only when the manifest exists with stall_t_hours > 0 AND an activity
+    Fires when a stall bound applies (manifest stall_t_hours, else the
+    default 6h; 0 disables) AND an activity
     epoch is known AND now - epoch is STRICTLY past stall_t_hours * 3600. The
     epoch is the max of the lane session's time_updated (seconds; None when
     the join missed or the db timestamp is NULL) and the goal dir's queue.md
@@ -43,11 +44,18 @@ def derive_stalled(manifest: dict | None, session_epoch_s: float | None,
     is the manifest.json value as loaded, formatted AS GIVEN (6 -> "6",
     6.5 -> "6.5").
     """
-    if manifest is None:
-        return None
-    if not isinstance(stall_t_raw, (int, float)) or isinstance(stall_t_raw, bool):
-        return None  # read_manifest already guarantees numeric; guard stays pure
-    if stall_t_raw <= 0:
+    # The wall-overhaul charter: "no-activity-while-undone past a wall-side
+    # stall bound" — the bound is the manifest's stall_t_hours when a manifest
+    # exists (0 disables), else the DEFAULT 6h. Plain lanes (no regenloop
+    # goal dir, hence manifest None — the entire no-regenloop era) stalled
+    # NEVER before 2026-10-07: the manifest-None early-out made the default
+    # unreachable and a 41h-dead "launched" session rendered yellow+spin
+    # (the lying-dot class). W0-O1 incident, fix/wall-stall-default.
+    if isinstance(stall_t_raw, (int, float)) and not isinstance(stall_t_raw, bool):
+        stall_t = stall_t_raw
+    else:
+        stall_t = 6  # manifest absent or non-numeric -> wall-side default
+    if stall_t <= 0:
         return None
     epoch = session_epoch_s
     source = "session" if session_epoch_s is not None else None
@@ -56,13 +64,13 @@ def derive_stalled(manifest: dict | None, session_epoch_s: float | None,
     if epoch is None:
         return None
     idle = now - epoch
-    if not idle > stall_t_raw * 3600:
+    if not idle > stall_t * 3600:
         return None
     if source == "session":
         last_event = f"session {session_id} at {int(now - session_epoch_s)}s ago"
     else:
         last_event = f"queue.md mtime at {int(now - queue_mtime_s)}s ago"
-    return {"because": f"inactive for {int(idle)}s > stall_t {stall_t_raw}h",
+    return {"because": f"inactive for {int(idle)}s > stall_t {stall_t}h",
             "last_event": last_event}
 
 

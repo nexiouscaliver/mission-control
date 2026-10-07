@@ -534,10 +534,15 @@ def _derive(config: TowerConfig, programs: list, log: "DegradedLog",
         # verify_due because list).
         finished_ago_s = session["last_active_ago_s"] if session is not None else None
         manifest = lane["manifest"]
-        lane["stalled"] = derive.derive_stalled(
-            manifest, session_epochs.get(id(lane)), session_id,
-            _queue_mtime(manifest), now,
-            manifest["stall_t_hours"] if manifest is not None else None)
+        # Stalled = CLAIMED working but silent: only launched/in-flight rows
+        # (done/failed are terminal, parked is idle by instruction, forged has
+        # nothing running) — the charter's "no-activity-while-undone".
+        lane["stalled"] = (
+            derive.derive_stalled(
+                manifest, session_epochs.get(id(lane)), session_id,
+                _queue_mtime(manifest), now,
+                manifest["stall_t_hours"] if manifest is not None else None)
+            if status_parsed in ("launched", "in-flight") else None)
         if lane["stalled"] is not None:
             stalled_views.append({"row_id": lane["row_id"],
                                   "program": config.programs[pidx].program,

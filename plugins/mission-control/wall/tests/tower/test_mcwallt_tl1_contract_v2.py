@@ -330,16 +330,26 @@ def test_tl1_collect_needs_me_end_to_end(tmp_path, monkeypatch):
     # (session AND queue.md both past the 6h stall bound) -> stalled entry
     # naming repo/branch.
     repo = tmp_path / "mcwallt_world_repo"
+    # Since the sd1 status guard (W0-O1 incident) a DONE lane never stalls —
+    # the stalled entry rides W1-L4 (launched, own 7h-idle session, same
+    # goal dir slug so the manifest's stall bound applies).
+    rows4 = [f"| W1-L1 | W1 | L1 | {repo} loop/mcwall-tower | mcwallt-slug | n/a | !5; sess_9a690ab2-cde8-4e9a-bc4e-177fcc68545f | done |",
+             "| W1-L2 | W1 | L2 | plugin cache 1.3.0 (plain lane) | n/a | n/a | n/a | launched |",
+             f"| W1-L3 | W1 | L3 | {repo} main | mcwallt-slug-3 | n/a | n/a | done |",
+             f"| W1-L4 | W1 | L4 | {repo} loop/mcwallt-fixes | mcwallt-slug | n/a | !9; sess_5ca1e000-dead-4bee-a1de-5ca1e000dead | launched |"]
+    stale_sess = {"id": "sess_5ca1e000-dead-4bee-a1de-5ca1e000dead", "title": "mcwallt stalled lane",
+                  "directory": "/mcwallt/s4", "time_updated": 0, "time_created": 0}
     cfg, _set = mcwallt_world(
         tmp_path, monkeypatch, lane1_age_s=25200.0, queue_age_s=28800.0,
-        manifest={"stall_t_hours": 6, "precondition_mrs": []})
+        manifest={"stall_t_hours": 6, "precondition_mrs": []},
+        rows=rows4, extra_sessions=[stale_sess])
     state = collect_state(cfg)
     kinds = [(e["kind"], e["row_id"]) for e in state["needs_me"]]
     assert kinds == [("merge-ready", "W1-L1"), ("verify-due", "W1-L1"),
-                     ("verify-due", "W1-L3"), ("stalled", "W1-L1")]
+                     ("verify-due", "W1-L3"), ("stalled", "W1-L4")]
     assert state["needs_me"][0]["action"] == \
         "merge !5 on mcwallt-repo/loop/mcwall-tower (gitlab)"
-    assert state["needs_me"][3]["action"] == "mcwallt-repo/loop/mcwall-tower"
+    assert state["needs_me"][3]["action"] == "mcwallt-repo/loop/mcwallt-fixes"
 
 
 # --- item 6: stall_t_hours defaults to 6 when the manifest carries none -------
