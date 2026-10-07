@@ -3592,7 +3592,15 @@
       node.appendChild(dot);
       // workflow-reference affordance: a working lane spins (reduced-motion
       // kills the animation via the global override)
-      if (dotName === "yellow") node.classList.add("tl-node--working");
+      // The spin affordance means ACTIVE RIGHT NOW: session activity within
+      // the 15-minute window — never status alone (a "launched" row with a
+      // dead session is yellow per D7 but must not read as working; W0-O1
+      // incident 2026-10-07).
+      var activeNow =
+        lane.session !== null && lane.session !== undefined &&
+        isInt(lane.session.last_active_ago_s) &&
+        lane.session.last_active_ago_s <= 900;
+      if (activeNow) node.classList.add("tl-node--working");
       node.classList.add("tl-node--" + dotName);
       var label = el("span");
       label.classList.add("tl-label");
