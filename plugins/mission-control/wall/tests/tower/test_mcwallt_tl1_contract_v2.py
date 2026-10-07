@@ -89,6 +89,22 @@ def test_tl1_notes_branch_fix_form():
     # loop/ and main/master keep parsing; junk tokens keep being ignored.
     assert notes.parse_repo_branch("~/repos/mc loop/x main", va) == ("~/repos/mc", "loop/x")
     assert notes.parse_repo_branch("~/repos/mc fix/Bad_Slash!", va) == ("~/repos/mc", None)
+    # General namespaced form (hsp resurrection, 2026-10-07): real fleets use
+    # backport/, alarm-fixes/, hsp/, release/ ... — all lowercase-kebab
+    # namespaces parse; uppercase namespaces and bare branch names do not.
+    assert notes.parse_repo_branch(
+        "~/work/regenai-repo/cleo backport/alarm-fixes-mr-C-main", va) == \
+        ("~/work/regenai-repo/cleo", "backport/alarm-fixes-mr-C-main")
+    assert notes.parse_repo_branch(
+        "~/cleo alarm-fixes/mr-B (+ mr-C backports)", va) == \
+        ("~/cleo", "alarm-fixes/mr-B")
+    assert notes.parse_repo_branch("~/cleo hsp/phase1-ref", va) == \
+        ("~/cleo", "hsp/phase1-ref")
+    assert notes.parse_repo_branch("~/repos/mc release/v1.4.0", va) == \
+        ("~/repos/mc", "release/v1.4.0")
+    assert notes.parse_repo_branch("~/repos/mc Loop/x", va) == ("~/repos/mc", None)
+    assert notes.parse_repo_branch("~/repos/mc bare-branch-name", va) == \
+        ("~/repos/mc", None)
 
 
 # --- item 2: per-defect fail-visible parse errors (EXPECT-2) ------------------

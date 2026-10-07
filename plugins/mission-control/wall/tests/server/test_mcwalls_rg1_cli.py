@@ -419,8 +419,10 @@ def test_rg1_bind_tolerates_preexisting_defects(tmp_path, monkeypatch):
     cli = H.load_cli()
     wh = H.make_tmp_root("rg1-bind6-")
     note, _db = _bind_fixture(wh, rows=[
-        # repo token present but branch token off-vocabulary -> pre-existing defect
-        "| W1-L1 | W1 | L1 | /tmp/x backport/thing | s1 | n/a | n/a | done |"])
+        # repo token present but branch token off-vocabulary -> pre-existing
+        # defect (fixture uses a BARE branch name — namespaces went general
+        # in fix/wall-branch-vocab, so backport/thing now parses clean)
+        "| W1-L1 | W1 | L1 | /tmp/x just-a-branch | s1 | n/a | n/a | done |"])
     out = io.StringIO()
     assert _cli(cli, wh, out).bind("prog", "W1-L1", SESS) == 0
     text = out.getvalue()
