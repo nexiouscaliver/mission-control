@@ -356,7 +356,7 @@ def test_tl1_goals_stall_default_6_without_manifest(tmp_path, monkeypatch):
     # No network: the lane has no branch-push interest for this assertion.
     import mc_wall.tower.collect as collect_module
     monkeypatch.setattr(collect_module, "_read_signals", lambda *a: None)
-    monkeypatch.setattr(collect_module, "_read_merges", lambda *a: [])  # W4-L4 hermeticity
+    monkeypatch.setattr(collect_module, "_read_merges", lambda *a: ([], 0))  # W4-L4 hermeticity
     state = collect_state(cfg)
     lane = state["programs"][0]["lanes"][0]
     assert lane["stalled"] is not None

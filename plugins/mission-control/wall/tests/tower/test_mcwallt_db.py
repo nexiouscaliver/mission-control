@@ -27,7 +27,7 @@ def _mr1_no_registry(monkeypatch):
     test_mcwallt_mr1_registry.py); neutralize it here — same rule the corpus
     test documents for T-5's _read_signals."""
     from mc_wall.tower import collect as collect_module
-    monkeypatch.setattr(collect_module, "_read_merges", lambda *a: [])
+    monkeypatch.setattr(collect_module, "_read_merges", lambda *a: ([], 0))
 
 
 

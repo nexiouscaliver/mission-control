@@ -16,15 +16,27 @@ import json
 import logging
 import os
 
-from . import contract, derive, forge, goals, merges, notes, session_store, signals
+from . import contract, derive, forge, goals, merges, netcache, notes, session_store, signals
 from .config import TowerConfig
 
 _DISCOVERY_DISABLED_LOGGED = False  # decision 3b: the wall.log disabled-line lands once per process
 
 
-def collect_state(config: TowerConfig) -> dict:
+def collect_state(config: TowerConfig, serve: bool = False) -> dict:
+    """One collect cycle. ``serve=False`` (default — warm/blocking, the CLI
+    and the boot self-check): every network probe blocks until its spawn or
+    TTL-cache hit resolves, with the per-lane/per-repo probes PARALLELIZED on
+    the shared bounded spawn pool (wc1: 55 serialized spawns measured 78 s
+    cold; the pool bounds the same work at min(8, cpus) concurrent). 
+    ``serve=True`` (the /state path): CACHE-FIRST — cached registry/signal
+    results serve immediately (a last-good entry past its TTL serves STALE
+    with its age; a never-observed key renders nulls, absence-not-failure),
+    and expired/missing entries refresh on a bounded BACKGROUND pool — the
+    collect never waits on a subprocess spawn. Determinism in both modes:
+    probe results are gathered in document order and every degraded line is
+    emitted from the orchestrating thread in that order."""
     try:
-        return _collect(config)
+        return _collect(config, serve)
     except Exception:
         # UNREACHABLE BACKSTOP for internal bugs (plan ambiguity resolution 5) —
         # NOT the fail-open mechanism; per-source readers and NetCache.fetch's
@@ -35,7 +47,7 @@ def collect_state(config: TowerConfig) -> dict:
         return doc
 
 
-def _collect(config: TowerConfig) -> dict:
+def _collect(config: TowerConfig, serve: bool) -> dict:
     global _DISCOVERY_DISABLED_LOGGED
     log = DegradedLog()
     for i, line in enumerate(config.discovery_degraded):
@@ -64,16 +76,25 @@ def _collect(config: TowerConfig) -> dict:
     sessions_unmapped, sessions_orphaned, session_epochs = _read_sessions(
         config, now, log, programs, lane_records)
     _read_goals(config, log, lane_records)
-    _read_signals(config, log, lane_records, now)
+    # wc1: ONE cache seam for the whole cycle — blocking NetCache (warm) or
+    # the cache-first ServingCache facade (serve); ONE spawn pool for the
+    # warm cycle's parallel probes (serve-mode refreshes share it too).
+    cache = netcache.ServingCache(config.network_cache) if serve \
+        else config.network_cache
+    pool = None if serve else netcache.shared_spawn_pool()
+    # Positional calls: the per-module seams stay one-line patchable with
+    # star-arg lambdas (``lambda *args: None`` — the corpus tests' shape).
+    _read_signals(config, log, lane_records, now, cache, pool)
     verify_queue, human_actions, needs_me = _derive(config, programs, log,
                                                     lane_records, session_epochs,
-                                                    now)
+                                                    now, cache, pool)
     # Wall-honesty root aggregation (v1.11.1): parse_defects at the STATE root
     # = the flattened per-program defects (doc order), so the web's existing
     # defect strip renders tower defects without a second parser. The tower
     # previously carried defects ONLY per program while the web contract had
     # pinned a root key it never emitted — closed here.
     root_defects = [d for prog in programs for d in prog["parse_defects"]]
+    merges_rows, merges_age_s = _read_merges(config, registry_rows, cache, pool)
     return {"schema_version": 3,
             "server": {"uptime_s": int(config.uptime_s_provider()),
                        "generated_ts": int(now),
@@ -83,7 +104,8 @@ def _collect(config: TowerConfig) -> dict:
             "verify_queue": verify_queue,
             "human_actions": human_actions,
             "needs_me": needs_me,
-            "merges": _read_merges(config, registry_rows),
+            "merges": merges_rows,
+            "merges_age_s": merges_age_s,
             "sessions_unmapped": sessions_unmapped,
             "sessions_orphaned": sessions_orphaned,
             "parse_defects": root_defects,
@@ -417,58 +439,87 @@ def _read_goals(config: TowerConfig, log: "DegradedLog", lane_records: list) -> 
 
 
 def _read_signals(config: TowerConfig, log: "DegradedLog", lane_records: list,
-                  now: float) -> None:
+                  now: float, cache=None, pool=None) -> None:
     """§4.4 network signals, wired into lanes in place. Per lane with a
     configured repo: pushed (branch None -> null, no entry; lookup failure ->
     null + entry 5) and the MR (artifacts ref first, else by-branch; lookup
     failure -> null + entry 6). Entries are added per lane but deduped to once
     per repo per collect by DegradedLog (identical text, keep first).
     Unconfigured-repo lanes keep the lane_shell signal nulls — a config gap is
-    absence, not failure. (mr, mr_failed) is appended to the internal lane
+    absence, not failure, so no entry. (mr, mr_failed) is appended to the internal lane
     record for T-6's human_actions. A repo whose configured path is missing
     needs no special-casing here: the spawn fails inside _run_cmd (nonexistent
-    cwd) and degrades through these same entries."""
-    for i, rec in enumerate(lane_records):
-        repo_idx = rec[4]
-        if repo_idx is None:
-            continue
-        repo = config.repos[repo_idx]
+    cwd) and degrades through these same entries.
+
+    wc1: when a pool is handed in (warm cycles), the per-lane probes run on
+    it — every spawn still routes through the SAME NetCache/ServingCache
+    seam (single-flight per key preserved), and results are consumed in
+    lane_records order with degraded lines emitted from THIS thread, so the
+    document stays byte-identical to a serial run. In serve mode the cache
+    facade answers from cache (fresh/stale/pending) without spawning."""
+    if cache is None:
+        cache = config.network_cache
+    items = [i for i, rec in enumerate(lane_records) if rec[4] is not None]
+
+    def probe(i: int):
+        rec = lane_records[i]
+        repo = config.repos[rec[4]]
         pushed, p_degraded = signals.pushed_signal(
-            config.network_cache, config.network, repo, rec[5], config.now_s, now)
-        if p_degraded:
-            log.add((3, repo_idx, 0, ""), f"network degraded: git {repo.name}")
-        rec[1]["signals"]["pushed"] = pushed
+            cache, config.network, repo, rec[5], config.now_s, now)
         mr, mr_failed = signals.resolve_mr(
-            config.network_cache, config.network, repo, rec[5], rec[7], rec[8],
+            cache, config.network, repo, rec[5], rec[7], rec[8],
             config.now_s, now)
+        return (pushed, p_degraded, mr, mr_failed)
+
+    if pool is not None and len(items) > 1:
+        results = list(pool.map(probe, items))  # input order preserved
+    else:
+        results = [probe(i) for i in items]
+    for idx, (pushed, p_degraded, mr, mr_failed) in zip(items, results):
+        rec = lane_records[idx]
+        repo = config.repos[rec[4]]
+        if p_degraded:
+            log.add((3, rec[4], 0, ""), f"network degraded: git {repo.name}")
+        rec[1]["signals"]["pushed"] = pushed
         if mr_failed:
-            log.add((3, repo_idx, 1, ""), f"network degraded: mr {repo.name}")
+            log.add((3, rec[4], 1, ""), f"network degraded: mr {repo.name}")
         rec[1]["signals"]["mr"] = mr
-        lane_records[i] = rec + (mr, mr_failed)  # T-6 consumes (mr, mr_failed)
+        lane_records[idx] = rec + (mr, mr_failed)  # T-6 consumes (mr, mr_failed)
 
 
-def _read_merges(config: TowerConfig, registry_rows: list) -> list:
+def _read_merges(config: TowerConfig, registry_rows: list,
+                 cache=None, pool=None) -> tuple[list[dict], int]:
     """W4-L4 MR/PR registry: the per-repo gh/glab list scan over the union
     repo set, joined to live rows (with the forge-manifest fallback), through
     NetCache at the 300 s registry TTL. A module-level seam like
     ``_read_signals`` — corpus-style tests neutralize it for hermeticity.
     Registry scan failures degrade silently inside merges (the document's
-    degraded vocabulary belongs to the lane-signal entries)."""
-    return merges.collect_registry(config, registry_rows)
+    degraded vocabulary belongs to the lane-signal entries). wc1: returns
+    (rows, merges_age_s) and takes the shared cache/pool seams."""
+    return merges.collect_registry(config, registry_rows, cache=cache, pool=pool)
 
 
 def _derive(config: TowerConfig, programs: list, log: "DegradedLog",
-            lane_records: list, session_epochs: dict, now: float) -> tuple[list[dict], list[dict], list[dict]]:
+            lane_records: list, session_epochs: dict, now: float,
+            cache=None, pool=None) -> tuple[list[dict], list[dict], list[dict]]:
     """§6 + contract v2 derivations, wired into lanes in place; returns
     (verify_queue, human_actions, needs_me). Views are built in lane_records
     order — program-config order then note order, the document order of all
     three row lists. The precondition by-ref lookups and their entry-11
     emissions run HERE (collect owns the cache and the log; ``derive`` stays
     pure) and only for lanes that produce a merge row with non-empty
-    precondition_mrs."""
+    precondition_mrs. wc1: the precondition lookups run on the shared pool
+    when one is handed in (warm cycles), gathered in (lane, ref) document
+    order — entry-11 lines emit from THIS thread either way."""
+    if cache is None:
+        cache = config.network_cache
     verify_views: list[dict] = []
     action_views: list[dict] = []
     stalled_views: list[dict] = []
+    # wc1: precondition lookups collected during the walk, resolved after it
+    # (pool-parallel on warm cycles, serial otherwise), entry-11 lines emitted
+    # in (lane, ref) document order from THIS thread.
+    precond_tasks: list[tuple[int, str, str]] = []  # (action_view idx, ref, repo name idx)
     for rec in lane_records:
         pidx, lane, token = rec[0], rec[1], rec[2]
         repo_idx = rec[4]
@@ -508,27 +559,40 @@ def _derive(config: TowerConfig, programs: list, log: "DegradedLog",
             "verify_id": session_id if session is not None else (token or "")})
         if repo_idx is None or mr is None or mr_failed or mr["state"] != "open":
             continue  # no merge row can come of this lane — no lookups either
-        repo = config.repos[repo_idx]
         preconds = (manifest or {}).get("precondition_mrs") or []
-        results: dict[str, str | None] = {}
         for ref in preconds:
+            precond_tasks.append((len(action_views), ref, repo_idx))
+        action_views.append({"row_id": lane["row_id"],
+                             "program": config.programs[pidx].program,
+                             "repo_idx": repo_idx,
+                             "repo": config.repos[repo_idx].name,
+                             "repo_host": config.repos[repo_idx].host,
+                             "branch": rec[5],
+                             "mr": mr, "mr_failed": mr_failed,
+                             "manifest": manifest,
+                             "precondition_results": {}})
+
+    if precond_tasks:
+        def run_precond(task):
+            _av_idx, ref, repo_idx = task
+            repo = config.repos[repo_idx]
             pre_mr, pre_failed = signals.lookup_mr_by_ref(
-                config.network_cache, config.network, repo, ref,
-                config.now_s, now)
+                cache, config.network, repo, ref, config.now_s, now)
+            return (ref, repo_idx, pre_mr, pre_failed)
+
+        if pool is not None and len(precond_tasks) > 1:
+            pre_results = list(pool.map(run_precond, precond_tasks))
+        else:
+            pre_results = [run_precond(t) for t in precond_tasks]
+        for (av_idx, _ref, _ridx), (r_ref, repo_idx, pre_mr, pre_failed) in zip(precond_tasks, pre_results):
             if pre_failed or pre_mr is None:
                 # Unknown != met, never guessed (§4.4/§6.4): the row stays with
                 # ready=False and one entry-11 per failed/unknown ref.
-                results[ref] = None
-                log.add((3, repo_idx, 2, ref), f"precondition state unknown: {ref}")
+                action_views[av_idx]["precondition_results"][r_ref] = None
+                log.add((3, repo_idx, 2, r_ref),
+                        f"precondition state unknown: {r_ref}")
             else:
-                results[ref] = pre_mr["state"]
-        action_views.append({"row_id": lane["row_id"],
-                             "program": config.programs[pidx].program,
-                             "repo_idx": repo_idx, "repo": repo.name,
-                             "repo_host": repo.host, "branch": rec[5],
-                             "mr": mr, "mr_failed": mr_failed,
-                             "manifest": manifest,
-                             "precondition_results": results})
+                action_views[av_idx]["precondition_results"][r_ref] = pre_mr["state"]
     verify_queue = derive.verify_queue_rows(verify_views, grace_s=config.verify_grace_s)
     return (verify_queue,
             derive.human_action_rows(action_views),

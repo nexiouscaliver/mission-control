@@ -37,6 +37,18 @@ list with program/row_id/session null — honest, never hidden.
 A repo whose probe or list call fails degrades SILENTLY (absent this cycle):
 the registry has no lane to name in the degraded vocabulary, and NetCache
 backoff still throttles retries. Memory-only: this module writes nothing.
+
+wc1 (collect-cost, 2026-10-07): the per-repo scans run on the shared bounded
+spawn pool (``netcache.shared_spawn_pool()``, workers = min(8, cpus)) when a
+pool is passed — the serialized 5-repo scan was half the cold-collect spawn
+chain. ``collect_registry`` returns ``(rows, merges_age_s)`` where the age is
+the seconds since the OLDEST contributing per-repo observation — the honest
+staleness marker when a serve-mode cycle hands back last-good registry rows
+past their TTL (0 for an empty registry). Row order stays deterministic: the
+final sort is unchanged, and per-repo results are gathered in repo-set order
+regardless of scan completion order. The ``cache`` seam takes either fetch
+semantics (blocking NetCache for warm collects, ServingCache for serve-mode
+cycles — identical argv/keys/TTLs).
 """
 
 import json
@@ -222,13 +234,21 @@ def _manifest_branch_map(forge_root: str | None) -> dict[str, tuple[str, str]]:
     return out
 
 
-def collect_registry(config: TowerConfig, lane_rows) -> list[dict]:
+def collect_registry(config: TowerConfig, lane_rows, cache=None,
+                     pool=None) -> tuple[list[dict], int]:
     """The registry for one collect cycle. ``lane_rows`` carries the LIVE
     program-note rows as (program_name, row_id, branch|None, sess_token|None,
     expanded_repo_path|None) in document order — collect owns the note parse
-    and ~-expansion. Returns the contract ``merges`` array, newest
-    updated_at first (ties: number desc, then repo/host for cross-repo
-    determinism)."""
+    and ~-expansion. Returns ``(rows, merges_age_s)``: the contract ``merges``
+    array, newest updated_at first (ties: number desc, then repo/host for
+    cross-repo determinism), and the seconds since the OLDEST contributing
+    per-repo cache observation (wc1's staleness marker; 0 when empty).
+    ``cache`` defaults to ``config.network_cache`` (blocking fetch — warm
+    collects); the serve-mode collect passes a ServingCache. ``pool`` (the
+    shared bounded spawn pool) parallelizes the per-repo scans; None scans
+    serially (single-repo worlds, direct test calls)."""
+    if cache is None:
+        cache = config.network_cache
     # Join maps: live rows first (document order, first wins), manifests only
     # fill branches no live row claims (decision (c)).
     live: dict[str, tuple[str, str | None, str | None]] = {}
@@ -255,37 +275,51 @@ def collect_registry(config: TowerConfig, lane_rows) -> list[dict]:
             return (m[0], m[1], None)  # never guess a session from manifests
         return (None, None, None)
 
-    out: list[dict] = []
-    for path, config_name in repo_paths.items():
-        if not os.path.isdir(path):
-            continue  # a vanished checkout is absence, not failure
-        host, slug = _probe_remote(config.network_cache, config, path,
-                                   config.now_s)
+    scan_paths = [path for path in repo_paths if os.path.isdir(path)]
+    # a vanished checkout is absence, not failure — filtered before scanning
+
+    def scan(path: str) -> tuple[list[dict], float | None]:
+        config_name = repo_paths[path]
+        host, slug = _probe_remote(cache, config, path, config.now_s)
         if host is None or slug is None:
-            continue
+            return ([], None)
         # Display name: the config name when the path is a configured repo,
         # else the slug's tail (the repo's own name on the forge — worktree
         # checkouts like cleo-a3-bp read as "cleo"), else the dir basename.
         name = (config_name or slug.rsplit("/", 1)[-1]
                 or os.path.basename(path.rstrip("/")) or path)
-        res = config.network_cache.fetch(
+        res = cache.fetch(
             (MR_LIST, path, host), _list_argv(host, slug), path,
             config.now_s, MERGES_TTL_S,
             config.network.backoff_base_s, config.network.backoff_max_s)
         if not res.ok:
-            continue  # silent this cycle (module docstring: no lane to name)
+            return ([], None)  # silent this cycle (module docstring: no lane to name)
         try:
             items = json.loads(res.stdout)
         except ValueError:
-            continue
+            return ([], None)
         if not isinstance(items, list):
-            continue
+            return ([], None)
+        rows: list[dict] = []
         for obj in items:
             adapted = _adapt(obj, host)
             if adapted is None:
                 continue
             entry = _entry(adapted, host, name, join)
             if entry is not None:
-                out.append(entry)
+                rows.append(entry)
+        return (rows, res.observed_at_s)
+
+    if pool is not None and len(scan_paths) > 1:
+        scans = list(pool.map(scan, scan_paths))  # input order preserved
+    else:
+        scans = [scan(p) for p in scan_paths]
+    out: list[dict] = []
+    observed: list[float] = []
+    for rows, obs in scans:
+        out.extend(rows)
+        if obs is not None:
+            observed.append(obs)
     out.sort(key=lambda e: (-e["updated_at"], -e["number"], e["repo"], e["host"]))
-    return out
+    age_s = int(config.now_s() - min(observed)) if observed else 0
+    return (out, max(0, age_s))

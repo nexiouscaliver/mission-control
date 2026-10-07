@@ -180,7 +180,7 @@ def test_wd1_boot_self_check_overrun_fatals_exit_5(monkeypatch, tmp_path):
     import mc_wall.tower as tower_mod
     from tests.server.mcwalls_harness import make_web_dir
 
-    def wedged_collect(_config):
+    def wedged_collect(_config, serve=False):  # wc1: collect_state grew a serve kwarg
         time.sleep(30)
 
     monkeypatch.setattr(tower_mod, "collect_state", wedged_collect)

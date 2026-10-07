@@ -41,6 +41,7 @@ def test_mcwallt_api_signature_and_defaults(tmp_path):
     assert list(state["server"].keys()) == ["uptime_s", "generated_ts", "degraded", "banner"]
     assert list(state.keys()) == ["schema_version", "server", "programs", "verify_queue",
                                   "human_actions", "needs_me", "merges",
+                                  "merges_age_s",  # wc1: the registry's cache age
                                   "sessions_unmapped", "sessions_orphaned",
                                   "parse_defects", "launch_pending"]
 
@@ -103,7 +104,7 @@ def test_mcwallt_failopen_notes_missing(tmp_path, monkeypatch):
     from mc_wall.tower import collect as collect_module
     monkeypatch.setattr(collect_module, "_read_signals", lambda *args: None)
     # W4-L4: same hermeticity rule for the registry collector (mr1- covers it).
-    monkeypatch.setattr(collect_module, "_read_merges", lambda *args: [])
+    monkeypatch.setattr(collect_module, "_read_merges", lambda *args: ([], 0))
     db_path = mcwallt_make_session_db(tmp_path)
 
     # 0 glob matches: program row zeroed per §4.2 + entry 3 exactly.
@@ -463,7 +464,8 @@ def test_mcwallt_e2e_full_fixture_world(tmp_path, monkeypatch):
     created = datetime.fromisoformat("2026-09-19T09:00:00+00:00").timestamp()
     assert l1["signals"]["mr"] == {"ref": "!5", "repo_host": "gitlab", "state": "open",
                                    "title": "mcwallt MR five", "pipeline": "green",
-                                   "age_s": int(MCWALLT_WORLD_NOW - created)}
+                                   "age_s": int(MCWALLT_WORLD_NOW - created),
+                                   "fetched_age_s": 0}  # wc1: fresh fetch -> 0
     assert l1["suggest_verify"] == {"because": ["status=done", "finished_ago_s=400"]}
     assert l1["stalled"] is None
 

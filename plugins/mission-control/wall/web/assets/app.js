@@ -434,11 +434,14 @@
           );
         }
       }
-      // T6: LIVE panels blank differently — waiting for the first state (or a
-      // missing token); QA keeps the mock/no-data wordings.
+      // T6: LIVE panels blank differently — connecting for the first state
+      // (or a missing token); QA keeps the mock/no-data wordings. wc1
+      // (operator overlay 2026-10-07): a page with ZERO successful polls
+      // says "connecting — no state from the server yet" — never "no data"
+      // (nothing was fetched and rejected; nothing has ARRIVED yet).
       var blankNote = "no data";
       if (live === null) blankNote = stateDoc === null ? "waiting for mock" : "no data";
-      else blankNote = live.token === null ? "no token" : "waiting for first state";
+      else blankNote = live.token === null ? "no token" : "connecting — no state from the server yet";
       // Round 5 (user report): the poll rebuilds col3 every cadence tick
       // (ages change → churn guard swaps the nodes), which threw away the
       // operator's reading state — the unmapped list snapped back to its top
@@ -486,11 +489,11 @@
       // LIVE wall is ACTUALLY booting (no valid doc yet) the SECOND subpanel's
       // chrome collapses via CSS so the operator sees one waiting box per
       // column, not a double render. The blankNote wording alone is NOT the
-      // trigger — in LIVE it reads "waiting for first state" on every render,
+      // trigger — in LIVE it reads the connecting wording on every render,
       // valid docs included (browser finding, minimal-case shot).
       var col2 = byId("col2");
       if (col2) {
-        if (!valid && blankNote === "waiting for first state") col2.classList.add("waiting");
+        if (!valid && blankNote === "connecting — no state from the server yet") col2.classList.add("waiting");
         else col2.classList.remove("waiting");
       }
       // Round 4b — the grid is ADAPTIVE: a column with no rows leaves the
@@ -2305,12 +2308,17 @@
         // who has read the tooltip (audit: "state 0s" reads as a bug without it).
         cap.setAttribute("title", "age of the last state document received from the wall server");
         // T6: while LIVE failures stack up, the shown state IS the last-good —
-        // label it with the age of the last successful poll (SPEC 4.3).
+        // label it with the age of the last successful poll (SPEC 4.3). wc1
+        // (operator overlay 2026-10-07): the label also carries the
+        // caption--stale badge class while it is a LAST-GOOD reading — the
+        // kept views wear a visible stale marker, not a quiet caption.
         if (live !== null && live.failures > 0 && live.lastGoodAtMs !== null) {
+          cap.classList.add("caption--stale");
           cap.setText(
             "last-good " + MCW.util.humanizeAge(Math.floor((deps.now() - live.lastGoodAtMs) / 1000))
           );
         } else {
+          cap.classList.remove("caption--stale");
           var ts = 0;
           if (valid) {
             var serverObj = nullable(stateDoc.server);
