@@ -108,11 +108,14 @@ def test_mr1_collect_emits_schema3_merges_key(tmp_path, monkeypatch):
     state = collect_state(cfg)
     assert state["schema_version"] == 3
     assert state["merges"] == []
+    assert state["merges_age_s"] == 0  # wc1: empty registry -> age 0
     # W5-L5 second-pass re-pin (2026-10-07): the wall-honesty root keys
     # sessions_orphaned + parse_defects join the v3 key-set after the merge.
+    # wc1 (2026-10-07): merges_age_s (the registry's cache age) rides after
+    # merges — additive at schema 3.
     assert list(state.keys()) == ["schema_version", "server", "programs",
                                   "verify_queue", "human_actions", "needs_me",
-                                  "merges", "sessions_unmapped",
+                                  "merges", "merges_age_s", "sessions_unmapped",
                                   "sessions_orphaned", "parse_defects",
                                   "launch_pending"]
     assert calls["n"] == 0, "an empty repo set must spawn nothing"

@@ -45,6 +45,7 @@ CONTRACT_EXAMPLE = json.loads(r'''{"schema_version":3,"server":{"uptime_s":0,"ge
  "merges":[{"host":"","repo":"","number":0,"title":"","branch":"","program":null,"row_id":null,
    "session":null,"state":"","conflicts":null,"draft":false,"created_at":0,"updated_at":0,
    "merged_at":null,"url":"","author":""}],
+ "merges_age_s":0,
  "sessions_unmapped":[{"id":"","title":"","dir":"","last_active_ago_s":0,"parent_session_id":null,"parent_title":null}],
  "sessions_orphaned":[{"id":"","title":"","tag":"","last_active_ago_s":0}],
  "parse_defects":[{"note_path":"","line":0,"defect":"","row_id":null}],
@@ -70,6 +71,10 @@ SHAPES = {
         "human_actions": ["human_action_row"],
         "needs_me": ["needs_me_row"],
         "merges": ["merge_row"],
+        # wc1 (collect-cost, additive at schema 3): the registry array's
+        # honest cache age — seconds since the OLDEST contributing
+        # per-repo observation (0 when the registry is empty this cycle).
+        "merges_age_s": INT,
         "sessions_unmapped": ["unmapped_row"],
         # contract v3 (wall-honesty): conservation + root defect aggregation
         "sessions_orphaned": ["orphaned_row"],
@@ -79,7 +84,11 @@ SHAPES = {
     "server": {"uptime_s": INT, "generated_ts": INT, "degraded": [STR], "banner": NULSTR},
     "master": {"session_id": NULSTR, "title": NULSTR, "last_active_ago_s": "int|None"},
     "pushed": {"value": bool, "age_s": INT},
-    "mr": {"ref": STR, "repo_host": STR, "state": STR, "title": STR, "pipeline": STR, "age_s": INT},
+    # wc1: fetched_age_s = the age of the CACHE OBSERVATION the mr was read
+    # from (distinct from age_s, the MR's own age) — the staleness marker
+    # when a last-good entry serves past its TTL.
+    "mr": {"ref": STR, "repo_host": STR, "state": STR, "title": STR, "pipeline": STR, "age_s": INT,
+           "fetched_age_s": INT},
     "manifest": {"path": STR, "prompt_md": STR, "goal_md": STR, "precondition_mrs": [STR],
                  "stall_t_hours": "int|float"},
     "session": {"id": STR, "title": NULSTR, "dir": NULSTR, "title_pending": bool,
@@ -222,6 +231,7 @@ def zero_document(program_names: list[str], uptime_s: int, generated_ts: int,
         "human_actions": [],
         "needs_me": [],
         "merges": [],
+        "merges_age_s": 0,
         "sessions_unmapped": [],
         "sessions_orphaned": [],
         "parse_defects": [],

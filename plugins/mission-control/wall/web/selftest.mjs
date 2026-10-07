@@ -2960,7 +2960,7 @@ test("AC-4: LIVE bootstrap — token parse, /tok1/state + cache:no-store, 5s cad
   assert.equal(deep.fetchFn.calls[0].url, "/tok9/state");
 });
 
-test("AC-5: 3-strike debounce with last-good — stale at 1, no banner until 3, age label, success clears", async () => {
+test("AC-5: 3-strike debounce with last-good — stale at 1, no banner until 3, age label + stale badge, success clears", async () => {
   const w = makeLiveWall([
     okState(liveDoc()),
     { reject: "network" },
@@ -2971,21 +2971,27 @@ test("AC-5: 3-strike debounce with last-good — stale at 1, no banner until 3, 
   await flushMicrotasks();
   const dot = w.dom.getElementById("live-dot");
   const strip = w.dom.getElementById("banner-strip");
+  const caption = w.dom.getElementById("state-age-caption");
   assert.ok(dot.classList.contains("live"), "live after the first success");
-  assert.equal(collectText(w.dom.getElementById("col1-programs")).indexOf("waiting for first state"), -1, "panels rendered");
+  assert.equal(collectText(w.dom.getElementById("col1-programs")).indexOf("connecting — no state from the server yet"), -1, "panels rendered");
+  assert.ok(!caption.classList.contains("caption--stale"), "no stale badge while live");
   assert.equal(w.app.diagnostics().failures, 0);
   // 1st failure: stale dot, NO banner, panels keep last-good labeled with age
+  // AND the visible stale badge (wc1 operator overlay: kept views wear their
+  // staleness — never a quiet caption, never a blank)
   w.clock.advance(5000);
   await flushMicrotasks();
   assert.ok(dot.classList.contains("stale"), "stale after one failure");
   assert.equal(byClass(strip, "banner-line").length, 0, "no banner at 1 failure");
-  assert.equal(collectText(w.dom.getElementById("state-age-caption")), "last-good 5s", "last-good age label");
+  assert.equal(collectText(caption), "last-good 5s", "last-good age label");
+  assert.ok(caption.classList.contains("caption--stale"), "stale badge on the last-good caption");
   assert.ok(collectText(w.dom.getElementById("col1-programs")).indexOf("no programs") !== -1, "last-good panels kept");
   // 2nd failure: still no banner, cadence continues across failures
   w.clock.advance(5000);
   await flushMicrotasks();
   assert.equal(byClass(strip, "banner-line").length, 0, "no banner at 2 failures");
   assert.equal(w.fetchFn.calls.length, 3, "poll cadence continues across failures");
+  assert.ok(caption.classList.contains("caption--stale"), "stale badge holds across failures");
   // 3rd consecutive failure: banner WITH the last-good age, dismissable
   w.clock.advance(5000);
   await flushMicrotasks();
@@ -2998,23 +3004,29 @@ test("AC-5: 3-strike debounce with last-good — stale at 1, no banner until 3, 
   );
   assert.equal(byClass(lines[0], "banner-dismiss").length, 1, "dismissable");
   assert.ok(!w.dom.body.classList.contains("frozen"), "failure banner is NOT a freeze");
-  // next success clears counter + banner immediately
+  // next success clears counter + banner immediately — and the stale badge
   w.clock.advance(5000);
   await flushMicrotasks();
   assert.equal(byClass(strip, "banner--degraded").length, 0, "success clears the banner");
   assert.equal(w.app.diagnostics().failures, 0, "counter reset");
   assert.ok(dot.classList.contains("live"), "dot live again");
+  assert.ok(!caption.classList.contains("caption--stale"), "stale badge cleared on success");
 });
 
-test("AC-5 no-last-good: failing from boot — waiting notes, stale from FIRST failure, banner without age", async () => {
+test("AC-5 no-last-good: failing from boot — connecting notes (never 'no data'), stale from FIRST failure, banner without age", async () => {
   const w = makeLiveWall([{ reject: "network" }, { reject: "network" }, { reject: "network" }, okState(liveDoc())]);
   await flushMicrotasks();
   assert.ok(w.dom.getElementById("live-dot").classList.contains("stale"), "stale from the FIRST failed poll");
+  // wc1 operator overlay (2026-10-07): a page with ZERO successful polls
+  // says CONNECTING — no state has arrived from the server yet — never the
+  // QA "no data" wording (nothing was rejected; nothing arrived).
   for (const id of ["col1-programs", "panel-verify", "panel-human", "col3-sessions"]) {
+    const text = collectText(w.dom.getElementById(id));
     assert.ok(
-      collectText(w.dom.getElementById(id)).indexOf("waiting for first state") !== -1,
-      id + " carries the waiting note before any success"
+      text.indexOf("connecting — no state from the server yet") !== -1,
+      id + " carries the connecting note before any success"
     );
+    assert.equal(text.indexOf("no data"), -1, id + " must not read 'no data' before any poll success");
   }
   w.clock.advance(5000);
   await flushMicrotasks();
@@ -3027,11 +3039,11 @@ test("AC-5 no-last-good: failing from boot — waiting notes, stale from FIRST f
     "wall server unreachable",
     "no age segment without a last-good"
   );
-  // next success clears the banner and the waiting notes
+  // next success clears the banner and the connecting notes
   w.clock.advance(5000);
   await flushMicrotasks();
   assert.equal(byClass(w.dom.getElementById("banner-strip"), "banner--degraded").length, 0);
-  assert.equal(collectText(w.dom.getElementById("col1-programs")).indexOf("waiting for first state"), -1, "panels render");
+  assert.equal(collectText(w.dom.getElementById("col1-programs")).indexOf("connecting — no state from the server yet"), -1, "panels render");
   assert.ok(w.dom.getElementById("live-dot").classList.contains("live"));
 });
 

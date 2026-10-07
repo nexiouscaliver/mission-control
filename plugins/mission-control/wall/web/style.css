@@ -104,6 +104,18 @@ body {
   color: var(--dim);
 }
 
+/* wc1 (operator overlay 2026-10-07): while LIVE failures stack up the shown
+ * state IS the last-good — the caption turns into a visible amber badge so
+ * the kept views wear their staleness instead of a quiet gray label.
+ * --amber = the watch-state token (SPEC token map). */
+#state-age-caption.caption--stale {
+  color: var(--amber);
+  border: 1px solid var(--amber);
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-weight: 600;
+}
+
 /* button system (signal-panel SPEC 3.4): primary = solid --ink bg with --bg
  * text (NEEDS ME NOW owed, COPY VERIFY, armed RE-COPY); ghost = 1px --border-2
  * outline; idle/disabled read at ~55% opacity — still focusable either way */

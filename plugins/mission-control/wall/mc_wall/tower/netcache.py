@@ -44,12 +44,59 @@ spawn shared by concurrent callers), per-key failure backoff base 30 s doubling
 to the 600 s cap with success reset; failures are recorded for backoff but
 never served as values. All timings come from the injected ``now_s``.
 Memory-only: the tower writes nothing to disk, ever.
+
+wc1 (collect-cost, 2026-10-07): two fetch semantics over one cache.
+``fetch`` keeps the blocking contract above (warm collects — the boot
+self-check and the CLI). ``fetch_cached`` is the CACHE-FIRST serving path:
+a fresh entry serves as-is; an EXPIRED entry serves immediately as the
+last good value (``stale=True`` — the caller carries its age; a stale
+last-good is never served as fresh, and the age tells the truth); a key
+with NO entry yet returns failure-shaped with ``pending=True`` (the caller
+renders the same nulls as a failure, MINUS the degraded entry — "not yet
+observed, refresh in flight" is not a failure) while a bounded background
+refresh runs; a key inside its failure backoff window keeps serving stale
+and throttles refresh retries exactly like ``fetch``. Background refreshes
+run on the process-wide ``shared_spawn_pool()`` — the SAME bounded pool
+the warm collect's per-lane/per-repo probes use — so concurrent spawn
+work is machine-sane (``spawn_workers()`` = min(8, cpus)) no matter how
+many keys expire at once. Single-flight is preserved: ``_refreshing``
+(one entry per key, guarded by the table lock) makes every spawn path —
+blocking fetch, pool item, background refresh — share one in-flight spawn
+per key, and NetCache stays the ONLY module that spawns.
 """
 
+import os
 import subprocess
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Callable
+
+
+def spawn_workers() -> int:
+    """The machine-sane bound on CONCURRENT spawn work: min(8, cpus). One
+    number for every pool consumer (warm-collect probes, background cache
+    refreshes) so the whole process never exceeds it."""
+    return min(8, os.cpu_count() or 1)
+
+
+_SHARED_POOL: ThreadPoolExecutor | None = None
+_SHARED_POOL_LOCK = threading.Lock()
+
+
+def shared_spawn_pool() -> ThreadPoolExecutor:
+    """Process-wide bounded executor for ALL spawn work. Created lazily on
+    first use (a process that never spawns — most of the test suite — never
+    pays for worker threads); never shut down (the server process owns its
+    lifetime; short-lived callers just submit and gather)."""
+    global _SHARED_POOL
+    if _SHARED_POOL is None:
+        with _SHARED_POOL_LOCK:
+            if _SHARED_POOL is None:
+                _SHARED_POOL = ThreadPoolExecutor(
+                    max_workers=spawn_workers(),
+                    thread_name_prefix="mc-wall-spawn")
+    return _SHARED_POOL
 
 
 def _run_cmd(argv: list[str], cwd: str, timeout_s: float = 10.0) -> tuple[int | None, str, str]:
@@ -74,6 +121,8 @@ class FetchResult:
     ok: bool
     stdout: str
     observed_at_s: float
+    stale: bool = False    # cache-first: a LAST GOOD entry served past its TTL (age is the honest marker)
+    pending: bool = False  # cache-first: no entry yet; a refresh is in flight (absence, not failure)
 
 
 class NetCache:
@@ -89,12 +138,14 @@ class NetCache:
         self._locks = {}                 # key -> threading.Lock
         self._fails = {}                 # key -> consecutive-failure count
         self._last_fail = {}             # key -> failure timestamp
+        self._refreshing = set()         # key -> a spawn is in flight (blocking OR background)
         self._table_lock = threading.Lock()
 
     def fetch(self, key: tuple[str, str, str], argv: list[str], cwd: str,
               now_s: Callable[[], float], ttl_s: int, backoff_base_s: float,
               backoff_max_s: float) -> FetchResult:
-        """Fetch through the cache for one normalized key.
+        """Fetch through the cache for one normalized key (BLOCKING — the
+        warm-collect path; ``fetch_cached`` is the never-blocking serve path).
 
         Fresh entry (age <= ttl_s, so still fresh at EXACTLY ttl) is served
         as-is. Otherwise, when the key is inside its failure backoff window
@@ -119,19 +170,131 @@ class NetCache:
                 wait = min(backoff_base_s * 2 ** (n - 1), backoff_max_s)
                 if now - last < wait:
                     return FetchResult(False, "", now)  # short-circuit: NO spawn
+            with self._table_lock:
+                self._refreshing.add(key)  # wc1: visible to fetch_cached kicks
             try:
-                rc, out, _err = _run_cmd(argv, cwd)
-            except Exception:
-                # A raising _run_cmd (monkeypatched in tests, or a broken
-                # helper) degrades THIS key per plan F1 — the AC-FAIL-9
-                # mechanism: never a raise, never a zeroed document.
-                rc, out, _err = None, "", ""
-            t = now_s()
-            if rc == 0:
-                self._entries[key] = (out, t)
-                self._fails[key] = 0
-                self._last_fail[key] = None
-                return FetchResult(True, out, t)
-            self._fails[key] = n + 1
-            self._last_fail[key] = t
-            return FetchResult(False, "", t)
+                try:
+                    rc, out, _err = _run_cmd(argv, cwd)
+                except Exception:
+                    # A raising _run_cmd (monkeypatched in tests, or a broken
+                    # helper) degrades THIS key per plan F1 — the AC-FAIL-9
+                    # mechanism: never a raise, never a zeroed document.
+                    rc, out, _err = None, "", ""
+                t = now_s()
+                if rc == 0:
+                    self._entries[key] = (out, t)
+                    self._fails[key] = 0
+                    self._last_fail[key] = None
+                    return FetchResult(True, out, t)
+                self._fails[key] = n + 1
+                self._last_fail[key] = t
+                return FetchResult(False, "", t)
+            finally:
+                with self._table_lock:
+                    self._refreshing.discard(key)
+
+    def fetch_cached(self, key: tuple[str, str, str], argv: list[str],
+                     cwd: str, now_s: Callable[[], float], ttl_s: int,
+                     backoff_base_s: float, backoff_max_s: float) -> FetchResult:
+        """Cache-first fetch (wc1): this caller NEVER waits on a spawn.
+
+        Fresh entry -> (ok, stdout, observed_at, stale=False), no spawn.
+        Expired entry -> the LAST GOOD value served IMMEDIATELY with
+        stale=True (never as fresh; the caller renders its age) while a
+        background refresh is kicked (single-flight via ``_refreshing``,
+        retry-throttled by the same failure backoff as ``fetch``).
+        No entry -> failure-shaped with pending=True (a refresh is kicked
+        unless one is in flight or backoff throttles it) — the caller
+        renders nulls WITHOUT a degraded entry: "not yet observed" is
+        absence, not failure. A no-entry key inside its failure backoff
+        window returns pending=False (recently TRIED and failed — the
+        degraded entry is honest there, exactly like ``fetch``).
+
+        The entries read is deliberately lock-free (dict get + an immutable
+        tuple): taking the per-key lock here would block on any in-flight
+        spawn for that key — the exact wait this method exists to remove —
+        and the worst race is serving the previous entry, a valid
+        observation either way.
+        """
+        now = now_s()
+        ent = self._entries.get(key)
+        if ent is not None:
+            if now - ent[1] <= ttl_s:
+                return FetchResult(True, ent[0], ent[1])
+            self._kick(key, argv, cwd, now_s, ttl_s, backoff_base_s,
+                       backoff_max_s, now)
+            return FetchResult(True, ent[0], ent[1], stale=True)
+        kicked = self._kick(key, argv, cwd, now_s, ttl_s, backoff_base_s,
+                            backoff_max_s, now)
+        return FetchResult(False, "", now, pending=kicked)
+
+    def _kick(self, key, argv, cwd, now_s, ttl_s, backoff_base_s,
+              backoff_max_s, now) -> bool:
+        """Start ONE background refresh for ``key`` on the shared bounded
+        pool if none is in flight and the failure backoff allows a retry.
+        Returns whether a refresh is now in flight or was just kicked."""
+        with self._table_lock:
+            if key in self._refreshing:
+                return True
+            n = self._fails.get(key, 0)
+            last = self._last_fail.get(key)
+            if n and last is not None:
+                wait = min(backoff_base_s * 2 ** (n - 1), backoff_max_s)
+                if now - last < wait:
+                    return False  # throttled: keep serving stale / nulls
+            self._refreshing.add(key)
+        try:
+            shared_spawn_pool().submit(
+                self._refresh_task, key, argv, cwd, now_s, ttl_s,
+                backoff_base_s, backoff_max_s)
+        except Exception:  # a shut-down pool (process teardown) — unmark, never raise
+            with self._table_lock:
+                self._refreshing.discard(key)
+            return False
+        return True
+
+    def _refresh_task(self, key, argv, cwd, now_s, ttl_s, backoff_base_s,
+                      backoff_max_s) -> None:
+        try:
+            # fetch re-checks freshness under the per-key lock first: a
+            # blocking fetch (warm path) or an earlier task may have
+            # refreshed this key while we sat in the pool queue.
+            self.fetch(key, argv, cwd, now_s, ttl_s, backoff_base_s,
+                       backoff_max_s)
+        finally:
+            with self._table_lock:
+                self._refreshing.discard(key)
+
+    def refreshes_in_flight(self) -> int:
+        """Diagnostic/test seam: how many background refreshes are live."""
+        with self._table_lock:
+            return len(self._refreshing)
+
+    def wait_refreshes(self, timeout_s: float = 10.0) -> bool:
+        """Block until no background refresh is in flight (bounded wait).
+        Test/diagnostic seam — the serving path never calls this."""
+        import time as _time
+        deadline = _time.monotonic() + timeout_s
+        while _time.monotonic() < deadline:
+            if self.refreshes_in_flight() == 0:
+                return True
+            _time.sleep(0.01)
+        return self.refreshes_in_flight() == 0
+
+
+class ServingCache:
+    """Cache-first facade (wc1): the serve-mode collect's drop-in for a
+    ``NetCache``. Same ``fetch`` signature, every call routed to
+    ``fetch_cached`` — a /state collect serves fresh/stale entries
+    immediately and kicks bounded background refreshes; it NEVER waits on a
+    subprocess spawn. The warm paths (boot self-check, CLI) keep calling the
+    NetCache directly (blocking semantics)."""
+
+    def __init__(self, inner: NetCache) -> None:
+        self._inner = inner
+
+    def fetch(self, key: tuple[str, str, str], argv: list[str], cwd: str,
+              now_s: Callable[[], float], ttl_s: int, backoff_base_s: float,
+              backoff_max_s: float) -> FetchResult:
+        return self._inner.fetch_cached(key, argv, cwd, now_s, ttl_s,
+                                        backoff_base_s, backoff_max_s)

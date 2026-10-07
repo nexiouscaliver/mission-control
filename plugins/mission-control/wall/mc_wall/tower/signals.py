@@ -10,6 +10,17 @@ else null with no lookup. ``pushed`` exposes exactly {"value","age_s"}, with
 age measured against the cache ENTRY's observation timestamp — there is NO
 local object-store derivation anywhere in this module (the ls-remote stdout
 carries only sha+ref, and the sha stays internal to the cache).
+
+wc1 (collect-cost): the cache seam takes EITHER fetch semantics. Through a
+plain ``NetCache`` (warm collects) ``cache.fetch`` blocks and spawns as
+before. Through ``netcache.ServingCache`` (serve-mode /state collects) the
+same call serves cache-first: a ``pending`` failure-shaped result (key never
+observed, refresh in flight) maps to NULLS WITHOUT a degraded entry —
+"not yet observed" is absence, not failure — while a true failure keeps the
+entry-5/entry-6 degraded vocabulary. ``mr`` objects carry ``fetched_age_s``
+(how old the CACHE OBSERVATION is — distinct from ``age_s``, the MR's own
+age): the honest staleness marker when a last-good entry is served past its
+TTL; ``pushed.age_s`` already carries exactly that meaning.
 """
 
 import json
@@ -112,7 +123,8 @@ def pushed_signal(cache, cfg_network: NetworkSettings, repo: RepoConfig,
                       cfg_network.ttl_s, cfg_network.backoff_base_s,
                       cfg_network.backoff_max_s)
     if not res.ok:
-        return (None, True)
+        # wc1: pending (never observed, refresh in flight) = absence, not failure.
+        return (None, not res.pending)
     want_ref = f"refs/heads/{branch}"
     value = any("\t" in line and line.split("\t")[1] == want_ref
                 for line in res.stdout.splitlines())
@@ -155,7 +167,7 @@ def lookup_mr_by_ref(cache, cfg_network: NetworkSettings, repo: RepoConfig,
                       cfg_network.ttl_s, cfg_network.backoff_base_s,
                       cfg_network.backoff_max_s)
     if not res.ok:
-        return (None, True)
+        return (None, not res.pending)
     try:
         obj = json.loads(res.stdout)
     except ValueError:
@@ -167,7 +179,9 @@ def lookup_mr_by_ref(cache, cfg_network: NetworkSettings, repo: RepoConfig,
         # NOT-FOUND-as-failure path, never a nonsense "!" ref and never a
         # skipped entry 6.
         return (None, True)
-    return (normalize_mr(adapted, repo.host, clock_now), False)
+    mr = normalize_mr(adapted, repo.host, clock_now)
+    mr["fetched_age_s"] = max(0, int(clock_now - res.observed_at_s))  # wc1: cache-age honesty
+    return (mr, False)
 
 
 def _mr_by_branch(cache, cfg_network: NetworkSettings, repo: RepoConfig,
@@ -184,7 +198,7 @@ def _mr_by_branch(cache, cfg_network: NetworkSettings, repo: RepoConfig,
                       cfg_network.ttl_s, cfg_network.backoff_base_s,
                       cfg_network.backoff_max_s)
     if not res.ok:
-        return (None, True)
+        return (None, not res.pending)
     try:
         items = json.loads(res.stdout)
     except ValueError:
@@ -208,4 +222,6 @@ def _mr_by_branch(cache, cfg_network: NetworkSettings, repo: RepoConfig,
         return (created if created is not None else float("-inf"),
                 n if n is not None else -1)
 
-    return (normalize_mr(max(candidates, key=rank), repo.host, clock_now), False)
+    mr = normalize_mr(max(candidates, key=rank), repo.host, clock_now)
+    mr["fetched_age_s"] = max(0, int(clock_now - res.observed_at_s))  # wc1: cache-age honesty
+    return (mr, False)

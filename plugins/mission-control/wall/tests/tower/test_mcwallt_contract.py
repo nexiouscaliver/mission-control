@@ -123,6 +123,7 @@ def test_mcwallt_contract_exact_keys_all_levels(tmp_path, monkeypatch):
 
     assert list(state.keys()) == ["schema_version", "server", "programs", "verify_queue",
                                   "human_actions", "needs_me", "merges",
+                                  "merges_age_s",  # wc1: the registry's cache age
                                   "sessions_unmapped", "sessions_orphaned",
                                   "parse_defects", "launch_pending"]
     assert list(state["server"].keys()) == ["uptime_s", "generated_ts", "degraded", "banner"]
@@ -143,7 +144,7 @@ def test_mcwallt_contract_exact_keys_all_levels(tmp_path, monkeypatch):
     assert list(lane["signals"].keys()) == ["pushed", "mr"]
     assert list(lane["signals"]["pushed"].keys()) == ["value", "age_s"]
     assert list(lane["signals"]["mr"].keys()) == ["ref", "repo_host", "state", "title",
-                                                  "pipeline", "age_s"]
+                                                  "pipeline", "age_s", "fetched_age_s"]  # wc1: cache-age marker
     assert list(lane["suggest_verify"].keys()) == ["because"]
     assert list(lane["verify_due"].keys()) == ["because"]
     assert lane["deps"] == [] and lane["verified"] is False

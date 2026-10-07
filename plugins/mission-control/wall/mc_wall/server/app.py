@@ -100,7 +100,10 @@ def _default_tower_config() -> typing.Any:
 def _default_collect_state() -> dict:
     from mc_wall.tower import collect_state  # LAZY — the only place mc_wall.tower is named in L2
 
-    return collect_state(_default_tower_config())
+    # wc1 (collect-cost): the SERVING path is cache-first — fresh/stale cache
+    # entries answer immediately and expired/missing keys refresh on the
+    # bounded background pool; a /state collect never waits on a spawn.
+    return collect_state(_default_tower_config(), serve=True)
 
 
 # ----------------------------------------------------------------- deadlines
@@ -117,11 +120,16 @@ def _default_collect_state() -> dict:
 STATE_DEADLINE_ENV = "MC_WALL_STATE_DEADLINE_S"
 BOOT_DEADLINE_ENV = "MC_WALL_BOOT_DEADLINE_S"
 MONITOR_ENV = "MC_WALL_MONITOR"
-DEFAULT_STATE_DEADLINE_S = 10.0
-# The boot self-check deadline sits ABOVE a healthy cold collect (~18 s
-# measured): slow-but-alive boots pass; only a wedged boot (collect that never
-# returns at any deadline) trips FATAL + exit 5 + launchd restart.
-DEFAULT_BOOT_DEADLINE_S = 60.0
+# wc1 recalibration (2026-10-07, measured): at 8 programs × 5 scanned repos
+# the cold warm-collect measured 80.24 s serialized (55 spawns, ~78 s of
+# spawn time) — over the old 60 s boot default, FATAL-looping until the
+# operator's run.sh raised it. The warm path now runs pool-parallel
+# (min(8, cpus) workers) and /state serves cache-first (a serve collect
+# measures ~30-500 ms — the 15 s state deadline is a generous backstop, not
+# the load-bearing bound), so the boot deadline covers a genuinely cold
+# warm pass with headroom: 180 s. Both knobs stay overridable as before.
+DEFAULT_STATE_DEADLINE_S = 15.0
+DEFAULT_BOOT_DEADLINE_S = 180.0
 
 _ENV_OFF = frozenset({"0", "off", "no", "false"})
 
@@ -1110,7 +1118,13 @@ def _boot_self_check(collect: typing.Callable[..., dict],
     (faulthandler, no privileges needed) and tell the caller to exit nonzero
     so launchd restarts instead of serving-hanged. A collect that FAILS
     (raises) is degraded-but-alive, the existing fail-open semantics — only
-    the unbounded wait is fatal."""
+    the unbounded wait is fatal.
+
+    wc1: the check runs the WARM collect (blocking spawns, pool-parallel) —
+    it doubles as the cache warm, so the first served poll answers from
+    cache. /state requests racing the check run their own cache-first
+    serves on the request gate (fast, cold-null + background refreshes);
+    they do NOT coalesce onto the warm run."""
     started = time.monotonic()
     try:
         collect(deadline_s=deadline_s)
@@ -1141,12 +1155,18 @@ def run_server(cfg: ServerConfig) -> int:
     state_dir = cfg.state_dir if cfg.state_dir is not None else wall_home / "state"
     logger = setup_logging(log_dir, cfg.token)
     collect_state_fn = None
+    warm_collect_fn = None
     if cfg.tower_config is not None:
         from mc_wall.tower import collect_state as _collect_state  # lazy (L2 discipline)
 
         _tower_cfg = cfg.tower_config
+        # wc1: the SERVING collect is cache-first (never waits on a spawn);
+        # the boot self-check's WARM collect is the one blocking, pool-
+        # parallel pass — it pre-populates the cache the first polls serve.
         collect_state_fn = lambda: _collect_state(  # noqa: E731
-            _resolve_tower_config(_tower_cfg))
+            _resolve_tower_config(_tower_cfg), serve=True)
+        warm_collect_fn = lambda: _collect_state(  # noqa: E731
+            _resolve_tower_config(_tower_cfg), serve=False)
     try:
         server = create_server(
             cfg.token,
@@ -1172,12 +1192,13 @@ def run_server(cfg: ServerConfig) -> int:
         return 3
     # wd1 boot self-check: only the PROD tower path (a config was injected —
     # hermetic run_server tests without tower_config keep their old shapes).
-    # The check doubles as cache warm: requests racing it coalesce onto the
-    # same in-flight collect through the gate.
+    # wc1: the check runs the WARM collect through its OWN gate (the request
+    # gate keeps serving cache-first meanwhile); it doubles as the cache warm.
     if cfg.tower_config is not None:
         boot_deadline = _env_seconds(BOOT_DEADLINE_ENV, DEFAULT_BOOT_DEADLINE_S,
                                      logger)
-        if not _boot_self_check(server.ctx.collect_state, logger, boot_deadline):
+        warm_gate = CollectGate(warm_collect_fn, boot_deadline)
+        if not _boot_self_check(warm_gate.collect, logger, boot_deadline):
             server.shutdown()
             server.server_close()
             return 5

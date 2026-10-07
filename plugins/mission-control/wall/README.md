@@ -278,29 +278,46 @@ server; on an older server restart it once after deregistering).
   and source-age badges; a stale last-good value is never silently served
   (successful values always carry the age of the actual source read).
 
-### Liveness knobs (wall-deadlock wd1, 2026-10-07)
+### Liveness knobs (wall-deadlock wd1, 2026-10-07; recalibrated wc1 same day)
 
 The 2026-10-07 incident class — "accepts TCP, never answers" — was the /state
 handler running the full tower collect synchronously: on cold caches that
 collect serializes dozens of subprocess spawns (measured ~17.5 s on an idle
-machine), the browser polls every 5 s, and under load the handler-thread
-pile-up meant no request ever completed. Every collect consumer now goes
-through a single-flight gate with a hard deadline.
+machine at 6 programs), the browser polls every 5 s, and under load the
+handler-thread pile-up meant no request ever completed. Every collect
+consumer goes through a single-flight gate with a hard deadline.
 
-- `MC_WALL_STATE_DEADLINE_S` (default `10`) — per-request deadline for every
-  route that reads state (`/state`, POST launch/re-copy/copy-goal/
+The same day, at 8 programs × 5 scanned repos (v1.12.0's migration having
+grown the scan set), the cold collect measured **80.24 s** — 55 spawns,
+~78 s of serialized spawn time — over the 60 s boot default (FATAL-looping
+until run.sh raised it) and intermittently over the 10 s state deadline on
+TTL-expiry polls. wc1 (v1.12.1) paid that debt three ways: the warm path
+**parallelizes** its per-lane/per-repo probes on one bounded spawn pool
+(`min(8, cpus)` workers; every spawn still single-flights through NetCache
+at its existing TTL); /state serves **cache-first** (fresh/stale entries
+answer immediately, expired/missing keys refresh on the bounded background
+pool — a serve collect measures ~30-500 ms and never waits on a spawn;
+stale-served data carries its honest age: `pushed.age_s`,
+`mr.fetched_age_s`, root `merges_age_s`); and the deadline defaults were
+recalibrated from the measurement.
+
+- `MC_WALL_STATE_DEADLINE_S` (default `15`, was `10`) — per-request deadline
+  for every route that reads state (`/state`, POST launch/re-copy/copy-goal/
   needs-me-now, and the handshake monitor's collect). On overrun the route
   returns **503 degraded** with `error: collect_state_deadline` and a
   `detail` naming the overran stage (the deepest `mc_wall` frame of the
   in-flight collect, e.g. `netcache.py:_run_cmd`) — never a hang. Concurrent
   requests coalesce onto the one in-flight collect; a fresh idle request
   always starts a fresh collect (the no-caching contract is unchanged).
-- `MC_WALL_BOOT_DEADLINE_S` (default `60`) — after binding, the server
-  completes one full collect under this hard deadline (also the cache warm).
-  An overrun means the collect is wedged: the server logs `FATAL boot
-  self-check`, dumps every thread's stack to stderr, and exits **5** so
-  launchd restarts it — a wall that cannot answer never pretends to be up.
-  A healthy-but-slow cold boot (~17-18 s) passes well inside the default.
+- `MC_WALL_BOOT_DEADLINE_S` (default `180`, was `60`) — after binding, the
+  server completes one full WARM collect (the blocking, pool-parallel pass
+  that doubles as the cache warm) under this hard deadline; /state requests
+  racing it already serve cache-first on their own gate. An overrun means
+  the collect is wedged: the server logs `FATAL boot self-check`, dumps
+  every thread's stack to stderr, and exits **5** so launchd restarts it —
+  a wall that cannot answer never pretends to be up. A healthy cold warm
+  pass (measured ~78 s serialized at 8 programs; well under the deadline
+  once pool-parallel) fits with headroom.
 - `MC_WALL_MONITOR=0` (or `off`/`no`/`false`) — kill switch: the handshake
   monitor thread is entirely absent (one log line); every route, /state
   included, still serves. Use it to rule the monitor out when debugging.
