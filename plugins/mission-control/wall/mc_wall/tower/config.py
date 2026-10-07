@@ -47,6 +47,12 @@ class TowerConfig:
     network_cache: NetCache = field(default_factory=NetCache)  # fresh cache per config build
     discovery_degraded: tuple[str, ...] = ()  # boot-time discovery lines (DegradedLog group 7)
     discovery_disabled: bool = False  # MC_WALL_DISCOVERY opt-out (decision 3b; collect emits the wall.log line once)
+    # wall.json "ignore[]" — program slugs discovery must NEVER register (the
+    # deregister half of the registration commands, D2 2026-10-07: a
+    # grammar-correct note must not silently re-register a retired program).
+    # Declared entries always win structurally — discovery only ever appends
+    # UNDECLARED programs, so a slug both declared and ignored still renders.
+    discovery_ignore: tuple[str, ...] = ()
     # W5-L5 forge-manifest cross-check root (A5): ~/.mc-wall/forge by default;
     # tests inject a tmp root so no suite test ever reads the real home.
     forge_root: str = os.path.expanduser(os.path.join("~", ".mc-wall", "forge"))

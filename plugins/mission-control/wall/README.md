@@ -210,7 +210,54 @@ Degrade behavior (fail-open by design; the CLI never shows a traceback):
 
 Output may contain session titles — treat it as operator-private.
 
-## 7. Failure modes
+## 7. Program registration commands
+
+`register` / `deregister` / `list` / `bind` (v1.12.0) are the operator's
+hands for the wall.json program surface and the lane↔session binding — plain
+CLI, runnable from any terminal or session (controller forks included), never
+bound to a live controller:
+
+    bin/mc-wall register <slug | note-path>
+    bin/mc-wall deregister <slug>
+    bin/mc-wall list
+    bin/mc-wall bind <slug> <row-id> <sess-id>
+
+- **register** declares the program in wall.json `programs[]` (`{program,
+  tag, note_glob}`, tag = slug) and merges repos derived from the note's row
+  path tokens into `repos[]` (the same `git remote -v` derivation discovery
+  runs for undeclared programs). Lint-first: a note with ANY lint defect is
+  refused with the lint output — no defective registration can enter the
+  wall. Idempotent (a re-run with nothing to change writes nothing). An
+  existing entry's tag is never rewritten; a changed `note_glob` is
+  repointed (with the change printed).
+- **deregister** removes the declaration AND appends the slug to wall.json
+  `ignore[]` — discovery consults `ignore[]` on every scan, so a retired
+  program's grammar-correct note (still on disk) can never silently
+  re-register. Without an ignore entry, deletion alone means resurrection on
+  the next poll. The note itself is never touched.
+- **list** prints every program as `declared` / `discovered` / `ignored`
+  with its parsed lane count, lint status, and note path; exit 1 when any
+  program's note has lint defects (an honest gate) or a glob misses.
+- **bind** writes a `sess_` token into a prompt-log row's session/MR
+  artifacts cell (the first `sess_` token in that cell is the wall's binding
+  — an existing different token is REPLACED; MR refs and `verify:ok` are
+  preserved; a null cell becomes the bare token). Refuses unknown
+  program/row, malformed tokens, and tokens matching zero sessions in the
+  session db. The vault note edit is backup-first and followed by the SAME
+  write-verification as the controller protocol: post-edit lint plus the
+  `/state` assert line (`state: program=… row=… session=… — bound`) polled
+  across up to three ~5 s poll beats.
+
+Every wall.json or note write backs up first to `~/.mc-wall/backups/`
+(`wall.json.backup-<ts>` / `note-<slug>.backup-<ts>`), is atomic
+(tmp + rename, mode-preserving), and never touches `token`, `port`, or
+entries it does not own. All four commands ride the per-poll contract:
+changes are live within one ~5 s poll, NO restart. The runtime wall stays
+read-only — these commands edit config and vault notes, never the server
+(one exception: `ignore[]` is read by discovery, which needs a v1.12.0+
+server; on an older server restart it once after deregistering).
+
+## 8. Failure modes
 
 - Missing/unreadable `wall.json` → one stdout line, rc 1 (server entry);
   `open`/`status` print `no wall.json — run mc-wall install first`.
@@ -267,7 +314,7 @@ through a single-flight gate with a hard deadline.
 Exit codes: `0` signal shutdown, `1` port busy, `3` never ready, `4` serve
 loop died unrequested, `5` boot self-check overran (wedge — threads dumped).
 
-## 8. Repo layout + gates
+## 9. Repo layout + gates
 
     bin/mc-wall          control CLI (install/start/stop/restart/status/log/open)
     mc_wall/tower        state collector: notes, session db, goals, signals, derivations
@@ -288,4 +335,5 @@ form is `node web/selftest.mjs` (104 checks).
 Gates (`regenloop/gates.toml`): `python-test` (`.venv/bin/pytest -q`),
 `web-selftest` (`node web/selftest.mjs`), `bin-py-compile`
 (`py_compile bin/mc-wall`), `templates-check` (`bash -n
-templates/run_sh.template`). The command surface is the table in §3.
+templates/run_sh.template`). The command surface is the tables in §3
+(lifecycle) and §7 (registration).

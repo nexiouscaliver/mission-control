@@ -39,15 +39,21 @@ def _run_git(path: str) -> tuple[int, str]:
         return (1, "")
 
 
-def discover_programs(declared, run_git=None, *, declared_repos=()):
+def discover_programs(declared, run_git=None, *, declared_repos=(),
+                      ignored_slugs=()):
+    """``ignored_slugs`` (wall.json ``ignore[]``, the registration commands'
+    deregister surface, D2) are skipped exactly like declared slugs — a
+    retired program's grammar-correct note must not silently re-register."""
     try:
-        return _scan(declared, declared_repos, run_git or _run_git)
+        return _scan(declared, declared_repos, run_git or _run_git,
+                     ignored_slugs)
     except Exception as e:
         return DiscoveryResult((), (), (f"discovery degraded: internal error ({type(e).__name__})",))
 
 
-def _scan(declared, declared_repos, run_git):
+def _scan(declared, declared_repos, run_git, ignored_slugs=()):
     declared_slugs = {p.program for p in declared}
+    skip_slugs = declared_slugs | set(ignored_slugs)
     found: dict[str, tuple[str, notes.NoteParse]] = {}   # slug -> (abs path, parse)
     degraded: list[str] = []
     for d in search_dirs(declared):
@@ -61,8 +67,8 @@ def _scan(declared, declared_repos, run_git):
             if m is None or not ent.is_file(follow_symlinks=True):
                 continue        # not a candidate: silent
             slug, path = m.group("slug"), os.path.join(d, ent.name)
-            if slug in declared_slugs:
-                continue        # declared wins: silent
+            if slug in skip_slugs:
+                continue        # declared wins / ignore[] (registration D2): silent
             if slug in found:
                 degraded.append(f"discovery degraded: duplicate program {slug} at {path}")
                 continue

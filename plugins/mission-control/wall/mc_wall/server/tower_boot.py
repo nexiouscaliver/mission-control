@@ -17,7 +17,9 @@ Program-note discovery (spec mcwall-tower-discovery): ``_declared_config``
 builds the wall.json-declared config alone; ``_refresh_discovery`` re-runs
 ``discover_programs`` (appending undeclared mission-control-*-program.md
 notes + their derived repos, carrying skip lines on
-TowerConfig.discovery_degraded) over a declared config. Boot
+TowerConfig.discovery_degraded) over a declared config. The optional
+wall.json ``ignore[]`` (registration commands, D2) names slugs discovery
+must never register. Boot
 (``tower_config_from_wall``) runs it once with the boot-time INFO line;
 ``PerPollTowerConfig.current()`` re-runs it EVERY collect cycle — a new or
 deleted program note is picked up on the next poll with no restart, and the
@@ -57,6 +59,21 @@ def _optional_str(entry: dict, key: str, where: str):
     return v
 
 
+def _parse_ignore(data: dict) -> tuple[str, ...]:
+    """wall.json ``ignore``: optional list of program slugs discovery must
+    never register (registration commands D2). Absent/null -> (); anything
+    but a list of non-empty strings is a LOUD boot error — a typo'd ignore
+    entry that silently no-ops would resurrect a retired program."""
+    raw = data.get("ignore")
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or any(
+            not isinstance(s, str) or not s.strip() for s in raw):
+        raise ValueError('mc-wall: wall.json "ignore" must be a list of '
+                         'program slugs — fix wall.json')
+    return tuple(s.strip() for s in raw)
+
+
 def _declared_config(data: dict, wall_home: pathlib.Path) -> TowerConfig:
     """The wall.json-DECLARED config only (no discovery) — the stable base the
     per-poll provider re-derives discovery over."""
@@ -82,12 +99,13 @@ def _declared_config(data: dict, wall_home: pathlib.Path) -> TowerConfig:
     for i, r in enumerate(raw_repos):
         where = f"wall.json repos[{i}]"
         if not isinstance(r, dict):
-            raise ValueError(f'mc-wall: {where} must be an object — fix wall.json')
+            raise ValueError(f"mc-wall: {where} must be an object — fix wall.json")
         repos.append(RepoConfig(
             name=_require_str(r, "name", where),
             path=os.path.expanduser(_require_str(r, "path", where)),
             host=_require_str(r, "host", where),
         ))
+    ignore = _parse_ignore(data)
     db = _optional_str(data, "db_path", "wall.json")
     pending = _optional_str(data, "pending_launch_path", "wall.json")
     store = _optional_str(data, "store", "wall.json")
@@ -115,6 +133,7 @@ def _declared_config(data: dict, wall_home: pathlib.Path) -> TowerConfig:
         repos=tuple(repos),
         pending_launch_path=str(pending) if pending is not None
         else str(wall_home / "pending-launch.json"),
+        discovery_ignore=ignore,
     )
 
 
@@ -128,7 +147,8 @@ def _refresh_discovery(cfg: TowerConfig, run_git=None) -> TowerConfig:
         disabled = True
     else:
         disc = discovery.discover_programs(cfg.programs, run_git=run_git,
-                                           declared_repos=cfg.repos)
+                                           declared_repos=cfg.repos,
+                                           ignored_slugs=cfg.discovery_ignore)
         disabled = False
     return TowerConfig(
         db_path=cfg.db_path,
@@ -146,6 +166,7 @@ def _refresh_discovery(cfg: TowerConfig, run_git=None) -> TowerConfig:
         network_cache=cfg.network_cache,  # SAME cache: poll refresh keeps TTLs
         discovery_degraded=disc.degraded,
         discovery_disabled=disabled,
+        discovery_ignore=cfg.discovery_ignore,
     )
 
 

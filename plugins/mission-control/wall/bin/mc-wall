@@ -1,10 +1,11 @@
 #!/opt/homebrew/bin/python3.14
-"""mc-wall control CLI — install/start/stop/restart/status/log/open.
+"""mc-wall control CLI — install/start/stop/restart/status/log/open plus the
+registration commands register/deregister/list/bind (rg1, v1.12.0).
 
 Syntax floor: Python 3.9 (AC-58) — no f-strings, no annotations. Stdlib only
 plus the mc_wall package itself (AC-57). The two roots are separately
 injectable so tests never touch the real ~/.mc-wall or ~/Library/LaunchAgents:
-wall_home owns wall.json/state/logs/run.sh/chrome-profile; home owns the
+wall_home owns wall.json/state/logs/run.sh/chrome-profile/backups; home owns the
 plist, ALWAYS at <home>/Library/LaunchAgents/ai.zcode.mc-wall.plist.
 """
 
@@ -14,6 +15,7 @@ import os
 import secrets
 import subprocess
 import sys
+import time
 import urllib.request
 
 MIN_PYTHON = (3, 9)
@@ -58,6 +60,20 @@ def _lint_modules():
     return lint_module, notes_module, tower_boot
 
 
+def _reg_modules():
+    # The registration surface (rg1): registration primitives + discovery +
+    # notes + config build, all through the same package the server runs.
+    root = repo_root()
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    from mc_wall.tower import discovery as discovery_module
+    from mc_wall.tower import notes as notes_module
+    from mc_wall.tower import registration as registration_module
+    from mc_wall.server import tower_boot
+
+    return registration_module, discovery_module, notes_module, tower_boot
+
+
 class SubprocessExecutor:
     def run(self, argv):
         proc = subprocess.run(list(argv), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -65,15 +81,20 @@ class SubprocessExecutor:
 
 
 class Cli:
-    def __init__(self, wall_home, home, executor, stdout=None, version_info=None):
+    def __init__(self, wall_home, home, executor, stdout=None, version_info=None,
+                 state_fetch=None, poll_sleep=None):
         # wall_home and home are the TWO separately injectable roots (tests
         # pass BOTH as tmp dirs). The plist path is ALWAYS derived from home —
         # never from wall_home. executor: object with run(argv) -> (rc, stdout).
+        # state_fetch(url) -> (ok, parsed-json-or-None) and poll_sleep(secs)
+        # are the bind probe's injection seams (tests fake the wall).
         self.wall_home = wall_home
         self.home = home
         self.executor = executor
         self.stdout = stdout if stdout is not None else sys.stdout
         self.version_info = version_info if version_info is not None else sys.version_info
+        self.state_fetch = state_fetch or self._default_state_fetch
+        self.poll_sleep = poll_sleep or time.sleep
 
     # -- helpers ----------------------------------------------------------
 
@@ -351,9 +372,271 @@ class Cli:
         return rc
 
 
-def main(argv=None, version_info=None, wall_home=None, home=None, executor=None):
-    # wall_home/home/executor are the injection seam for tests; None ->
-    # default_wall_home() / real $HOME / SubprocessExecutor.
+    # -- registration: register/deregister/list/bind (rg1, v1.12.0) --------
+
+    def _default_state_fetch(self, url):
+        try:
+            resp = urllib.request.urlopen(url, timeout=5)
+            try:
+                body = json.loads(resp.read().decode("utf-8"))
+            finally:
+                resp.close()
+            return (200 <= resp.status < 300, body)
+        except Exception:
+            return (False, None)
+
+    def _state_url(self, cfg):
+        return "http://127.0.0.1:%d/%s/state" % (cfg["port"], cfg["token"])
+
+    def _backup(self, path, label):
+        reg_mod = _reg_modules()[0]
+        dest = reg_mod.backup_file(path, os.path.join(self.wall_home, "backups"),
+                                   label)
+        self._print("backup: %s" % dest)
+        return dest
+
+    def _write_wall_json(self, data):
+        reg_mod = _reg_modules()[0]
+        path = self._wall_json_path()
+        self._backup(path, "wall.json.backup")
+        reg_mod.write_json_atomic(path, data)
+        self._print("wall.json updated — live within one ~5s poll (no restart)")
+
+    def register(self, target):
+        reg_mod, disc, notes_module, tower_boot_mod = _reg_modules()
+        lint_module = _lint_modules()[0]
+        data = self._read_wall_json_raw()
+        if data is None:
+            self._print(NO_WALL_JSON)
+            return 1
+        # Resolve the target: an existing file path names the note directly;
+        # anything else is a slug looked up in the discovery search dirs.
+        if os.path.isfile(target):
+            note_path = os.path.abspath(target)
+            slug = reg_mod.slug_from_path(note_path)
+            if slug is None:
+                self._print("register refused: %s is not named "
+                            "mission-control-<slug>-program.md" % note_path)
+                return 1
+        else:
+            slug = target.strip()
+            if not reg_mod.SLUG_RE.match(slug):
+                self._print("register refused: %r is not a program slug "
+                            "(kebab-case) or a note path" % slug)
+                return 1
+            note_path = reg_mod.find_note_by_slug(
+                slug, reg_mod.note_search_dirs(data))
+            if note_path is None:
+                self._print("register refused: no mission-control-%s-program.md "
+                            "under %s" % (slug, ", ".join(reg_mod.note_search_dirs(data))))
+                return 1
+        # Lint FIRST (SC-1): a defective note is refused with its lint output.
+        result = lint_module.lint_note_file(
+            note_path, program=slug, forge_root=lint_module.default_forge_root())
+        if self._lint_report(result) != 0:
+            self._print("register refused: %s has lint defects "
+                        "(fix the note, re-run)" % note_path)
+            return 1
+        # Repos from the note's row path tokens — the same derivation
+        # discovery runs for undeclared programs (declared programs get no
+        # discovery-derived repos, so register must derive them itself).
+        repos, repo_warnings = reg_mod.derived_repos_for_note(
+            note_path, reg_mod.declared_repos_from_data(data))
+        for w in repo_warnings:
+            self._print("repos[]: %s" % w)
+        new_data, lines, changed = reg_mod.register_transform(
+            data, slug, note_path, repos)
+        for line in lines:
+            self._print(line)
+        if not changed:
+            self._print("no changes — wall.json untouched")
+            return 0
+        self._write_wall_json(new_data)
+        self._print("probe after one poll: %s"
+                    % self._state_url(self._read_wall_json()))
+        return 0
+
+    def deregister(self, slug):
+        reg_mod = _reg_modules()[0]
+        data = self._read_wall_json_raw()
+        if data is None:
+            self._print(NO_WALL_JSON)
+            return 1
+        slug = slug.strip()
+        declared = any(isinstance(p, dict) and p.get("program") == slug
+                       for p in data.get("programs") or [])
+        ignored = slug in (data.get("ignore") or [])
+        note_exists = reg_mod.find_note_by_slug(
+            slug, reg_mod.note_search_dirs(data)) is not None
+        if not declared and not ignored and not note_exists:
+            self._print("deregister refused: %r is not declared, discovered, "
+                        "or ignored — nothing to remove" % slug)
+            return 1
+        new_data, lines, changed = reg_mod.deregister_transform(data, slug)
+        for line in lines:
+            self._print(line)
+        if not changed:
+            self._print("no changes — wall.json untouched (already deregistered)")
+            return 0
+        self._write_wall_json(new_data)
+        self._print("note: ignore[] takes effect on servers v1.12.0+ — if the "
+                    "program still shows after a poll, restart the wall")
+        return 0
+
+    def list_programs(self):
+        lint_module, notes_module, tower_boot_mod = _lint_modules()
+        data = self._read_wall_json_raw()
+        if data is None:
+            self._print(NO_WALL_JSON)
+            return 1
+        try:
+            cfg = tower_boot_mod.tower_config_from_wall(data, self.wall_home)
+        except ValueError as exc:
+            self._print(str(exc))
+            return 1
+        declared = [p.get("program") for p in data.get("programs") or []
+                    if isinstance(p, dict) and p.get("program")]
+        declared_set = set(declared)
+        ignored = list(data.get("ignore") or [])
+        discovered = [p for p in cfg.programs if p.program not in declared_set]
+        self._print("# mc-wall list — %d declared, %d discovered, %d ignored%s"
+                    % (len(declared), len(discovered), len(ignored),
+                       " (discovery disabled)" if cfg.discovery_disabled else ""))
+        rc = 0
+        for p in cfg.programs:
+            kind = "declared" if p.program in declared_set else "discovered"
+            path = notes_module.find_note(p.note_glob)
+            if path is None:
+                self._print("%-22s %-9s NO NOTE (glob miss: %s)" % (p.program, kind, p.note_glob))
+                rc = 1
+                continue
+            result = lint_module.lint_note_file(
+                path, program=p.program, forge_root=lint_module.default_forge_root())
+            if result["error"] is not None:
+                self._print("%-22s %-9s %2d lanes  lint:UNREADABLE  %s"
+                            % (p.program, kind, result["rows"], path))
+                rc = 1
+            else:
+                self._print("%-22s %-9s %2d lanes  lint:%-9s %s"
+                            % (p.program, kind, result["rows"],
+                               "clean" if result["ok"] else "%d defects" % len(result["defects"]),
+                               path))
+                rc = rc or (0 if result["ok"] else 1)
+        for slug in ignored:
+            self._print("%-22s ignored   (discovery will not register it)" % slug)
+        return rc
+
+    def bind(self, slug, row_id, sess_id):
+        reg_mod, disc, notes_module, tower_boot_mod = _reg_modules()
+        lint_module = _lint_modules()[0]
+        data = self._read_wall_json_raw()
+        if data is None:
+            self._print(NO_WALL_JSON)
+            return 1
+        try:
+            cfg = tower_boot_mod.tower_config_from_wall(data, self.wall_home)
+        except ValueError as exc:
+            self._print(str(exc))
+            return 1
+        slug = slug.strip()
+        prog = next((p for p in cfg.programs if p.program == slug), None)
+        if prog is None:
+            self._print("bind refused: unknown program %r (see mc-wall list)" % slug)
+            return 1
+        if not notes_module.SESS_RE.fullmatch(sess_id):
+            self._print("bind refused: %r is not a session token "
+                        "(sess_ + >=8 hex)" % sess_id)
+            return 1
+        note_path = notes_module.find_note(prog.note_glob)
+        if note_path is None:
+            self._print("bind refused: no note for %s (glob %s)" % (slug, prog.note_glob))
+            return 1
+        # Session-db sanity, fail-open like the wall itself: an unreadable db
+        # warns; a token matching ZERO sessions is refused (typo guard).
+        try:
+            import sqlite3
+
+            con = sqlite3.connect("file:%s?mode=ro" % cfg.db_path, uri=True, timeout=2)
+            try:
+                from mc_wall.tower import zcode_db
+
+                hit, ambiguous = zcode_db.lane_join(con.cursor(), sess_id)
+            finally:
+                con.close()
+            if hit is None and not ambiguous:
+                self._print("bind refused: %s matches 0 sessions in %s"
+                            % (sess_id, cfg.db_path))
+                return 1
+            if ambiguous:
+                self._print("warning: %s is an ambiguous prefix (>1 session) "
+                            "— the wall join will not bind it" % sess_id)
+        except Exception as exc:
+            self._print("warning: session db unreachable (%s) — token not pre-checked"
+                        % type(exc).__name__)
+        try:
+            with open(note_path, "r", encoding="utf-8") as f:
+                text = f.read()
+        except (OSError, UnicodeDecodeError) as exc:
+            self._print("bind refused: cannot read %s (%s)" % (note_path, exc))
+            return 1
+        new_text, status = reg_mod.bind_row(text, row_id, sess_id)
+        if status == reg_mod.BIND_UNKNOWN_ROW:
+            self._print("bind refused: unknown row %r in %s" % (row_id, note_path))
+            return 1
+        if status == reg_mod.BIND_ALREADY:
+            self._print("already bound: %s row %s carries %s" % (slug, row_id, sess_id))
+            return self._bind_probe(slug, row_id, sess_id)
+        backup = self._backup(note_path, "note-%s.backup" % slug)
+        mode = 0o644
+        try:
+            mode = os.stat(note_path).st_mode & 0o777
+        except OSError:
+            pass
+        tmp = note_path + ".tmp-bind"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(new_text)
+        os.chmod(tmp, mode)
+        os.replace(tmp, note_path)
+        result = lint_module.lint_note_file(
+            note_path, program=slug, forge_root=lint_module.default_forge_root())
+        if self._lint_report(result) != 0:
+            self._print("bind wrote the token but lint reports defects — "
+                        "revert via %s" % backup)
+            return 1
+        self._print("bound: %s row %s <- %s" % (slug, row_id, sess_id))
+        return self._bind_probe(slug, row_id, sess_id)
+
+    def _bind_probe(self, slug, row_id, sess_id, attempts=3):
+        # Poll /state across ~2 poll beats until the wall renders the row
+        # bound; print the assert line either way (write-verification, v1.11.1).
+        cfg = self._read_wall_json()
+        url = self._state_url(cfg)
+        for attempt in range(1, attempts + 1):
+            ok, doc = self.state_fetch(url)
+            lane = None
+            if ok and isinstance(doc, dict):
+                for p in doc.get("programs") or []:
+                    if p.get("program") == slug:
+                        lane = next((l for l in p.get("lanes") or []
+                                     if l.get("row_id") == row_id), None)
+                        break
+            session = (lane or {}).get("session") or {}
+            if session.get("id", "").startswith(sess_id):
+                self._print("state: program=%s row=%s session=%s — bound "
+                            "(poll %d)" % (slug, row_id, session["id"], attempt))
+                return 0
+            if attempt < attempts:
+                self.poll_sleep(5)
+        self._print("state: UNVERIFIED (row not bound after %d probes) — "
+                    "check manually: %s" % (attempts, url))
+        return 0
+
+
+def main(argv=None, version_info=None, wall_home=None, home=None, executor=None,
+         state_fetch=None, poll_sleep=None):
+    # wall_home/home/executor/state_fetch/poll_sleep are the injection seams
+    # for tests; None -> default_wall_home() / real $HOME / SubprocessExecutor
+    # / real HTTP / time.sleep.
     vi = version_info if version_info is not None else sys.version_info
     if vi < MIN_PYTHON:
         print(
@@ -378,6 +661,24 @@ def main(argv=None, version_info=None, wall_home=None, home=None, executor=None)
     p_lint.add_argument("note", nargs="?", help="path to the program note")
     p_lint.add_argument("--all", action="store_true",
                         help="lint every declared + discovered program note")
+    p_reg = sub.add_parser(
+        "register",
+        help="register a program on the wall (lint-first, backup-first, "
+             "per-poll — no restart)")
+    p_reg.add_argument("target", help="program slug or path to the program note")
+    p_dereg = sub.add_parser(
+        "deregister",
+        help="remove a program declaration AND ignore it in discovery "
+             "(backup-first; the note is left untouched)")
+    p_dereg.add_argument("slug", help="program slug")
+    sub.add_parser("list", help="list declared/discovered/ignored programs "
+                                "with lane counts + lint status")
+    p_bind = sub.add_parser(
+        "bind", help="write a session token into a program row's artifacts "
+                     "cell (backup + post-edit lint + /state assert)")
+    p_bind.add_argument("slug", help="program slug")
+    p_bind.add_argument("row_id", help="prompt-log row id (e.g. W1-L0)")
+    p_bind.add_argument("sess_id", help="session token (sess_ + hex)")
     sub.add_parser("open", help="open the Wall in an app-mode Chrome")
     args = parser.parse_args(argv)
     cli = Cli(
@@ -386,6 +687,8 @@ def main(argv=None, version_info=None, wall_home=None, home=None, executor=None)
         executor if executor is not None else SubprocessExecutor(),
         stdout=sys.stdout,
         version_info=vi,
+        state_fetch=state_fetch,
+        poll_sleep=poll_sleep,
     )
     if args.command == "install":
         return cli.install(regenerate_token=args.regenerate_token, dry_run=args.dry_run)
@@ -405,6 +708,14 @@ def main(argv=None, version_info=None, wall_home=None, home=None, executor=None)
         if not args.note:
             parser.error("lint-note needs a note path (or --all)")
         return cli.lint_note(args.note)
+    if args.command == "register":
+        return cli.register(args.target)
+    if args.command == "deregister":
+        return cli.deregister(args.slug)
+    if args.command == "list":
+        return cli.list_programs()
+    if args.command == "bind":
+        return cli.bind(args.slug, args.row_id, args.sess_id)
     return cli.open_wall()
 
 
