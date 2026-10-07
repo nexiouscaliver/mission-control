@@ -26,35 +26,40 @@ def test_mcwallt_derive_stalled(tmp_path, monkeypatch):
     # AC-DERIVE-1: fires only past stall_t_hours, exact because/last_event.
     # Session last active 7h (25200s) ago with an even older (8h) queue.md:
     # the SESSION is the most recent activity — the max epoch (§6.1) — so it
-    # carries the because/last_event numbers.
-    cfg, _set = mcwallt_world(tmp_path, monkeypatch, lane1_age_s=25200.0, queue_age_s=28800.0)
+    # carries the because/last_event numbers. Since the sd1 status guard
+    # (W0-O1 incident) stalled derives only for WORKING rows — W1-L1 runs
+    # launched in these worlds (the pre-sd1 pins had a DONE lane stalling).
+    rows_launched = [f"| W1-L1 | W1 | L1 | {tmp_path}/mcwallt_world_repo loop/mcwallt-tower | mcwallt-slug | n/a | !5; sess_9a690ab2-cde8-4e9a-bc4e-177fcc68545f | launched |",
+                     "| W1-L2 | W1 | L2 | plugin cache 1.3.0 (plain lane) | n/a | n/a | n/a | launched |",
+                     f"| W1-L3 | W1 | L3 | {tmp_path}/mcwallt_world_repo main | mcwallt-slug-3 | n/a | n/a | done |"]
+    cfg, _set = mcwallt_world(tmp_path, monkeypatch, lane1_age_s=25200.0, queue_age_s=28800.0, rows=rows_launched)
     assert _lane1(collect_state(cfg))["stalled"] == {
         "because": "inactive for 25200s > stall_t 6h",
         "last_event": f"session {MCWALLT_WORLD_LANE} at 25200s ago"}
 
     # queue.md dominating (NEWER than the 8h-idle session, still past the 6h
     # window): last_event names the queue.
-    cfg, _set = mcwallt_world(tmp_path, monkeypatch, lane1_age_s=28800.0, queue_age_s=25200.0)
+    cfg, _set = mcwallt_world(tmp_path, monkeypatch, lane1_age_s=28800.0, queue_age_s=25200.0, rows=rows_launched)
     assert _lane1(collect_state(cfg))["stalled"] == {
         "because": "inactive for 25200s > stall_t 6h",
         "last_event": "queue.md mtime at 25200s ago"}
 
     # Tie (session epoch == queue mtime): the session wins.
-    cfg, _set = mcwallt_world(tmp_path, monkeypatch, lane1_age_s=25200.0, queue_age_s=25200.0)
+    cfg, _set = mcwallt_world(tmp_path, monkeypatch, lane1_age_s=25200.0, queue_age_s=25200.0, rows=rows_launched)
     stalled = _lane1(collect_state(cfg))["stalled"]
     assert stalled["last_event"] == f"session {MCWALLT_WORLD_LANE} at 25200s ago"
 
     # No joined session at all: queue.md alone carries the activity epoch.
     repo = tmp_path / "mcwallt_world_repo"
     cfg, _set = mcwallt_world(tmp_path, monkeypatch, queue_age_s=28800.0, rows=[
-        f"| W1-L1 | W1 | L1 | {repo} loop/mcwall-tower | mcwallt-slug | n/a | !5 | done |"])
+        f"| W1-L1 | W1 | L1 | {repo} loop/mcwall-tower | mcwallt-slug | n/a | !5 | launched |"])
     assert _lane1(collect_state(cfg))["stalled"] == {
         "because": "inactive for 28800s > stall_t 6h",
         "last_event": "queue.md mtime at 28800s ago"}
 
     # A fresh queue.md (1h) over the same 7h-idle session: the newest activity
     # is recent -> NOT stalled (someone worked the queue an hour ago).
-    cfg, _set = mcwallt_world(tmp_path, monkeypatch, lane1_age_s=25200.0, queue_age_s=3600.0)
+    cfg, _set = mcwallt_world(tmp_path, monkeypatch, lane1_age_s=25200.0, queue_age_s=3600.0, rows=rows_launched)
     assert _lane1(collect_state(cfg))["stalled"] is None
 
     # Recent activity (400s session / 1h queue vs a 6h window) -> null.
@@ -76,7 +81,8 @@ def test_mcwallt_derive_stalled(tmp_path, monkeypatch):
 
     # Raw-value formatting: 6.5 renders "6.5" in the because string.
     cfg, _set = mcwallt_world(tmp_path, monkeypatch, lane1_age_s=25200.0, queue_age_s=28800.0,
-                              manifest={"stall_t_hours": 6.5, "precondition_mrs": []})
+                              manifest={"stall_t_hours": 6.5, "precondition_mrs": []},
+                              rows=rows_launched)
     assert _lane1(collect_state(cfg))["stalled"]["because"] == \
         "inactive for 25200s > stall_t 6.5h"
 
