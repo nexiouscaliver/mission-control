@@ -64,9 +64,14 @@ HASH_RE = re.compile(r"#\d+")               # github PR ref
 # by design; it cannot collide with the SESS_RE/BANG_RE/HASH_RE extractions).
 VERIFY_TOKEN = "verify:ok"
 
-# Contract v2 item 7: the fix/<name> hotfix branch form joins loop/<slug>,
-# main and master as the recognized branch tokens.
-_BRANCH_RE = re.compile(r"^(loop/[A-Za-z0-9._-]+|fix/[A-Za-z0-9._-]+|main|master)$")
+# Branch vocabulary: any lowercase-kebab namespace prefix followed by a
+# branch name (loop/<slug>, fix/<name>, backport/<name>, alarm-fixes/<name>,
+# hsp/<name>, release/<tag>, ...), plus bare main/master. The prefix list
+# grew twice (loop/ then fix/) before the hsp resurrection exposed real
+# fleets of backport/ + alarm-fixes/ + hsp/ branches; the general namespaced
+# form is the durable rule (wall-overhaul closeout follow-up, 2026-10-07).
+_BRANCH_RE = re.compile(
+    r"^([a-z][a-z0-9]*(?:-[a-z0-9]+)*/[A-Za-z0-9._-]+|main|master)$")
 _SEP_CELL_RE = re.compile(r"^:?-+:?$")
 
 # W5-L5 stray-row class: a lane row's first cell is a row ID (``W1-L0``,
