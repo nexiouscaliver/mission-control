@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 New changes accumulate here between releases, above the latest version entry (Keep a Changelog convention; the release gates skip this section when reading the head version).
 
+## [1.12.0] - 2026-10-07
+
+The registration release: the operator gets deterministic, restart-free commands for the wall.json program surface and the lane↔session binding (idea note `shared/ideas/idea-wall-registration-commands-and-old-session-migration`, decisions D1-D5), plus a guided migration path for historical sessions. Driven by three impossibilities: adding a program required controller-side wall.json surgery, removing a finished program was impossible at all (grammar-correct notes re-register via discovery), and pre-window historical sessions could never reach their lanes.
+
+### Added (wall — registration commands, rg1)
+- **`bin/mc-wall register <slug|note-path>`**: declares a program in wall.json `programs[]` (tag = slug for new entries; existing tags never rewritten; changed note_globs repointed) and merges repos derived from the note's row path tokens into `repos[]` — the same `git remote -v` derivation discovery runs for undeclared programs, so declared programs keep their git signals. Lint-first: any lint defect refuses the registration with the lint output. Idempotent (nothing to change → nothing written).
+- **`bin/mc-wall deregister <slug>`**: removes the declaration AND appends the slug to the new wall.json `ignore[]` — deregistration is REAL. Backs up every write to `~/.mc-wall/backups/` first; refuses unknown slugs; idempotent.
+- **wall.json `ignore[]` (discovery exclusion list, D2)**: `tower_boot` parses and validates the key loudly (bad shape = boot error, not a silent no-op); every discovery scan (boot AND per-poll) skips ignored slugs exactly like declared ones. Declared entries still win structurally. `TowerConfig.discovery_ignore` carries the list; `discover_programs(ignored_slugs=…)`.
+- **`bin/mc-wall list`**: declared / discovered / ignored programs with parsed lane counts, lint status (including the forge-manifest cross-check), and note paths; exit 1 on any defect or glob miss.
+- **`bin/mc-wall bind <slug> <row-id> <sess-id>`**: writes the session token into the row's session/MR-artifacts cell — the first `sess_` token is the binding, so rebinding REPLACES an existing token while `verify:ok` and MR refs survive; null cells become the bare token. The vault-note edit is backup-first + atomic, post-edit lint refuses defective writes, the session db is pre-checked (zero-match tokens refused; an unreadable db degrades to a warning like the wall itself), and the `/state` assert line (`state: program=… row=… session=… — bound`) is polled across up to three poll beats.
+- **`mc_wall/tower/registration.py`**: the pure transform layer (register/deregister transforms, row binding, backup naming, atomic writes, slug lookup) — no I/O in the transforms, so tests pin exact mutations; `notes.locate_row` is the write-side row anchor using the production parser's table detection.
+
+### Changed
+- **Skill §7 close**: gains step 5 — deregister the program from the wall after the note deletion (`mc-wall deregister <slug>`), with the ignore[] rationale and the verify step (`list` shows ignored, `/state` drops the program); the section is now "distill, record, delete, deregister".
+- **README**: new §7 "Program registration commands" documents all four commands, the backup-first/per-poll/no-restart contracts, and the ignore[] semantics (Failure modes and Repo layout renumbered §8/§9).
+
+### Tests
+- 20 new rg1- tests: tower ignore semantics (skip, control, declared-beats-ignore, boot validation incl. loud bad-shape errors, per-poll refresh) and the CLI surface (register by path/slug, lint refusal, idempotency, token/port/entry preservation, repo derivation, stale-ignore clearing, deregister remove+ignore+backup+idempotent+unknown-refusal+boot-respected, list kinds/lanes/lint, bind happy/idempotent/rebind/refusals/dispatch).
+
 ## [1.11.1] - 2026-10-07
 
 The wall-honesty release, motivated by the 2026-10-07 lane-invisibility incident: a blank line inside the wall-overhaul program note's prompt-log table made the parser silently drop ALL five lane rows (rendered as a 0-lane card) while the four lane sessions were simultaneously excluded from the unmapped strip by their title tags — double invisibility, zero defects, four verdicts written on top. The operator's ruling: any single instance where the wall is incorrect with the real state is unacceptable. This release installs the invariant: the wall is NEVER silently wrong.

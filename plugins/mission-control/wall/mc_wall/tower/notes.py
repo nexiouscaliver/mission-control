@@ -281,6 +281,39 @@ def _cell_defects(cells: list[str], variant: int, lineno: int,
     return out
 
 
+def locate_row(text: str, row_id: str) -> int | None:
+    """1-based line number of the prompt-log DATA row whose id cell equals
+    ``row_id`` (first match, tables scanned in document order) — the
+    write-side anchor ``bin/mc-wall bind`` edits against. Same header/variant
+    detection as ``parse_note`` (one truth); a row id that appears only
+    outside any table, or not at all, yields None (bind refuses unknown rows
+    instead of editing a stray line)."""
+    variant: int | None = None
+    after_header = False
+    for lineno, line in enumerate(text.split("\n"), start=1):
+        if not line.strip().startswith("|"):
+            variant = None
+            after_header = False
+            continue
+        cells = _row_cells(line)
+        if after_header and _is_separator(cells):
+            after_header = False
+            continue
+        after_header = False
+        detected = _header_variant(cells)
+        if detected is not None:
+            variant = detected
+            after_header = True
+            continue
+        if variant is None:
+            continue
+        if _is_separator(cells):
+            continue
+        if cells and cells[0] == row_id and len(cells) >= len(_HEADER_BY_VARIANT[variant]):
+            return lineno
+    return None
+
+
 def parse_note(text: str, note_path: str = "") -> NoteParse:
     """Parse one vault program note. A table starts at a line whose normalized
     cell-name sequence equals HEADER_A, HEADER_B or HEADER_C; the line

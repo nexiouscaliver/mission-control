@@ -1,6 +1,6 @@
 ---
 name: mission-control
-version: 1.11.1
+version: 1.12.0
 description: Master-session orchestrator for multi-session regenloop programs — invoke explicitly via the commands /mission-control-discuss, /mission-control-plan, /mission-control-prompts, /mission-control-verify, /mission-control-next, /mission-control-close, or as /mission-control <discuss|plan|prompts|verify|next|close>. Interrogates a raw idea against the operator and the codebase then writes the idea note plan consumes, plans waves and lanes, forges red-teamed regenloop-run session prompts from fresh recon, verifies finished sessions against reality (never their self-reports), and distills the program's knowledge into the Basic Memory vault before deleting its working docs. Never implements anything itself; merges, releases, and deploys stay human. Do NOT auto-invoke for ordinary implement/fix requests — those belong to regenloop-run directly.
 argument-hint: <discuss|plan|prompts|verify|next|close> [idea | objective | program-slug | session/MR reference]
 allowed-tools: [Read, Glob, Grep, Bash, Agent, WebFetch, AskUserQuestion, ReadSessionContext, mcp__shared-memory__read_note, mcp__shared-memory__write_note, mcp__shared-memory__edit_note, mcp__shared-memory__delete_note, mcp__shared-memory__search_notes, mcp__shared-memory__list_memory_projects]
@@ -114,7 +114,7 @@ Before reading the program note, sweep every prompt-log row whose status is not 
 
 Read the program note (several programs active and none named by the argument → list them and ask — never guess): report human actions owed → lanes free → waves unblocked; emit the next prompts (via §4) or state plainly what blocks. Lane health for running goals reads `budget.json` (per-gate/run tallies vs caps) and `queue.md` — the quantities the envelope's machinery actually governs. Handles "Part 2 only" re-invocations for two-part packages whose Part 1 merged. Enforces the enablement sequence — if the operator asks to enable something whose dependency is not live yet, say so and refuse to forge around it.
 
-## §7 `close <program>` — distill, record, delete
+## §7 `close <program>` — distill, record, delete, deregister
 
 1. **Terminal check:** every wave done or explicitly parked. Anything half-open becomes a follow-up row — never silently dropped.
 2. **Distill by project** — from the program note + verification evidence, write into the vault:
@@ -125,7 +125,8 @@ Read the program note (several programs active and none named by the argument �
    Every observation atomic and self-contained: subject + value + provenance + date, no pronouns — vault conventions.
 3. **Completion record:** one compact note — what shipped, final shas/versions, where the distilled knowledge lives, linked with relations.
 4. **Delete the working docs:** the program note (superseded by the distillation + completion record), plus a sweep of any in-repo artifacts the program left (release-prep notes, window notes, scratch plans). **List everything first and get operator approval before deleting; never touch tracked repo files; never delete unlisted things.**
-5. Final report: shipped / memories written (permalinks) / docs deleted / follow-ups parked.
+5. **Deregister the program from the Wall** (after the note deletion, in the same close): run `bin/mc-wall deregister <slug>` (from `plugins/mission-control/wall/` in the mission-control repo). Backup-first, it removes the wall.json declaration AND adds the slug to wall.json `ignore[]` — discovery must never re-register a retired program's note; without the ignore entry, a grammar-correct note resurrects itself on the next poll, and a deleted note lingers as a glob-miss degraded line. Live within one ~5 s poll, no restart. Verify: `bin/mc-wall list` shows the slug `ignored`, and `/state` no longer carries the program. (On a pre-1.12.0 server the ignore entry needs one wall restart to take effect.)
+6. Final report: shipped / memories written (permalinks) / docs deleted / follow-ups parked / wall deregistered.
 
 ---
 
