@@ -411,6 +411,24 @@ def test_rg1_bind_refusals(tmp_path, monkeypatch):
     assert "W1-L1" in open(note, encoding="utf-8").read()
 
 
+def test_rg1_bind_tolerates_preexisting_defects(tmp_path, monkeypatch):
+    # The hsp migration case: a note may carry KNOWN recorded defects (e.g.
+    # the _BRANCH_RE residual) — bind is judged on defects IT introduces.
+    # Pre-existing defects print as "unchanged"; rc stays 0.
+    _env(monkeypatch, tmp_path)
+    cli = H.load_cli()
+    wh = H.make_tmp_root("rg1-bind6-")
+    note, _db = _bind_fixture(wh, rows=[
+        # repo token present but branch token off-vocabulary -> pre-existing defect
+        "| W1-L1 | W1 | L1 | /tmp/x backport/thing | s1 | n/a | n/a | done |"])
+    out = io.StringIO()
+    assert _cli(cli, wh, out).bind("prog", "W1-L1", SESS) == 0
+    text = out.getvalue()
+    assert "bound: prog row W1-L1 <- %s" % SESS in text
+    assert "1 defect (1 pre-existing, unchanged)" in text
+    assert "revert via" not in text
+
+
 def test_rg1_bind_main_dispatch(tmp_path, monkeypatch):
     _env(monkeypatch, tmp_path)
     cli = H.load_cli()

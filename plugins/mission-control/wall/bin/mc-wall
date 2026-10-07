@@ -579,6 +579,11 @@ class Cli:
         except (OSError, UnicodeDecodeError) as exc:
             self._print("bind refused: cannot read %s (%s)" % (note_path, exc))
             return 1
+        # Pre-edit lint: the delta baseline. A note may carry KNOWN recorded
+        # defects (e.g. the hsp _BRANCH_RE residual); bind is judged on the
+        # defects IT introduces, never on pre-existing ones.
+        lint_before = lint_module.lint_note_file(
+            note_path, program=slug, forge_root=lint_module.default_forge_root())
         new_text, status = reg_mod.bind_row(text, row_id, sess_id)
         if status == reg_mod.BIND_UNKNOWN_ROW:
             self._print("bind refused: unknown row %r in %s" % (row_id, note_path))
@@ -599,10 +604,20 @@ class Cli:
         os.replace(tmp, note_path)
         result = lint_module.lint_note_file(
             note_path, program=slug, forge_root=lint_module.default_forge_root())
-        if self._lint_report(result) != 0:
-            self._print("bind wrote the token but lint reports defects — "
-                        "revert via %s" % backup)
+        before = set(map(tuple, (d.items() for d in lint_before["defects"])))
+        after = set(map(tuple, (d.items() for d in result["defects"])))
+        new_defects = after - before
+        if result["error"] is not None or new_defects:
+            self._lint_report(result)
+            self._print("bind wrote the token but lint reports %d NEW defect%s — "
+                        "revert via %s"
+                        % (len(new_defects),
+                           "" if len(new_defects) == 1 else "s", backup))
             return 1
+        self._print("%s: %d rows parsed, %d defect%s (%d pre-existing, unchanged)"
+                    % (note_path, result["rows"], len(result["defects"]),
+                       "" if len(result["defects"]) == 1 else "s",
+                       len(result["defects"])))
         self._print("bound: %s row %s <- %s" % (slug, row_id, sess_id))
         return self._bind_probe(slug, row_id, sess_id)
 
