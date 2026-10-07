@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 New changes accumulate here between releases, above the latest version entry (Keep a Changelog convention; the release gates skip this section when reading the head version).
 
+## [1.12.2] - 2026-10-07
+
+The lying-dot release (W0-O1 incident): a `launched` row whose session died 41h earlier rendered yellow WITH the spinner — read as active-right-now. Three layers fixed:
+
+- **Stall-by-default for plain lanes**: `derive_stalled` no longer requires a forge manifest (plain lanes never carry one — the whole no-regenloop era), so the wall-side default 6h stall bound is finally reachable; derivation is guarded to launched/in-flight rows only (done/failed terminal, parked idle-by-instruction, forged idle-by-definition) — the charter's *no-activity-while-undone*. An abandoned `launched` row now goes RED + needs-me after 6h of silence.
+- **Activity-only spinner**: the timeline spin affordance fires ONLY on genuine session activity (≤900s) — status alone never reads as working.
+- **Ops**: the main checkout's `wall/.venv` self-referential symlink (a botched post-session restore) repaired.
+
+Tests: 7 new sd1 cases; three legacy pins re-shaped (they encoded a DONE lane stalling — one expected the same lane simultaneously verify-due AND stalled); 407 pytest + 121 selftest green. Companion vault fix: hsp W0-O1 status corrected to `parked` (its own verdict: "remaining steps pending operator go").
+
 ## [1.12.1] - 2026-10-07
 
 The collect-cost release (wc1, one-shot): v1.12.0's migration grew the wall to 8 programs × 5 scanned repos and the cold collect crossed its budgets — **80.24 s** measured (55 spawns, ~78 s of serialized spawn time; rig receipt 78.00 s) against a 60 s boot default that FATAL-looped until the operator's run.sh raised it, plus intermittent 503s against the 10 s state deadline on every TTL-expiry poll. This release parallelizes the spawn-bound work, makes /state serve cache-first, recalibrates the deadline defaults from the measurement, and (operator overlay, same day) fixes the web's cold-start/poll-failure presentation.
