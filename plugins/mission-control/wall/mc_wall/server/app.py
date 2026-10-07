@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import faulthandler
 import hashlib
 import http.client
 import http.server
@@ -12,6 +13,7 @@ import os
 import pathlib
 import re
 import signal
+import sys
 import threading
 import time
 import typing
@@ -99,6 +101,136 @@ def _default_collect_state() -> dict:
     from mc_wall.tower import collect_state  # LAZY — the only place mc_wall.tower is named in L2
 
     return collect_state(_default_tower_config())
+
+
+# ----------------------------------------------------------------- deadlines
+# wd1, wall-deadlock 2026-10-07: the /state handler ran the FULL tower collect
+# synchronously — on cold caches a collect serializes dozens of subprocess
+# spawns (measured 17.5 s on an idle machine; each spawn caps at its own 10 s
+# timeout), and the browser polls every 5 s, so handler threads piled up
+# without bound and the wall read as "hangs forever, 0 bytes". Every collect
+# consumer now goes through a CollectGate: at most ONE collect runs at a time
+# (concurrent requests coalesce onto it), and every caller carries a hard
+# deadline — on overrun the caller fails loud (503 naming the overran stage),
+# while the in-flight collect finishes in the background to warm the caches.
+
+STATE_DEADLINE_ENV = "MC_WALL_STATE_DEADLINE_S"
+BOOT_DEADLINE_ENV = "MC_WALL_BOOT_DEADLINE_S"
+MONITOR_ENV = "MC_WALL_MONITOR"
+DEFAULT_STATE_DEADLINE_S = 10.0
+# The boot self-check deadline sits ABOVE a healthy cold collect (~18 s
+# measured): slow-but-alive boots pass; only a wedged boot (collect that never
+# returns at any deadline) trips FATAL + exit 5 + launchd restart.
+DEFAULT_BOOT_DEADLINE_S = 60.0
+
+_ENV_OFF = frozenset({"0", "off", "no", "false"})
+
+
+def _env_seconds(name: str, default: float, logger: logging.Logger = None) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        if logger is not None:
+            logger.warning("%s unusable ('%s' is not a number) — using default %ss",
+                           name, raw, default)
+        return default
+    if value <= 0:
+        if logger is not None:
+            logger.warning("%s must be > 0 (got %s) — using default %ss",
+                           name, raw, default)
+        return default
+    return value
+
+
+def _monitor_env_enabled() -> bool:
+    return os.environ.get(MONITOR_ENV, "").strip().lower() not in _ENV_OFF
+
+
+def _deepest_mc_wall_frame(thread_id: typing.Optional[int]) -> str:
+    """Name the stage an in-flight collect is stuck in: the INNERMOST frame
+    whose file lives under mc_wall (e.g. ``netcache.py:_run_cmd`` when a
+    network spawn is the blocker). Advisory only — a racing thread may move
+    between frames; never raises, never blocks."""
+    try:
+        frame = sys._current_frames().get(thread_id)
+    except Exception:
+        return "collect"
+    while frame is not None:
+        filename = frame.f_code.co_filename
+        if "mc_wall" in filename:
+            return f"{os.path.basename(filename)}:{frame.f_code.co_name}"
+        frame = frame.f_back
+    return "collect"
+
+
+class CollectDeadlineError(Exception):
+    """The collect did not complete within its deadline. str() is the overran
+    stage (deepest mc_wall frame of the in-flight run, or 'collect')."""
+
+    def __init__(self, stage: str):
+        super().__init__(stage)
+        self.stage = stage
+
+
+class CollectGate:
+    """Single-flight + deadline wrapper around one collect_state callable.
+
+    Lock discipline (wall-deadlock wd1): the condition lock guards ONLY the
+    run-state bookkeeping (running/seq/result identities — in-memory state);
+    the collect itself — subprocess spawns included — runs OUTSIDE the lock on
+    a dedicated daemon worker. Callers wait on the condition with their
+    remaining deadline and never hold the lock across anything unbounded.
+    Sequential requests each start a fresh run when idle (the no-caching
+    contract); CONCURRENT requests coalesce onto the in-flight run — the
+    pile-up amplifier (one new collect thread per 5 s poll) is dead. The
+    worker's exception (if any) is re-raised to every waiter of that run,
+    preserving the injected-collector contract (503 collect_state_failed).
+    """
+
+    def __init__(self, collect_fn: typing.Callable[[], dict],
+                 deadline_s: float):
+        self._collect_fn = collect_fn
+        self._deadline_s = deadline_s
+        self._cond = threading.Condition()
+        self._running = False
+        self._seq = 0
+        self._result: typing.Optional[tuple] = None  # ("ok", doc) | ("exc", exc)
+        self._worker_tid: typing.Optional[int] = None
+
+    def collect(self, deadline_s: typing.Optional[float] = None) -> dict:
+        deadline = time.monotonic() + (self._deadline_s if deadline_s is None
+                                       else deadline_s)
+        with self._cond:
+            entry_seq = self._seq
+            if not self._running:
+                self._running = True
+                threading.Thread(target=self._run, daemon=True,
+                                 name="mc-wall-collect").start()
+            while self._seq <= entry_seq:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise CollectDeadlineError(
+                        _deepest_mc_wall_frame(self._worker_tid))
+                self._cond.wait(remaining)
+            kind, value = self._result
+            if kind == "exc":
+                raise value
+            return value
+
+    def _run(self) -> None:
+        self._worker_tid = threading.get_ident()
+        try:
+            result = ("ok", self._collect_fn())
+        except BaseException as exc:  # re-raised in waiters, never escapes here
+            result = ("exc", exc)
+        with self._cond:
+            self._running = False
+            self._seq += 1
+            self._result = result
+            self._cond.notify_all()
 
 
 def deep_link(repo_root: str) -> str:
@@ -379,6 +511,10 @@ class WallRequestHandler(http.server.BaseHTTPRequestHandler):
         except state_contract.UnknownRowError:
             self._post_error(404, "unknown-row", "no such row")
             return None, True
+        except CollectDeadlineError as exc:  # wd1: bounded, never a hang
+            self._state_degraded(str(exc), self._pending_dict(), False,
+                                 error="collect_state_deadline")
+            return None, True
         except Exception as exc:  # degraded, same shape as /state
             self._state_degraded(type(exc).__name__, self._pending_dict(), False)
             return None, True
@@ -635,6 +771,10 @@ class WallRequestHandler(http.server.BaseHTTPRequestHandler):
         ctx = self.server.ctx
         try:
             state = ctx.collect_state()
+        except CollectDeadlineError as exc:  # wd1: bounded, never a hang
+            self._state_degraded(str(exc), self._pending_dict(), False,
+                                 error="collect_state_deadline")
+            return
         except Exception as exc:  # never guess — degraded, not empty
             self._state_degraded(type(exc).__name__, self._pending_dict(), False)
             return
@@ -695,8 +835,10 @@ class WallRequestHandler(http.server.BaseHTTPRequestHandler):
         )
 
     def _serve_state(self, head_only: bool = False) -> None:
-        # Verbatim tower passthrough — the collector runs on EVERY request
-        # (no caching) and any failure degrades to 503 instead of guessing.
+        # Verbatim tower passthrough — each idle request starts a fresh
+        # collect (no caching); concurrent requests coalesce onto the
+        # in-flight run; ANY caller that outlives its deadline fails loud
+        # (wd1): 503 naming the overran stage instead of hanging forever.
         ctx = self.server.ctx
         pending_dict = None
         if ctx.pending is not None:
@@ -705,6 +847,10 @@ class WallRequestHandler(http.server.BaseHTTPRequestHandler):
                 pending_dict = record.to_dict()
         try:
             tower = ctx.collect_state()
+        except CollectDeadlineError as exc:
+            self._state_degraded(str(exc), pending_dict, head_only,
+                                 error="collect_state_deadline")
+            return
         except Exception as exc:  # ImportError, RuntimeError, anything
             self._state_degraded(type(exc).__name__, pending_dict, head_only)
             return
@@ -727,18 +873,20 @@ class WallRequestHandler(http.server.BaseHTTPRequestHandler):
         detail: str,
         pending_dict: typing.Optional[dict],
         head_only: bool = False,
+        error: str = "collect_state_failed",
     ) -> None:
         ctx = self.server.ctx
         if ctx.logger is not None:
-            # Exception type name only — never str(exc) (AC-11 discipline).
-            ctx.logger.warning("state-degraded error=%s", detail)
+            # Exception type name / stage name only — never str(exc) (AC-11
+            # discipline); a stage is a mc_wall filename:function, no secrets.
+            ctx.logger.warning("state-degraded error=%s detail=%s", error, detail)
         self._reply(
             503,
             json.dumps(
                 {
                     "ok": False,
                     "degraded": True,
-                    "error": "collect_state_failed",
+                    "error": error,
                     "detail": detail,
                     "occurred_at_ms": (ctx.clock or _epoch_ms)(),
                     "wall": {"pending": pending_dict},
@@ -872,6 +1020,7 @@ def create_server(
     monitor_interval_s: float = 2.0,
     clock: typing.Optional[typing.Callable[[], int]] = None,
     start_monitor: bool = True,
+    state_deadline_s: typing.Optional[float] = None,
 ) -> WallServer:
     web_path = pathlib.Path(web_dir) if web_dir is not None else _repo_root() / "web"
     log_path = pathlib.Path(log_dir) if log_dir is not None else resolve_wall_home() / "logs"
@@ -881,14 +1030,24 @@ def create_server(
     # runner=None stays None (tests inject FakeRunner; the POST routes reply
     # 500 internal-error when the runner is missing). run_server — the only
     # prod path — injects the SubprocessRunner() default.
+    #
+    # wd1: EVERY collect consumer (request handlers, row resolution, monitor
+    # ticks) goes through the CollectGate — single-flight coalescing plus a
+    # hard per-caller deadline. ctx.collect_state IS the gated callable.
+    boot_logger = logging.getLogger("mc_wall.server")
+    deadline = (state_deadline_s if state_deadline_s is not None
+                else _env_seconds(STATE_DEADLINE_ENV, DEFAULT_STATE_DEADLINE_S,
+                                  boot_logger))
+    raw_collect = (
+        collect_state if collect_state is not None else _default_collect_state
+    )
+    gate = CollectGate(raw_collect, deadline)
     ctx = AppContext(
         token=token,
         web_dir=web_path,
         log_dir=log_path,
         allow_hosts=allowed,
-        collect_state=(
-            collect_state if collect_state is not None else _default_collect_state
-        ),
+        collect_state=gate.collect,
         runner=runner,
         clock=clock,
     )
@@ -915,6 +1074,7 @@ def create_server(
     if (
         db_path is not None
         and start_monitor
+        and _monitor_env_enabled()
         and server.ready
         and ctx.pending is not None
     ):
@@ -929,12 +1089,52 @@ def create_server(
         )
         server.monitor = monitor
         monitor.start()
+    elif (
+        db_path is not None
+        and start_monitor
+        and server.ready
+        and ctx.pending is not None
+        and not _monitor_env_enabled()
+    ):
+        # wd1 kill switch: the monitor thread is entirely absent — /state (and
+        # every other route) still serves; the launch handshake is offline.
+        logger.info("MC_WALL_MONITOR set — handshake monitor disabled")
     return server
+
+
+def _boot_self_check(collect: typing.Callable[..., dict],
+                     logger: logging.Logger, deadline_s: float) -> bool:
+    """wd1: the server proves it can complete one collect under a HARD
+    deadline before pretending to be up. An OVERRUN means the collect is
+    wedged (never returns at any deadline) — dump every thread's stack
+    (faulthandler, no privileges needed) and tell the caller to exit nonzero
+    so launchd restarts instead of serving-hanged. A collect that FAILS
+    (raises) is degraded-but-alive, the existing fail-open semantics — only
+    the unbounded wait is fatal."""
+    started = time.monotonic()
+    try:
+        collect(deadline_s=deadline_s)
+    except CollectDeadlineError as exc:
+        logger.critical(
+            "FATAL boot self-check: collect overran %.1fs deadline (stage %s)"
+            " — dumping all threads and exiting",
+            deadline_s, exc,
+        )
+        faulthandler.dump_traceback()  # every thread, stderr
+        return False
+    except Exception as exc:
+        logger.warning("boot self-check collect failed error=%s",
+                       type(exc).__name__)
+        return True
+    logger.info("boot self-check collect ok in %.2fs",
+                time.monotonic() - started)
+    return True
 
 
 def run_server(cfg: ServerConfig) -> int:
     """launchd-facing exit contract: 0=signal shutdown, 1=port busy,
-    3=never ready, 4=serve loop died unrequested."""
+    3=never ready, 4=serve loop died unrequested, 5=boot self-check overran
+    (wedge — threads dumped, restart me)."""
     wall_home = cfg.wall_home if cfg.wall_home is not None else resolve_wall_home()
     web_dir = cfg.web_dir if cfg.web_dir is not None else _repo_root() / "web"
     log_dir = cfg.log_dir if cfg.log_dir is not None else wall_home / "logs"
@@ -970,6 +1170,17 @@ def run_server(cfg: ServerConfig) -> int:
         return 1
     if not server.ready:
         return 3
+    # wd1 boot self-check: only the PROD tower path (a config was injected —
+    # hermetic run_server tests without tower_config keep their old shapes).
+    # The check doubles as cache warm: requests racing it coalesce onto the
+    # same in-flight collect through the gate.
+    if cfg.tower_config is not None:
+        boot_deadline = _env_seconds(BOOT_DEADLINE_ENV, DEFAULT_BOOT_DEADLINE_S,
+                                     logger)
+        if not _boot_self_check(server.ctx.collect_state, logger, boot_deadline):
+            server.shutdown()
+            server.server_close()
+            return 5
     shutdown_requested = {"v": False}
 
     def _request_shutdown(*_args) -> None:

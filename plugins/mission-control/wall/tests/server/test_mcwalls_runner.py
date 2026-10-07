@@ -31,7 +31,7 @@ def test_applescript_escapes_quotes_and_backslashes():
 
 
 def test_subprocess_runner_argv_lists():
-    from mc_wall.server.runner import SubprocessRunner, notification_script
+    from mc_wall.server.runner import RUNNER_TIMEOUT_S, SubprocessRunner, notification_script
 
     calls = []
 
@@ -44,12 +44,16 @@ def test_subprocess_runner_argv_lists():
     r.open_app("ZCode")
     r.notify("t", "b")
 
-    assert calls[0] == (["pbcopy"], {"input": b"x", "check": True})
-    assert calls[1] == (["open", "u"], {"check": True})
-    assert calls[2] == (["open", "-a", "ZCode"], {"check": True})
+    # wd1 (wall-deadlock): every GUI spawn now carries an explicit timeout.
+    assert calls[0] == (["pbcopy"], {"input": b"x", "check": True,
+                                     "timeout": RUNNER_TIMEOUT_S})
+    assert calls[1] == (["open", "u"], {"check": True,
+                                        "timeout": RUNNER_TIMEOUT_S})
+    assert calls[2] == (["open", "-a", "ZCode"], {"check": True,
+                                                  "timeout": RUNNER_TIMEOUT_S})
     assert calls[3] == (
         ["osascript", "-e", notification_script("t", "b")],
-        {"check": True},
+        {"check": True, "timeout": RUNNER_TIMEOUT_S},
     )
     for argv, kwargs in calls:
         assert isinstance(argv, list)  # argv list, never a shell string

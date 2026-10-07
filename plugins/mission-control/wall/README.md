@@ -231,6 +231,42 @@ Output may contain session titles — treat it as operator-private.
   and source-age badges; a stale last-good value is never silently served
   (successful values always carry the age of the actual source read).
 
+### Liveness knobs (wall-deadlock wd1, 2026-10-07)
+
+The 2026-10-07 incident class — "accepts TCP, never answers" — was the /state
+handler running the full tower collect synchronously: on cold caches that
+collect serializes dozens of subprocess spawns (measured ~17.5 s on an idle
+machine), the browser polls every 5 s, and under load the handler-thread
+pile-up meant no request ever completed. Every collect consumer now goes
+through a single-flight gate with a hard deadline.
+
+- `MC_WALL_STATE_DEADLINE_S` (default `10`) — per-request deadline for every
+  route that reads state (`/state`, POST launch/re-copy/copy-goal/
+  needs-me-now, and the handshake monitor's collect). On overrun the route
+  returns **503 degraded** with `error: collect_state_deadline` and a
+  `detail` naming the overran stage (the deepest `mc_wall` frame of the
+  in-flight collect, e.g. `netcache.py:_run_cmd`) — never a hang. Concurrent
+  requests coalesce onto the one in-flight collect; a fresh idle request
+  always starts a fresh collect (the no-caching contract is unchanged).
+- `MC_WALL_BOOT_DEADLINE_S` (default `60`) — after binding, the server
+  completes one full collect under this hard deadline (also the cache warm).
+  An overrun means the collect is wedged: the server logs `FATAL boot
+  self-check`, dumps every thread's stack to stderr, and exits **5** so
+  launchd restarts it — a wall that cannot answer never pretends to be up.
+  A healthy-but-slow cold boot (~17-18 s) passes well inside the default.
+- `MC_WALL_MONITOR=0` (or `off`/`no`/`false`) — kill switch: the handshake
+  monitor thread is entirely absent (one log line); every route, /state
+  included, still serves. Use it to rule the monitor out when debugging.
+- Runner side effects (`pbcopy`, `open`, `osascript`) carry explicit 5 s
+  timeouts — a wedged GUI service fails the one side effect (contained,
+  retried per the existing tick rules) instead of hanging the monitor tick.
+- A failing discovery `git remote -v` probe is held for a 300 s backoff
+  before retrying (success-only caching made failed probes respawn every
+  cycle — a livelock vector).
+
+Exit codes: `0` signal shutdown, `1` port busy, `3` never ready, `4` serve
+loop died unrequested, `5` boot self-check overran (wedge — threads dumped).
+
 ## 8. Repo layout + gates
 
     bin/mc-wall          control CLI (install/start/stop/restart/status/log/open)
